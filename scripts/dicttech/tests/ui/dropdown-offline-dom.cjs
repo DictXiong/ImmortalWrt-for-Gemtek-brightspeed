@@ -145,6 +145,33 @@ async function geometry(page) {
   });
 }
 
+async function footerBranding(page) {
+  const template = fs.readFileSync(path.join(here, 'candidate/usr/share/ucode/luci/template/themes/glass/footer.ut'), 'utf8');
+  const footer = template.match(/<footer class="glass-footer">[\s\S]*?<\/footer>/)?.[0];
+  assert(footer, 'The existing Glass footer must be present');
+  const values = { glass_version: '1.1.6', 'version.luciname': 'LuCI', 'version.luciversion': 'fixture',
+    'version.disturl': '#offline-firmware', 'version.distname': 'ImmortalWrt', 'version.distversion': 'fixture' };
+  const html = footer.replace(/{{\s*([^}]+?)\s*}}/g, (_, key) => {
+    assert(Object.hasOwn(values, key), 'Unknown footer template field: ' + key);
+    return values[key];
+  });
+  await page.evaluate(html => document.body.insertAdjacentHTML('beforeend', html), html);
+  return page.evaluate(() => {
+    const footer = document.querySelector('.glass-footer');
+    const labels = [...footer.querySelectorAll('span')].filter(node => node.textContent === 'DictTech AP · 定制版');
+    const label = labels[0];
+    const theme = [...footer.querySelectorAll('span')].find(node => node.textContent.startsWith('GlassTheme '));
+    const style = label && getComputedStyle(label), original = getComputedStyle(theme);
+    const result = { count: labels.length, existingFooter: label?.parentElement === footer,
+      visible: !!label && getComputedStyle(footer).display !== 'none' && label.getClientRects().length > 0,
+      inheritedThemeStyle: !!style && style.color === original.color && style.fontSize === original.fontSize && style.fontWeight === original.fontWeight,
+      fontSize: style?.fontSize, color: style?.color };
+    result.passed = result.count === 1 && result.existingFooter && result.visible && result.inheritedThemeStyle;
+    footer.remove();
+    return result;
+  });
+}
+
 (async () => {
   const browser = await chromium.launch({
     executablePath: process.env.BROWSER_EXECUTABLE,
@@ -159,6 +186,7 @@ async function geometry(page) {
       const errors = [];
       page.on('pageerror', error => errors.push(error.message));
       await install(page, 'candidate');
+      const branding = await footerBranding(page);
       const dependencyHidden = await page.evaluate(() => {
         const row = E('div', { class: 'cbi-value hidden' }, 'Dependency-hidden row');
         document.body.appendChild(row);
@@ -170,7 +198,7 @@ async function geometry(page) {
       let layout;
       try { layout = await geometry(page); }
       catch (error) { layout = { passed: false, failure: error.message }; }
-      report.cases.push({ touch, dependencyHidden, widgets, geometry: layout, pageErrors: errors });
+      report.cases.push({ touch, branding, dependencyHidden, widgets, geometry: layout, pageErrors: errors });
       await context.close();
     }
     const baselineContext = await browser.newContext({ viewport: { width: 1280, height: 800 }, offline: true, serviceWorkers: 'block' });
@@ -190,7 +218,7 @@ async function geometry(page) {
     report.baseline = { initialChecked: baselineChecked, geometry: baselineGeometry };
     assert.equal(baselineChecked, false, 'The unchanged naoki baseline must reproduce the initial-selection defect');
     await baselineContext.close();
-    report.passed = report.cases.every(row => row.dependencyHidden && row.widgets.passed && row.geometry.passed && !row.pageErrors.length);
+    report.passed = report.cases.every(row => row.branding.passed && row.dependencyHidden && row.widgets.passed && row.geometry.passed && !row.pageErrors.length);
   } finally { await browser.close(); }
   fs.writeFileSync(path.join(here, 'dropdown-offline-dom-result.json'), JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify({ passed: report.passed, cases: report.cases.map(row => ({ touch: row.touch, widgets: row.widgets.passed, geometry: row.geometry, pageErrors: row.pageErrors })) }));

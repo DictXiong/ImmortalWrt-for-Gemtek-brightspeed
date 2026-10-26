@@ -8,6 +8,10 @@ unique static maintenance address. Read [the configuration format](dicttech-conf
 [maintenance allocation](dicttech-maintenance.md) and
 [acceptance limits](dicttech-acceptance.md) before deployment.
 
+The existing Glass page footer identifies this image as **DictTech AP · 定制版**.
+It is a dedicated configuration for this AP deployment, with its label using the
+theme's ordinary footer typography and colors.
+
 ## Configuration inputs
 
 Keep real input files outside this Git checkout. The current installation uses

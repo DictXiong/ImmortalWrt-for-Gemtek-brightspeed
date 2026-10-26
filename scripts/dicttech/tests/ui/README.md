@@ -10,6 +10,11 @@ frequency save targets, power display and the MLO width form. The board fixture
 contains a synthetic path and public band capabilities only. It has no device
 identity, factory data, credentials or live UCI information.
 
+The custom-edition marker is checked against the pinned Glass footer: the only
+template change is one label and the existing separator markup. Desktop and
+touch DOM cases verify that it remains visible once in the existing footer and
+inherits the same text styling as Glass's version label; no branding CSS is added.
+
 For real DOM tests, install Playwright and Chromium locally, or set:
 
 ```sh

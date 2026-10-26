@@ -79,6 +79,7 @@ function stageFiles(args, stage) {
     ['device-settings', 'feeds/luci', 'modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js', 'www/luci-static/resources/view/network/wireless.js', manifest.feed_luci_revision],
     ['dropdown-ui', 'feeds/luci', 'modules/luci-base/htdocs/luci-static/resources/ui.js', 'www/luci-static/resources/ui.js', manifest.feed_luci_revision],
     ['dropdown-theme', 'feeds/glass', 'htdocs/luci-static/glass/css/cascade.css', 'www/luci-static/glass/css/cascade.css', manifest.feed_glass_revision],
+    ['footer-branding', 'feeds/glass', 'ucode/template/themes/glass/footer.ut', 'usr/share/ucode/luci/template/themes/glass/footer.ut', manifest.feed_glass_revision],
     ['mlo-widths', '', 'package/emortal/luci-app-mlo/htdocs/luci-static/resources/view/mlo.js', 'www/luci-static/resources/view/mlo.js', null]
   ];
   const sourceSHA = {};
@@ -105,6 +106,18 @@ function stageFiles(args, stage) {
     'browser-widget-regressions.cjs', 'board-capabilities.json'])
     fs.copyFileSync(path.join(fixtures, name), path.join(stage, name));
   return sourceSHA;
+}
+
+function checkFooterBranding(stage) {
+  const relative = 'usr/share/ucode/luci/template/themes/glass/footer.ut';
+  const candidate = fs.readFileSync(path.join(stage, 'candidate', relative), 'utf8');
+  const original = fs.readFileSync(path.join(stage, 'original', relative), 'utf8');
+  const insertion = '  <span>DictTech AP · 定制版</span>\n  <span class="footer-sep">|</span>\n';
+  assert.equal(candidate.split(insertion).length, 2, 'Custom-edition footer must appear exactly once');
+  assert.equal(candidate.replace(insertion, ''), original, 'Branding must preserve all original theme markup and behavior');
+  assert(candidate.includes('<footer class="glass-footer">\n' + insertion), 'Branding must remain inside the existing Glass footer');
+  return { passed: true, label: 'DictTech AP · 定制版', location: 'existing Glass page footer',
+    originalTemplatePreserved: true, additionalCSS: false };
 }
 
 function runHarness(stage, name, env = {}) {
@@ -138,6 +151,7 @@ async function main() {
     uci_transport_calls: 0, source_root: args.root, passed: false, complete: false, skipped: [] };
   try {
     report.sourceSHA = stageFiles(args, stage);
+    report.branding = checkFooterBranding(stage);
     report.syntax = [];
     for (const file of ['ui.js', 'view/network/wireless.js', 'view/mlo.js']) {
       const source = fs.readFileSync(path.join(stage, 'candidate/www/luci-static/resources', file), 'utf8');
@@ -159,7 +173,7 @@ async function main() {
       report.browser = { status: 'SKIP', reason: dependency.reason };
       report.skipped.push('desktop_and_touch_real_Chromium_dropdown_DOM');
     }
-    report.passed = report.radio.passed && report.mlo.passed &&
+    report.passed = report.branding.passed && report.radio.passed && report.mlo.passed &&
       (dependency.available ? report.browser.passed : !args.requireBrowser);
     if (!report.passed) process.exitCode = 1;
   } catch (error) {

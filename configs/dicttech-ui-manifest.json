@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "source": "Verified naoki runtime UI fixes ported to locked C7 source package files.",
+  "source": "Reviewed runtime UI fixes and the dedicated DictTech AP footer, pinned to locked C7 source package files.",
   "feed_luci_revision": "05c955f0aca2f5e8de1c126b0ec9e9e677e83b3f",
   "feed_glass_revision": "68e26dc41c254e68f37f184ebe64a9925da7d539",
   "patches": {
@@ -26,6 +26,12 @@
       "target": "package/emortal/luci-app-mlo/htdocs/luci-static/resources/view/mlo.js",
       "source_sha256": "5ad4b45cdbfd85de0e22dee326512c238b364fe4eea0bc8512664a0add3d2155",
       "patched_sha256": "1b7a65e1b39adcc44ca6a98e63d4881eee73c1df419c5ee091f7085c6667a193"
+    },
+    "footer-branding": {
+      "target": "ucode/template/themes/glass/footer.ut",
+      "source_sha256": "a93c4f79956250d786794d1ff2980514d9be4395953bfbb8ba6973f2ca17390c",
+      "patched_sha256": "f27ceda55ca9ed5f9223f5b403342c56f660348e83d1d8aeccb4aeeb9a0956c1",
+      "patch": "patches/feeds/glass/ucode/template/themes/glass/110-dicttech-custom-edition-footer.patch"
     }
   }
 }

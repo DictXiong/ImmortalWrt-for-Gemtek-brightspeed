@@ -1,0 +1,11 @@
+--- a/ucode/template/themes/glass/footer.ut
++++ b/ucode/template/themes/glass/footer.ut
+@@ -15,6 +15,8 @@
+ </main>
+ 
+ <footer class="glass-footer">
++  <span>DictTech AP · 定制版</span>
++  <span class="footer-sep">|</span>
+   <span>GlassTheme v{{ glass_version }}</span>
+   <span class="footer-sep">|</span>
+   <a href="https://github.com/openwrt/luci" target="_blank">{{ version.luciname }} ({{ version.luciversion }})</a>
