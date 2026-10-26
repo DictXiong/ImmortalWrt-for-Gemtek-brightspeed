@@ -96,6 +96,19 @@ gateway/DNS. Complete SSH host-key identification on this isolated connection
 and establish any required authentication before using batch deployment.
 The blank initial root credential is confined to this physical setup network;
 provisioning installs the private password hash before normal operation.
+For password-based setup, establish an interactive master first, then pass its
+socket to the batch commands below (and identify the host key before accepting
+it). Do not put a password in a shell argument:
+
+```sh
+ssh -M -N -f -S /tmp/dicttech-ap-setup -o ControlPersist=1h \
+  -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+  -p 12022 root@192.168.250.1
+```
+
+Add `--control-socket /tmp/dicttech-ap-setup` to commands targeting that session.
+After provisioning changes the address, establish a new authenticated session
+at the assigned address rather than reusing the old socket as identity proof.
 
 First read the target identity and boot ID:
 
@@ -127,7 +140,9 @@ query status, confirm or roll back:
 
 ```sh
 python3 scripts/dicttech/ap-deploy.py status --host MAINTENANCE_IP
-python3 scripts/dicttech/ap-verify.py --help
+python3 scripts/dicttech/ap-verify.py \
+  --config ../ap-deployment.json --device ap_new --host MAINTENANCE_IP \
+  --output ../ap_new-verification.private.json
 python3 scripts/dicttech/ap-deploy.py confirm \
   --host MAINTENANCE_IP --receipt ../ap_new-receipt.private.json
 ```

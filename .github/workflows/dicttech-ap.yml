@@ -46,7 +46,7 @@ jobs:
       - name: Build locked no-secret AP image
         env:
           AP_LAYOUT: ${{ inputs.layout || 'legacy' }}
-        run: bash scripts/dicttech/build-ap.sh --layout "$AP_LAYOUT" --jobs 2 2>&1 | tee dicttech-build.log
+        run: bash scripts/dicttech/build-ap.sh --layout "$AP_LAYOUT" --jobs 2 2>&1 | tee "$RUNNER_TEMP/dicttech-build.log"
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -63,7 +63,7 @@ jobs:
           name: dicttech-ap-${{ inputs.layout || 'legacy' }}-${{ github.sha }}
           retention-days: 30
           path: |
-            dicttech-build.log
+            ${{ runner.temp }}/dicttech-build.log
             bin/targets/airoha/an7581/*.itb
             bin/targets/airoha/an7581/*.manifest
             bin/targets/airoha/an7581/config.buildinfo
