@@ -1,0 +1,76 @@
+{
+  "profiles": {
+    "main": {
+      "section": "dicttech_mlo",
+      "iface": "ap-mld1",
+      "mld": true,
+      "max_links": 3
+    },
+    "battalion": {
+      "section": "default_radio1",
+      "iface": "ap-mld0",
+      "mld": true,
+      "max_links": 2
+    },
+    "guest": {
+      "section": "guest_mlo",
+      "iface": "ap-mld2",
+      "mld": true,
+      "max_links": 2
+    },
+    "iot": {
+      "section": "wifinet1",
+      "iface": "phy0.0-ap1",
+      "mld": false,
+      "max_links": 1
+    }
+  },
+  "nodes": {
+    "production": {
+      "bridge_mac": "02:00:00:00:00:03",
+      "address": "10.24.0.1",
+      "peer": "test",
+      "bssids": {
+        "main": [
+          "02:00:00:20:00:61",
+          "02:00:00:20:00:62",
+          "02:00:00:20:00:63"
+        ],
+        "battalion": [
+          "02:00:00:00:00:14",
+          "02:00:00:00:00:04"
+        ],
+        "guest": [
+          "02:00:00:00:00:12",
+          "02:00:00:00:00:13"
+        ],
+        "iot": [
+          "02:00:00:00:00:15"
+        ]
+      }
+    },
+    "test": {
+      "bridge_mac": "02:00:00:00:00:02",
+      "address": "10.24.0.2",
+      "peer": "production",
+      "bssids": {
+        "main": [
+          "02:00:00:00:00:08",
+          "02:00:00:00:00:09",
+          "02:00:00:00:00:0a"
+        ],
+        "battalion": [
+          "02:00:00:00:00:06",
+          "02:00:00:00:00:07"
+        ],
+        "guest": [
+          "02:00:00:00:00:0b",
+          "02:00:00:00:00:0c"
+        ],
+        "iot": [
+          "02:00:00:00:00:0d"
+        ]
+      }
+    }
+  }
+}

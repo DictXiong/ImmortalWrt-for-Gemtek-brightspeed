@@ -1,0 +1,135 @@
+# xr-roaming
+
+`xr-roaming` packages the v4 wired-backhaul neighbor-report helper for the
+XR1710G AP profile. Select `CONFIG_PACKAGE_xr-roaming=y` to include it in a
+firmware, or `=m` to build an APK for separate installation:
+
+```sh
+make package/dicttech/xr-roaming/compile V=s
+```
+
+It is a shell/jq package. `hostapd-utils` supplies the standard
+`/usr/sbin/hostapd_cli`; no private binary or historical binary hash is carried
+in this package. Use a matched, tested firmware/package set. The supported
+server is the C7 hostapd implementation with one ubus object per MLD and
+per-link control sockets. A successful APK installation alone does not prove
+compatibility with another hostapd or firmware version. Runtime collection
+strictly validates socket status, link identity and neighbor-report contents.
+
+## Behavior
+
+The four profiles are `main`, `battalion`, `guest` and `iot`. Their current
+mapping is the existing C7 AP layout:
+
+| Profile | Wireless UCI section | Control interface | Maximum links |
+| --- | --- | --- | --- |
+| main | dicttech_mlo | ap-mld1 | 3 |
+| battalion | default_radio1 | ap-mld0 | 2 |
+| guest | guest_mlo | ap-mld2 | 2 |
+| iot | wifinet1 | phy0.0-ap1 | 1 |
+
+The package reads each configured wireless section's actual SSID. It does not
+create those sections, change their security, enable k/v, allocate addresses,
+configure VLANs, enable FT or steer/kick clients. The AP deployment profile
+must provide those settings separately. IoT is a single-link BSS in this
+profile. Node addresses, bridge MACs and permitted per-link peer BSSIDs come
+from device provisioning, not from this package's source.
+
+The default schedule is a 30-second local check and heartbeat, a 60-second
+peer fetch, and a 300-second strict collection/actual-table audit. Peer data
+expires after 180 seconds without a newly observed revision. Station-count
+changes do not invalidate AP metadata. The implementation currently accepts
+one explicitly configured peer per profile; it does not discover or trust new
+APs automatically. Fleet-wide/multiple-peer generation remains separate work.
+
+Metadata is fetched over HTTP on the trusted native LAN. Exact peer identity
+and BSSID checks are input validation, not cryptographic peer authentication.
+Keep the metadata endpoint inaccessible from the guest network as part of the
+AP's management-input policy. Do not run another neighbor-table controller,
+such as usteer or DAWN, against the same hostapd objects.
+
+## Configuration and lifecycle
+
+All four instances ship with `enabled '0'`. Installation may enable/start the
+procd service through the standard package hooks, but no worker starts until a
+profile is enabled. Provision each required profile's `peer`, `peer_mac` and
+`peer_bssid` list from the local inventory, verify its wireless section and
+interface mapping, then enable it. The bridge identity must already be set in
+the `br-lan` device UCI configuration. Wi-Fi passwords belong to the wireless
+deployment configuration; they are not used by this helper.
+
+The helper requires a real DHCP address on `lan`/`br-lan.1` and binds peer HTTP
+requests to that address. A separately usable offline maintenance address does
+not satisfy this requirement. See
+[maintenance allocation](../../../docs/dicttech-maintenance.md).
+
+```sh
+/etc/init.d/xr_roaming reload
+/usr/lib/xr-roaming/helper.sh status main
+```
+
+Use `battalion`, `guest` or `iot` for the other profiles. Status is read-only
+and does not take the worker's exclusive lock. Reload reconciles enabled procd
+instances and invalidates configuration caches without restarting wireless.
+
+Before a live package upgrade, the pre-install hook stops the old service and
+waits for the known worker locks. It refuses a symlinked or still-held lock
+rather than replacing modules beneath a running worker. Offline rootfs
+installation respects `IPKG_INSTROOT` and performs no target service calls.
+Package installation does not run `uci-defaults` or commit unrelated UCI edits.
+
+Only `/etc/config/xr_roaming` is a conffile. Installed code, the init script and
+the `/www/xr-roaming` symlink are package-owned. The symlink targets the RAM
+publication directory; private state, published JSON and locks live in `/tmp`
+and must not be retained across upgrades.
+
+## Migrating the existing manually deployed helper
+
+This transition must be handled by the guarded deployment tool before its
+first live package installation. It is not an ordinary upgrade from a previous
+version of this package:
+
+1. Back up the existing helper, CLI, init, metadata configuration, symlink and
+   `/lib/upgrade/keep.d/xr_roaming`. Record the running firmware and hashes.
+2. Arm independent metadata-only rollback. Stop the old helper and verify all
+   four locks are free. Refuse unknown file versions or unrelated file owners.
+3. Preserve the existing device configuration. Retire the old unmanaged code
+   and private CLI through the guarded deployment transaction before APK takes
+   ownership of the package paths. Do not use a blanket `--force-overwrite`.
+4. Remove the old `xr_roaming` keep list's code/CLI/init/web entries. The new
+   conffile mechanism preserves configuration; the old list must not restore
+   stale code over a newer firmware. A sysupgrade migration must also remove
+   previously retained overrides from the upgrade payload, not just the list.
+5. Install matched dependencies and the package. If APK produces a config
+   candidate, retain the existing validated configuration rather than replacing
+   it with the disabled template. Verify package ownership, profiles and all
+   actual per-link neighbor tables before confirming rollback protection.
+
+Do not copy an entire old `/etc` or `/usr/lib/xr-roaming` over a new image.
+Firmware upgrades should preserve configuration and device SSH host keys,
+while obtaining runtime code from the new image's package set.
+
+The public package intentionally contains no site inventory, credentials,
+factory backup, SSH keys or runtime peer data.
+
+## Local checks
+
+Run the tests as root on Linux, in an isolated build/test environment with
+Python 3, jq and the usual POSIX utilities:
+
+```sh
+python3 scripts/dicttech/check-xr-roaming-package.py
+python3 scripts/dicttech/test-xr-roaming.py
+```
+
+The first command checks disabled defaults and lifecycle/lock handling without
+calling a real service. The second stages the actual package runtime into
+synthetic command/socket fixtures. Supplying `--c7-rootfs PATH` additionally
+exercises C7 BusyBox ash and its slim jq through `qemu-aarch64`; without it the
+two target-specific checks are explicitly skipped. Root is required because
+the helper intentionally validates root ownership of private state.
+
+After building and extracting an APK to a separate directory, add
+`--installed-root PATH` to the package checker to verify that its runtime and
+RAM symlink match the source. These local checks do not substitute for guarded
+live installation and actual hostapd/procd acceptance on the AP.
