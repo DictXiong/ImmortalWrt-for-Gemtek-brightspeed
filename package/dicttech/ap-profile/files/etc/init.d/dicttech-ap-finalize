@@ -1,0 +1,13 @@
+#!/bin/sh /etc/rc.common
+# Boot (S10) has completed wifi generation, uci-defaults and their final commit.
+# Keep this before hardware policy (S15) and all management/network services.
+START=13
+
+start() {
+	# Package installation invokes start; it must not accept or defer a profile.
+	return 0
+}
+
+boot() {
+	/usr/lib/dicttech-ap/bootstrap.sh finalize-boot
+}

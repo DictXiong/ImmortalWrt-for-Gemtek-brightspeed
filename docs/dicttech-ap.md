@@ -137,7 +137,12 @@ SSH stdin and prints changed paths, not credential values. An identical
 configuration is a no-op. Preserve the receipt and private backups until the
 result is confirmed.
 
-To preseed a matching image upgrade, export only that device's configuration:
+To preseed a matching image upgrade, export only that device's configuration.
+
+The export contains data files only. Persistent firmware services run prepare
+at S04 and finalize at S13; no one-time `uci-defaults` provisioning script is
+added to the archive. Runtime configuration transactions retain their explicit
+finalize step.
 
 ```sh
 python3 scripts/dicttech/ap-deploy.py export \

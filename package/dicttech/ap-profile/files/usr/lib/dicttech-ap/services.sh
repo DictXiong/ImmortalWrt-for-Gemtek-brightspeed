@@ -7,7 +7,7 @@ umask 077
 
 DEFAULTS=/usr/share/dicttech-ap/defaults.json
 MARKER=/etc/dicttech-ap/device.json
-ALLOWED='network firewall dropbear uhttpd xr_roaming sysctl cpufreq airoha-npu fan dnsmasq odhcpd dawn usteer ttyd watchcat umdns npu-jitter wifihistory zerotier miniupnpd ddns microsocks adguardhome AdGuardHome openclash passwall passwall2 shadowsocksr lucky autoreboot nlbwmon bandix pushbot radius 3proxy'
+ALLOWED='network sysntpd firewall dropbear uhttpd xr_roaming sysctl cpufreq airoha-npu fan dnsmasq odhcpd dawn usteer ttyd watchcat umdns npu-jitter wifihistory zerotier miniupnpd ddns microsocks adguardhome AdGuardHome openclash passwall passwall2 shadowsocksr lucky autoreboot nlbwmon bandix pushbot radius 3proxy'
 
 allowed() {
  case " $ALLOWED " in *" $1 "*) return 0;; *) return 1;; esac

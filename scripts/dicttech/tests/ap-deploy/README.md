@@ -74,8 +74,11 @@ python3 scripts/dicttech/ap-deploy.py export \
   --config /private/ap.json --device ap_node --output /private/ap-config.tar.gz
 ```
 
-Exporting does not flash firmware or arm a firmware rollback. The archive has a
-post-defaults finalizer. Fresh-device export excludes SSH host private keys. Firmware flashing,
+Exporting does not flash firmware or arm a firmware rollback. The archive
+contains configuration and identity data only, with no `uci-defaults`
+provisioning shim. The firmware owns persistent S04 prepare and S13 finalize
+services, so a preseed is finalized at the same boot stage as every later boot.
+Fresh-device export excludes SSH host private keys. Firmware flashing,
 image compatibility and recovery remain the separate firmware deployment flow.
 
 For an existing-device upgrade, preserve that same device's SSH and HTTPS

@@ -12,8 +12,36 @@ ACCEPTED=/etc/dicttech-ap/accepted.json
 BOOT_VALIDATED=/tmp/dicttech-ap-firstboot-validated.json
 MANIFEST=/etc/dicttech-ap/managed-files.json
 BOOT_SNAPSHOT=/tmp/dicttech-ap-firstboot-snapshot
+BOOT_DEFER=/tmp/dicttech-ap-bootstrap-defer
 
 note() { printf '%s\n' "dicttech-ap: $*" >&2; }
+
+defer_current_boot() {
+ local boot deferred
+ [ -f "$BOOT_DEFER" ] && [ ! -L "$BOOT_DEFER" ] || return 1
+ IFS= read -r boot < /proc/sys/kernel/random/boot_id
+ IFS= read -r deferred < "$BOOT_DEFER" || return 1
+ [ "$deferred" = "$boot" ]
+}
+
+prepare_boot() {
+ local boot tmp=$BOOT_DEFER.$$.tmp
+ [ ! -L "$BOOT_DEFER" ] && [ ! -e "$tmp" ] && [ ! -L "$tmp" ] || return 1
+ IFS= read -r boot < /proc/sys/kernel/random/boot_id
+ umask 077
+ printf '%s\n' "$boot" > "$tmp" || return 1
+ chmod 600 "$tmp" || return 1
+ mv "$tmp" "$BOOT_DEFER" || return 1
+ prepare
+}
+
+finalize_boot() {
+ # S13 is the only boot-time accept point. Older exported archives may still
+ # contain a S10 uci-defaults shim invoking ordinary finalize; it is deferred.
+ [ ! -L "$BOOT_DEFER" ] || return 1
+ rm -f "$BOOT_DEFER" || return 1
+ finalize
+}
 
 valid_marker() {
  local hash name section material
@@ -263,6 +291,7 @@ prepare() {
 }
 
 finalize() {
+ defer_current_boot && return 0
  if ! binding_matches "$ACCEPTED" && binding_matches "$BOOT_VALIDATED"; then
   if ! restore_boot_snapshot; then
    quarantine || { emergency_lock; return 1; }
@@ -295,5 +324,7 @@ finalize() {
 case "${1:-}" in
  prepare) prepare;;
  finalize) finalize;;
- *) note 'usage: bootstrap.sh prepare|finalize'; exit 2;;
+ prepare-boot) prepare_boot;;
+ finalize-boot) finalize_boot;;
+ *) note 'usage: bootstrap.sh prepare|finalize|prepare-boot|finalize-boot'; exit 2;;
 esac

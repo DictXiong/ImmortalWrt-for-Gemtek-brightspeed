@@ -212,7 +212,7 @@ reload_services() {
  else
   reload_step 15 "$SERVICES" restore "$STATE/services.before" links || { record rollback-incomplete service_links_failed; return 1; }
  fi
- for svc in network firewall uhttpd dropbear xr_roaming; do
+ for svc in system network sysntpd firewall uhttpd dropbear xr_roaming; do
   if test -x "$(p /etc/init.d/$svc)"; then
    reload_step 20 "$(p /etc/init.d/$svc)" reload || { record reload-error "$svc"; return 1; }
   fi

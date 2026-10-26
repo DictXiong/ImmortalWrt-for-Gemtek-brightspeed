@@ -163,6 +163,38 @@ class Transaction(unittest.TestCase):
         with self.assertRaises(ValueError):
             deploy.remote(args, 'confirm', 'token; touch invalid')
 
+    def test_system_and_ntp_reload_new_configuration_and_rollback_in_order(self):
+        original = b"config system 'system'\n option hostname 'original-node'\n option timezone 'UTC0'\nconfig timeserver 'ntp'\n list server 'old.example.invalid'\n"
+        candidate = b"config system 'system'\n option hostname 'candidate-node'\n option timezone 'CST-8'\nconfig timeserver 'ntp'\n list server 'new.example.invalid'\n"
+        self.put('etc/config/system', original)
+        self.before['etc/config/system'] = original
+        self.files['etc/config/system'] = candidate
+        events = self.base / 'reload-events'
+        for service in ['system', 'network', 'sysntpd']:
+            runtime = self.base / ('effective-' + service)
+            body = '#!' + shutil.which('python3') + '\nimport sys,json,pathlib\n'
+            body += 'assert sys.argv[1]=="reload"\n'
+            body += 'config=pathlib.Path(' + repr(str(self.root / 'etc/config/system')) + ').read_text()\n'
+            body += 'with open(' + repr(str(events)) + ',"a") as log:log.write(json.dumps({"service":' + repr(service) + ',"config":config})+"\\n")\n'
+            body += 'pathlib.Path(' + repr(str(runtime)) + ').write_text(config)\n'
+            path = self.root / 'etc/init.d' / service
+            path.parent.mkdir(parents=True, exist_ok=True); path.write_text(body); path.chmod(0o700)
+        self.stage(); self.call('apply', self.token)
+        wait(lambda: (self.state / 'reload-complete').exists())
+        applied = [json.loads(line) for line in events.read_text().splitlines()]
+        self.assertEqual([row['service'] for row in applied], ['system', 'network', 'sysntpd'])
+        self.assertTrue(all(row['config'] == candidate.decode() for row in applied))
+        self.assertEqual((self.base / 'effective-system').read_bytes(), candidate)
+        self.assertEqual((self.base / 'effective-sysntpd').read_bytes(), candidate)
+        self.call('rollback', self.token)
+        wait(lambda: not (self.state / 'services-restore-pending').exists())
+        restored = [json.loads(line) for line in events.read_text().splitlines()][len(applied):]
+        self.assertEqual([row['service'] for row in restored], ['system', 'network', 'sysntpd'])
+        self.assertTrue(all(row['config'] == original.decode() for row in restored))
+        self.assertEqual((self.base / 'effective-system').read_bytes(), original)
+        self.assertEqual((self.base / 'effective-sysntpd').read_bytes(), original)
+        self.assertOriginal()
+
     def test_apply_confirm_preserves_other_shadow_and_host_keys(self):
         self.stage(); self.call('apply', self.token)
         wait(lambda: (self.state / 'reload-complete').exists())
@@ -362,10 +394,11 @@ class Transaction(unittest.TestCase):
         self.assertFalse((self.base / 'unowned').exists())
 
     def test_export_is_private_tar_and_never_contains_ssh_host_keys(self):
-        payload = deploy.tar_bytes(self.files, provision=True)
+        payload = deploy.tar_bytes(self.files)
         with tarfile.open(fileobj=io.BytesIO(payload)) as tar:
-            self.assertIn('etc/uci-defaults/99-dicttech-ap-provision', tar.getnames())
-            self.assertTrue(all(m.mode == (0o700 if m.name.startswith('etc/uci-defaults/') else 0o600) for m in tar))
+            self.assertEqual(set(tar.getnames()), set(self.files))
+            self.assertFalse(any(name.startswith('etc/uci-defaults/') for name in tar.getnames()))
+            self.assertTrue(all(m.mode == 0o600 for m in tar))
             self.assertFalse(any('host_key' in m.name for m in tar))
 
 

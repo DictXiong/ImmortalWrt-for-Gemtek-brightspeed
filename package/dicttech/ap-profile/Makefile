@@ -3,7 +3,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=ap-profile
 PKG_VERSION:=1.0.0
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 PKG_LICENSE:=GPL-2.0-only
 PKGARCH:=all
 
@@ -32,11 +32,10 @@ endef
 define Package/ap-profile/install
 	$(INSTALL_DIR) $(1)/usr/share/dicttech-ap $(1)/usr/libexec/dicttech-ap $(1)/usr/lib/dicttech-ap $(1)/etc/dicttech-ap
 	chmod 0700 $(1)/etc/dicttech-ap
-	$(INSTALL_DIR) $(1)/etc/uci-defaults $(1)/etc/init.d
+	$(INSTALL_DIR) $(1)/etc/init.d
 	$(CP) ./files/usr/share/dicttech-ap/. $(1)/usr/share/dicttech-ap/
 	$(CP) ./files/usr/libexec/dicttech-ap/. $(1)/usr/libexec/dicttech-ap/
 	$(CP) ./files/usr/lib/dicttech-ap/. $(1)/usr/lib/dicttech-ap/
-	$(INSTALL_BIN) ./files/etc/uci-defaults/* $(1)/etc/uci-defaults/
 	$(INSTALL_BIN) ./files/etc/init.d/* $(1)/etc/init.d/
 endef
 

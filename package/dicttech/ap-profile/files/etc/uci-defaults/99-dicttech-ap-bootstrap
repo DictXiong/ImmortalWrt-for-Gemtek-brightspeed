@@ -1,3 +1,0 @@
-#!/bin/sh
-# Preseeded and retained managed profiles keep their existing configuration.
-/usr/lib/dicttech-ap/bootstrap.sh finalize

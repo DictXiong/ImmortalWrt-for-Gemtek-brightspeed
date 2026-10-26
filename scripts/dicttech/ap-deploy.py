@@ -157,20 +157,17 @@ def preserve_host_identity(args, resolved, files):
     return {**files, **preserved}, sorted(preserved)
 
 
-def tar_bytes(files: dict[str, bytes], manifest=None, provision=False):
+def tar_bytes(files: dict[str, bytes], manifest=None):
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode='w', format=tarfile.USTAR_FORMAT) as tar:
         contents = {'manifest.json': json.dumps(manifest, separators=(',', ':')).encode() + b'\n'} if manifest is not None else {}
         contents.update({'payload/' + str(i): value for i, value in enumerate(files.values())} if manifest is not None else files)
-        if provision:
-            contents['etc/uci-defaults/99-dicttech-ap-provision'] = (
-                b'#!/bin/sh\n/usr/lib/dicttech-ap/bootstrap.sh finalize\n')
         for path, data in contents.items():
             if path.startswith('/') or '..' in Path(path).parts:
                 raise ValueError('unsafe archive path')
             info = tarfile.TarInfo(path)
             info.uid = info.gid = 0
-            info.mode = 0o700 if path.startswith('etc/uci-defaults/') else 0o600
+            info.mode = 0o600
             info.mtime = 0
             info.size = len(data)
             tar.addfile(info, io.BytesIO(data))
@@ -279,7 +276,7 @@ def main():
             preserved_paths = []
             if args.preserve_host_identity:
                 files, preserved_paths = preserve_host_identity(args, resolved, files)
-            payload = gzip.compress(tar_bytes(files, provision=True), mtime=0)
+            payload = gzip.compress(tar_bytes(files), mtime=0)
             fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, 'wb') as f:
                 f.write(payload)

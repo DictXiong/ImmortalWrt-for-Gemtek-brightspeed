@@ -7,7 +7,7 @@ with tempfile.TemporaryDirectory(prefix='dt-ap-services-', dir='/tmp') as d:
  f=pathlib.Path(d)
  for p in ['etc/init.d','etc/rc.d','etc/dicttech-ap','usr/share/dicttech-ap','bin','running']:(f/p).mkdir(parents=True)
  shutil.copy(R/'package/dicttech/ap-profile/files/usr/share/dicttech-ap/defaults.json',f/'usr/share/dicttech-ap/defaults.json')
- names=['network','firewall','dropbear','uhttpd','xr_roaming','sysctl','cpufreq','airoha-npu','fan','dnsmasq','usteer','npu-jitter','radius','3proxy']
+ names=['network','sysntpd','firewall','dropbear','uhttpd','xr_roaming','sysctl','cpufreq','airoha-npu','fan','dnsmasq','usteer','npu-jitter','radius','3proxy']
  for name in names:
   p=f/'etc/init.d'/name
   p.write_text('''#!/bin/sh
@@ -36,12 +36,13 @@ esac
  snap=f/'snapshot.json';o=run('snapshot',snap);assert o.returncode==0,o.stderr
  j=json.loads(snap.read_text());assert len(j['services'])==len(re.search("ALLOWED='([^']+)'",SRC.read_text()).group(1).split())
  assert (snap.stat().st_mode&0o777)==0o600
+ ntp=next(x for x in j['services'] if x['service']=='sysntpd');assert ntp['present'] and not ntp['enabled'] and not ntp['running'] and ntp['links']==[]
  report.append({'case':'snapshot_exact_rc_and_running','passed':True})
  o=run('apply');assert o.returncode==0,o.stderr
  for n in ['dnsmasq','usteer','npu-jitter','radius','3proxy']:
   assert not (f/'running'/n).exists()
   assert not list((f/'etc/rc.d').glob('S??'+n))
- for n in ['network','firewall','dropbear','uhttpd','xr_roaming']:assert (f/'running'/n).exists(),n
+ for n in ['network','sysntpd','firewall','dropbear','uhttpd','xr_roaming']:assert (f/'running'/n).exists(),n
  for n in ['sysctl','cpufreq','airoha-npu','fan']:assert n+' start' in (f/'actions').read_text(),n
  report.append({'case':'apply_required_optional_and_disabled','passed':True})
  o=run('restore',snap,'links');assert o.returncode==0,o.stderr
@@ -49,7 +50,8 @@ esac
  report.append({'case':'restore_exact_rc_links','passed':True})
  o=run('restore',snap,'running');assert o.returncode==0,o.stderr
  assert {x.name for x in (f/'running').iterdir()}==before_running
- report.append({'case':'restore_running_deviations','passed':True})
+ assert not (f/'running/sysntpd').exists() and not list((f/'etc/rc.d').glob('S??sysntpd'))
+ report.append({'case':'restore_running_deviations_including_sysntpd','passed':True})
  bad=dict(j);bad['services']=[dict(x) for x in j['services']];bad['services'][0]['service']='not-allowed'
  badpath=f/'bad.json';badpath.write_text(json.dumps(bad));count=(f/'actions').read_text();o=run('restore',badpath,'links');assert o.returncode!=0;assert (f/'actions').read_text()==count
  report.append({'case':'reject_unknown_service_before_mutation','passed':True})

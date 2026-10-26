@@ -20,6 +20,16 @@ snapshots, quarantine and restore I/O failures, service enable/running snapshots
 exact rc-link restoration, ordered hardware one-shot replay, unknown service
 rejection, malformed snapshot JSON and unavailable/malformed ubus replies.
 
+The persistent-boot cases enable and dispatch the actual S04/S13 hook sources
+through the checkout's `rc.common` in the private fixture. They verify ordering
+after S03 transaction recovery, around S10's one-use defaults, and before CPU,
+network and management services. Ordinary `start` actions in either package
+installation order must leave all files unchanged before and after boot; only
+the explicit `boot` action executes the two boot stages. Two consecutive boots use different synthetic
+boot IDs and discard `/tmp`; after one-use defaults are gone, GUI Wi-Fi/password
+edits still survive while missing critical configuration or a corrupt guest
+guard is quarantined and isolated before network services.
+
 These tests verify control flow and local file transformations. Actual netifd,
 firewall, wireless, cold-start and offload behavior still require hardware
 acceptance separately.

@@ -1,0 +1,12 @@
+#!/bin/sh /etc/rc.common
+# Validate retained profiles after transaction recovery, before boot defaults.
+START=04
+
+start() {
+	# Package installation invokes start; boot-stage state belongs only to rcS.
+	return 0
+}
+
+boot() {
+	/usr/lib/dicttech-ap/bootstrap.sh prepare-boot
+}

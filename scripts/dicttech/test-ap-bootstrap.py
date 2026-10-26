@@ -28,7 +28,9 @@ def main():
     package = source / 'package/dicttech/ap-profile/files'
     inputs = [package / 'usr/lib/dicttech-ap/bootstrap.sh',
               package / 'usr/lib/dicttech-ap/services.sh',
-              package / 'usr/share/dicttech-ap/defaults.json']
+              package / 'usr/share/dicttech-ap/defaults.json',
+              package / 'etc/init.d/dicttech-ap-prepare',
+              package / 'etc/init.d/dicttech-ap-finalize']
     for item in inputs:
         if not item.is_file():
             parser.error('missing package source: ' + str(item))

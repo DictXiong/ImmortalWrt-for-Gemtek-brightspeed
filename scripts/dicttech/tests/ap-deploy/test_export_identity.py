@@ -54,6 +54,7 @@ class IdentityExport(unittest.TestCase):
     def test_default_export_never_captures_or_clones_host_identity(self):
         archive, read, report = self.run_export()
         read.assert_not_called()
+        self.assertFalse(any(name.startswith('etc/uci-defaults/') for name in archive))
         self.assertFalse(any(name in archive for name in deploy.HOST_IDENTITY_FILES))
         self.assertEqual(report['preserved_identity_paths'], [])
 
@@ -62,6 +63,7 @@ class IdentityExport(unittest.TestCase):
         for name, value in self.identity.items():
             self.assertEqual(archive[name], value)
         self.assertEqual(read.call_count, 2)
+        self.assertFalse(any(name.startswith('etc/uci-defaults/') for name in archive))
         capture = read.call_args.args[1]
         self.assertIn('set -o pipefail\n', capture)
         self.assertEqual(capture.count('cat /proc/sys/kernel/random/boot_id'), 2)

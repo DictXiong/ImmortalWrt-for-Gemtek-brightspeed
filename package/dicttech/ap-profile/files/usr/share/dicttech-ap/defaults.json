@@ -38,7 +38,7 @@
     "iot": {"encryption": "sae-mixed", "pmf": 1}
   },
   "services": {
-    "enabled": ["network", "firewall", "dropbear", "uhttpd", "xr_roaming"],
+    "enabled": ["network", "sysntpd", "firewall", "dropbear", "uhttpd", "xr_roaming"],
     "disabled": ["dnsmasq", "odhcpd", "dawn", "usteer", "ttyd", "watchcat", "umdns", "npu-jitter", "wifihistory", "zerotier", "miniupnpd", "ddns", "microsocks", "adguardhome", "AdGuardHome", "openclash", "passwall", "passwall2", "shadowsocksr", "lucky", "autoreboot", "nlbwmon", "bandix", "pushbot", "radius", "3proxy"]
   }
 }
