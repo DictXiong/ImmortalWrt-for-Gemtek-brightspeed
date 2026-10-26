@@ -45,6 +45,7 @@ def collect(args, state):
                     'net.bridge.bridge-nf-call-arptables', 'net.bridge.bridge-nf-filter-pppoe-tagged'],
         'service_links': ['ls', '-1', '/etc/rc.d'],
         'boot_hooks': ['sh', '-c', 'for n in S03dicttech-ap-transaction S04dicttech-ap-prepare S13dicttech-ap-finalize; do p=/etc/rc.d/$n; [ -L "$p" ] && [ -x "$p" ] || continue; t=$(readlink "$p"); s=${n#S??}; case "$t" in "../init.d/$s"|"/etc/init.d/$s") printf "%s\\n" "$n";; esac; done'],
+        'luci_features': ['ubus', '-t', '5', 'call', 'luci', 'getFeatures'],
         # Filter on the AP: daemon argv can contain secrets and is never returned.
         'services': ['sh', '-c', "ubus -t 5 call service list | jq 'map_values({instances:(.instances // {} | map_values({running:.running}))})'"],
         # Deliberate field allowlist excludes passphrases, PSKs, SAE passwords.
@@ -162,6 +163,10 @@ def evaluate(state, files, data, external=None):
          'Desired file hashes/private modes, root hash and resolver match' if not mismatch else 'Changed/missing paths: ' + ', '.join(mismatch))
     identity = contract.get('identity', {})
     test('target_identity', contract.get('profile') == state['profile'] and contract.get('defaults_sha256') == state['defaults_sha256'] and identity.get('device_id') == state['device_id'] and identity.get('bridge_mac') == state['device']['identity']['bridge'] and identity.get('board_name') in state['platform']['board_names'], 'Profile, defaults, registered device, bridge identity and board')
+    features = data.get('luci_features')
+    hostapd = features.get('hostapd') if isinstance(features, dict) else None
+    test('luci_rpc_features', isinstance(hostapd, dict) and all(hostapd.get(name) is True for name in ('cli', '11be', 'sae')),
+         'Live LuCI getFeatures RPC is registered and exposes the required hostapd CLI/Wi-Fi 7/SAE capabilities')
     for name, proto, device in [('lan', 'dhcp', 'br-lan.1'), ('lan6', 'dhcpv6', 'br-lan.1'), ('maintenance', 'static', 'br-lan.1'), ('guest', 'none', 'br-lan.192')]:
         item = data.get(name, {})
         okay = item.get('up') is True and item.get('proto') == proto and item.get('l3_device') == device

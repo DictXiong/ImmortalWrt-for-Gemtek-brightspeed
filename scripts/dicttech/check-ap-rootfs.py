@@ -154,6 +154,41 @@ def manifest_policy(source_root, path):
     return {'manifest_sha256': digest(path.read_bytes()), 'package_count': len(packages), 'required': sorted(policy.REQUIRED), 'forbidden_present': []}
 
 
+RPC_CODE_ROOTS = ('usr/share/rpcd/ucode', 'usr/lib/rpcd', 'usr/libexec/rpcd',
+                  'usr/share/ucode/luci', 'usr/lib/ucode/luci')
+RPC_REQUIRED_FILES = ('usr/share/rpcd/ucode/luci', 'usr/lib/rpcd/ucode.so',
+                      'usr/lib/rpcd/luci.so', 'usr/libexec/rpcd/luci.airoha_npu',
+                      'usr/libexec/rpcd/luci.fan', 'usr/lib/ucode/luci/core.so',
+                      'usr/share/ucode/luci/sys.uc', 'usr/share/ucode/luci/version.uc',
+                      'usr/share/ucode/luci/zoneinfo.uc')
+
+
+def check_luci_rpc(rootfs):
+    # rpcd deliberately refuses world-writable ucode plugins. The source cache's
+    # host permissions are not authoritative: inspect the installed code and
+    # its parents after package assembly/extraction, including imported modules.
+    checked = set()
+    for relative in RPC_CODE_ROOTS:
+        directory = rootfs / relative
+        safe_ancestors(rootfs, relative)
+        require(directory.is_dir() and not directory.is_symlink(), 'RPC code directory is missing or symlinked: ' + relative)
+        for path in [directory, *directory.parents]:
+            if path == rootfs:
+                break
+            checked.add(path)
+        for path in directory.rglob('*'):
+            require(not path.is_symlink() and (path.is_dir() or path.is_file()),
+                    'RPC code path is not a regular file/directory: ' + str(path.relative_to(rootfs)))
+            checked.add(path)
+    for relative in RPC_REQUIRED_FILES:
+        path = rootfs / relative
+        require(regular(path) and path.stat().st_size > 0, 'required LuCI RPC file is missing or empty: ' + relative)
+    for path in sorted(checked):
+        require(not path.stat().st_mode & 0o022, 'RPC code or parent is group/other writable: ' + str(path.relative_to(rootfs)))
+    return {'required_files': list(RPC_REQUIRED_FILES), 'code_and_parent_paths_checked': len(checked),
+            'group_or_other_writable': False}
+
+
 def check_rootfs(rootfs, source_root=REPO, manifest=None):
     rootfs, source_root = rootfs.resolve(), source_root.resolve()
     require(rootfs.is_dir(), 'rootfs directory missing')
@@ -169,7 +204,8 @@ def check_rootfs(rootfs, source_root=REPO, manifest=None):
     rows = [compare(path, rootfs / relative, relative) for relative, path in sorted(mapping.items())]
     rows += check_generators(source_root, rootfs)
     result = {'schema_version': 1, 'passed': True, 'files_checked': rows,
-              'clean_image': check_unprovisioned(rootfs), 'scope': 'virgin assembled or extracted rootfs; not a running/provisioned AP'}
+              'clean_image': check_unprovisioned(rootfs), 'luci_rpc': check_luci_rpc(rootfs),
+              'scope': 'virgin assembled or extracted rootfs; not a running/provisioned AP'}
     if manifest:
         result['packages'] = manifest_policy(source_root, manifest)
     return result

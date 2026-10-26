@@ -60,6 +60,11 @@ The source must be committed; `--allow-dirty` is reserved for local trials and
 marks their version as dirty. Finished-image checks extract the actual rootfs,
 compare managed executables/defaults against source and reject embedded device
 credentials or unexpected packages.
+The build sets umask `022` and restores tracked public source permissions from
+Git, including pinned feeds. Previously polluted package/install caches need a
+clean rebuild; see [source permission preparation](dicttech-source-permissions.md).
+The extracted image also checks LuCI RPC code permissions. APK signing private
+keys are generated with umask `077` and are never part of the image.
 
 The maintained **legacy** DTS preserves this existing partition map, with
 offsets expressed in MiB:

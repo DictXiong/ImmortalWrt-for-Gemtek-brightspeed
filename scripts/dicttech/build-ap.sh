@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0-only
 set -Eeuo pipefail
+umask 022
 cd "$(dirname "$0")/../.."
 
 layout=legacy
@@ -33,6 +34,10 @@ if [[ $reuse_feeds == 0 ]]; then
 fi
 python3 scripts/dicttech/check-build.py --feeds-only >/dev/null
 FEED_PATCHES_STRICT=1 bash scripts/apply-feed-patches.sh
+# cp -p in feed install rules preserves source modes. Git does not report
+# writable non-executable files as dirty, so prepare modes explicitly before
+# packaging, including reused, pinned feed checkouts.
+python3 scripts/dicttech/prepare-source-permissions.py
 # Reused checkouts can be newly added feeds without an index (e.g. Glass).
 # Source Makefile patches must also be reflected in generated feed metadata.
 ./scripts/feeds update -i -a

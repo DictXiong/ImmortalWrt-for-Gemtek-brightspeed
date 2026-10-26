@@ -27,6 +27,9 @@ class RootfsChecks(unittest.TestCase):
         shadow = self.root / 'etc/shadow'; shadow.write_text('root:::0:99999:7:::\nservice:*:0:0:99999:7:::\n'); shadow.chmod(0o600)
         (self.root / 'www').mkdir(); (self.root / 'www/xr-roaming').symlink_to('/tmp/xr-roaming-public')
         (self.root / 'etc/resolv.conf').symlink_to('/tmp/resolv.conf.d/resolv.conf.auto')
+        for relative in check.RPC_REQUIRED_FILES:
+            target = self.root / relative; target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text('public synthetic RPC fixture\n'); target.chmod(0o644)
 
     def tearDown(self):
         self.temp.cleanup()
@@ -89,6 +92,30 @@ class RootfsChecks(unittest.TestCase):
         lib = self.root / 'usr/libexec'; shutil.rmtree(lib); lib.symlink_to('/unowned-fixture')
         with self.assertRaisesRegex(check.RootfsError, 'symlinked parent'):
             check.check_rootfs(self.root)
+
+    def test_world_writable_rpc_script_and_group_writable_import_or_parent_fail(self):
+        for relative, mode in [('usr/share/rpcd/ucode/luci', 0o666),
+                               ('usr/share/ucode/luci/sys.uc', 0o664),
+                               ('usr/libexec/rpcd/luci.fan', 0o777),
+                               ('usr/share/rpcd', 0o775)]:
+            path = self.root / relative; before = path.stat().st_mode & 0o777
+            path.chmod(mode)
+            with self.assertRaisesRegex(check.RootfsError, 'group/other writable'):
+                check.check_rootfs(self.root)
+            path.chmod(before)
+
+    def test_missing_empty_or_symlinked_rpc_plugin_fails(self):
+        path = self.root / 'usr/share/rpcd/ucode/luci'; original = path.read_bytes()
+        path.unlink()
+        with self.assertRaisesRegex(check.RootfsError, 'required LuCI RPC file'):
+            check.check_rootfs(self.root)
+        path.write_bytes(b'')
+        with self.assertRaisesRegex(check.RootfsError, 'required LuCI RPC file'):
+            check.check_rootfs(self.root)
+        path.unlink(); path.symlink_to('/unowned-fixture')
+        with self.assertRaisesRegex(check.RootfsError, 'not a regular file/directory'):
+            check.check_rootfs(self.root)
+        path.unlink(); path.write_bytes(original)
 
 
 if __name__ == '__main__':

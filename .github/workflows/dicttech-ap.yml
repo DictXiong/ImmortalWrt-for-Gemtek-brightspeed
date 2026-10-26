@@ -40,6 +40,7 @@ jobs:
           sudo python3 scripts/dicttech/tests/test_ap_image.py
           sudo python3 scripts/dicttech/tests/test_ap_rootfs.py
           sudo python3 scripts/dicttech/tests/test_ap_packages.py
+          sudo python3 scripts/dicttech/tests/test_source_permissions.py
           sudo python3 scripts/dicttech/check-xr-roaming-package.py
           sudo python3 scripts/dicttech/test-xr-roaming.py
       - name: Build locked no-secret AP image

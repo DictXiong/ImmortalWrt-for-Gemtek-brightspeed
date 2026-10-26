@@ -28,6 +28,7 @@ def fixture():
             'services': {name: {'instances': {'main': {'running': True}}} for name in ['network', 'sysntpd', 'dropbear', 'uhttpd', 'xr_roaming']},
             'service_links': '\n'.join('S20' + name for name in state['services']['enabled']),
             'boot_hooks': 'S03dicttech-ap-transaction\nS04dicttech-ap-prepare\nS13dicttech-ap-finalize\n',
+            'luci_features': {'hostapd': {'cli': True, '11be': True, 'sae': True}},
             'fw4': {'nftables': [{'table': {'family': 'inet', 'name': 'fw4'}}]}}
     for name, proto, device in [('lan', 'dhcp', 'br-lan.1'), ('lan6', 'dhcpv6', 'br-lan.1'), ('maintenance', 'static', 'br-lan.1'), ('guest', 'none', 'br-lan.192')]:
         data[name] = {'up': True, 'proto': proto, 'l3_device': device, 'ipv4-address': [], 'ipv6-address': []}
@@ -127,6 +128,14 @@ class Acceptance(unittest.TestCase):
 
     def test_ntp_client_must_be_enabled_and_running(self):
         self.data['services']['sysntpd']['instances']['main']['running'] = False
+        self.assertEqual(self.run_report()[0]['status'], 'FAIL')
+
+    def test_luci_rpc_absence_malformed_reply_or_missing_wifi_features_fails(self):
+        for value in [None, [], {}, {'hostapd': None}, {'hostapd': {'cli': True, '11be': True, 'sae': False}}]:
+            self.data['luci_features'] = value
+            report, _ = self.run_report()
+            self.assertEqual(next(t['status'] for t in report['tests'] if t['id'] == 'luci_rpc_features'), 'FAIL')
+        del self.data['luci_features']
         self.assertEqual(self.run_report()[0]['status'], 'FAIL')
 
     def test_real_width_and_runtime_security_checked(self):
