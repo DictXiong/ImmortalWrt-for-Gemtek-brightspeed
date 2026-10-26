@@ -71,6 +71,26 @@ python3 scripts/dicttech/check-ap-rootfs.py --rootfs "$audit/rootfs" \
  --output "${image%.itb}.rootfs.audit.json"
 python3 scripts/dicttech/check-ap-image.py --layout "$layout" --image "$image" \
  --rootfs "$audit/rootfs" --output "${image%.itb}.audit.json"
+python3 scripts/dicttech/check-ap-packages.py \
+ --manifest "bin/targets/airoha/an7581/$prefix.manifest" \
+ --package-root bin/targets/airoha/an7581/packages \
+ --package-root bin/packages/aarch64_cortex-a53 \
+ --rootfs "$audit/rootfs" --apk staging_dir/host/bin/apk \
+ --output-dir "$audit/packages" --output "${image%.itb}.packages.audit.json"
+package_release="bin/targets/airoha/an7581/dicttech-packages/$prefix"
+mkdir -p "${package_release%/*}"
+# This path is reserved for generated, verified release packages, never inputs.
+rm -rf -- "$package_release"
+mv "$audit/packages" "$package_release"
+python3 - "${image%.itb}.packages.audit.json" "$package_release" "$image" <<'PY'
+import hashlib, json, sys
+from pathlib import Path
+report = Path(sys.argv[1])
+data = json.loads(report.read_text())
+data['release_package_directory'] = str(Path(sys.argv[2]).resolve())
+data['image_sha256'] = hashlib.sha256(Path(sys.argv[3]).read_bytes()).hexdigest()
+report.write_text(json.dumps(data, indent=2) + '\n')
+PY
 (
  cd bin/targets/airoha/an7581
  sha256sum -- "$prefix"-*.itb >dicttech-sha256sums

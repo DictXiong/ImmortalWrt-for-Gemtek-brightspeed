@@ -39,6 +39,7 @@ jobs:
           sudo python3 scripts/dicttech/test-ap-verify.py
           sudo python3 scripts/dicttech/tests/test_ap_image.py
           sudo python3 scripts/dicttech/tests/test_ap_rootfs.py
+          sudo python3 scripts/dicttech/tests/test_ap_packages.py
           sudo python3 scripts/dicttech/check-xr-roaming-package.py
           sudo python3 scripts/dicttech/test-xr-roaming.py
       - name: Build locked no-secret AP image
@@ -70,6 +71,4 @@ jobs:
             bin/targets/airoha/an7581/dicttech-*.json
             bin/targets/airoha/an7581/*.audit.json
             bin/targets/airoha/an7581/dicttech-sha256sums
-            bin/targets/airoha/an7581/packages/*.apk
-            bin/packages/aarch64_cortex-a53/base/ap-profile-*.apk
-            bin/packages/aarch64_cortex-a53/base/xr-roaming-*.apk
+            bin/targets/airoha/an7581/dicttech-packages/**/*.apk
