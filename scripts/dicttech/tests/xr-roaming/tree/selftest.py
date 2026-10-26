@@ -4,8 +4,10 @@ from pathlib import Path
 import hashlib,json,os,re,shlex,shutil,socket,subprocess,tempfile
 S=Path(__file__).resolve().parent
 JQ=shutil.which('jq')
-BB=os.environ.get('XR_TEST_BUSYBOX') or shutil.which('busybox') or ''
-SHELL=[BB,'ash'] if BB else ['/bin/sh']
+# Native fixtures rely on PATH mocks (notably pidof). Standalone BusyBox ash
+# may bypass them with builtin applets. Actual target ash is tested separately
+# by the public runner's explicit --c7-rootfs path.
+SHELL=['/bin/sh']
 results=[]
 target_vectors=[]
 def record(name,fn):
