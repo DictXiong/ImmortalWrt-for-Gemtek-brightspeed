@@ -76,18 +76,30 @@ def private_ipv4:
        ($a[0] == 192 and $a[1] == 168))
     end
   end;
-def config_ok:
+def config_base_ok:
   . as $c | type == "object" and .enabled == "1" and (.profile|profile_ok) and (.ssid|ssid_ok) and
   .iface==(profile_meta[$c.profile].iface) and .mld==(profile_meta[$c.profile].mld) and
   .max_links==(profile_meta[$c.profile].max_links) and
   ((.section|section_token) or (.profile=="main" and .section=="")) and
-  (.peer | private_ipv4) and (.self_mac | mac) and (.peer_mac | mac) and
-  .self_mac != .peer_mac and
-  (.peer_bssids | type == "array" and length >= 1 and length <= $c.max_links and
-   all(.[]; mac) and (unique | length) == length) and
+  (.self_mac|mac) and
   (.interval | type == "number" and floor == . and . >= 30 and . <= 300) and
   (.ttl | type == "number" and floor == . and . >= 180 and . <= 1800) and
   .ttl >= (3 * .interval);
+def config_ok:
+  . as $c | config_base_ok and
+  (.peer | private_ipv4) and (.peer_mac | mac) and .self_mac != .peer_mac and
+  (.peer_bssids | type == "array" and length >= 1 and length <= $c.max_links and
+   all(.[]; mac) and (unique | length) == length);
+def fleet_config_ok:
+  . as $c | config_base_ok and .peer_mode=="fleet" and
+  (.peers | type=="array" and length<=15) and
+  (.peers | all(.[];
+    (.id|section_token) and (.address|private_ipv4) and (.bridge_mac|mac) and .bridge_mac!=$c.self_mac and
+    (.bssids|type=="array" and length>=1 and length<=$c.max_links and all(.[];mac) and (unique|length)==length))) and
+  ([.peers[].id]|unique|length)==(.peers|length) and
+  ([.peers[].address]|unique|length)==(.peers|length) and
+  ([.peers[].bridge_mac]|unique|length)==(.peers|length) and
+  ([.peers[].bssids[]]|unique|length)==([.peers[].bssids[]]|length);
 def public_ok($ssid; $peer_mac; $allowed):
   type == "object" and (keys | sort) == ["bridge_mac", "reports", "revision", "ssid", "version"] and
   .version == 1 and .ssid == $ssid and .bridge_mac == $peer_mac and

@@ -1,0 +1,53 @@
+--- a/htdocs/luci-static/glass/css/cascade.css
++++ b/htdocs/luci-static/glass/css/cascade.css
+@@ -1031,6 +1031,11 @@
+   display: none;
+ }
+ /* ---- CBI Value rows ---- */
++/* Keep LuCI option dependencies hidden despite the flex row layout. */
++.cbi-value.hidden {
++  display: none !important;
++}
++
+ .cbi-value {
+   display: flex;
+   align-items: flex-start;
+@@ -1532,16 +1537,15 @@
+ .cbi-dropdown[open] > ul.dropdown {
+   /* Frosted glass dropdown list — matches sidebar/modal aesthetic.
+        Don't set top/left/bottom — LuCI's ui.js computes them inline based
+-       on available viewport space. LuCI's inline `max-height` can clamp
+-       to ~65px when the trigger is near the viewport edge, so override
+-       with !important (matches argon).
++       on available viewport space. Respect its inline `max-height`
++       so the menu fits the available space.
+        ([#6](https://github.com/rchen14b/luci-theme-glass/issues/6)) */
+   position: absolute;
+   z-index: var(--z-modal);
+   width: auto;
+   min-width: 100%;
+   max-width: none;
+-  max-height: 250px !important;
++  max-height: 250px;
+   overflow-y: auto;
+   display: block;
+   border-radius: var(--radius-md);
+@@ -1805,7 +1809,7 @@
+        itself already has glass background + padding, so the inner section
+        creates a visible box-in-box with extra padding
+        ([#6](https://github.com/rchen14b/luci-theme-glass/issues/6)). */
+-  /* Let open dropdowns render beyond the modal's scroll clip. */
++  /* Keep the modal scroll container stable while dropdowns are open. */
+ }
+ #modal_overlay > .modal > * {
+   max-width: 100%;
+@@ -1827,9 +1831,6 @@
+   border: none;
+   box-shadow: none;
+   border-radius: 0;
+-}
+-#modal_overlay > .modal:has(.cbi-dropdown[open]) {
+-  overflow: visible;
+ }
+ #modal_overlay > .modal.cbi-modal,
+ #modal_overlay > .modal.uci-dialog {

@@ -1,0 +1,14 @@
+config interface 'loopback'
+	option device 'lo'
+	option proto 'static'
+	option ipaddr '127.0.0.1'
+	option netmask '255.0.0.0'
+
+# No bridge, upstream, default route, DHCP client or other active ports.
+config interface 'ap_maintenance'
+	option device 'lan4'
+	option proto 'static'
+	option ipaddr '192.168.250.1'
+	option netmask '255.255.255.0'
+	option delegate '0'
+	option ipv6 '0'

@@ -1,0 +1,28 @@
+config defaults
+	option input 'DROP'
+	option output 'ACCEPT'
+	option forward 'DROP'
+	option flow_offloading '0'
+	option flow_offloading_hw '0'
+
+config zone 'setup'
+	option name 'setup'
+	list network 'ap_maintenance'
+	option input 'DROP'
+	option output 'ACCEPT'
+	option forward 'DROP'
+
+config rule 'setup_management'
+	option name 'Wired setup management'
+	option src 'setup'
+	option proto 'tcp'
+	option dest_port '80 12022'
+	option target 'ACCEPT'
+
+config rule 'setup_ping'
+	option name 'Wired setup IPv4 ping'
+	option src 'setup'
+	option family 'ipv4'
+	option proto 'icmp'
+	option icmp_type 'echo-request'
+	option target 'ACCEPT'

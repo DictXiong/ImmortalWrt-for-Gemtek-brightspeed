@@ -1,0 +1,17 @@
+# Drop AP-local guest copies; forwarded traffic and EAPOL remain permitted.
+table bridge xr_guest_guard
+flush table bridge xr_guest_guard
+table bridge xr_guest_guard {
+	chain input {
+		type filter hook input priority -10; policy accept;
+		vlan id 192 vlan type != 0x888e counter drop comment "Guest VLAN: no AP-local delivery"
+	}
+}
+table inet xr_guest_local
+flush table inet xr_guest_local
+table inet xr_guest_local {
+	chain input {
+		type filter hook input priority -10; policy accept;
+		iifname "br-lan.192" counter drop comment "Guest VLAN: no AP IP services"
+	}
+}

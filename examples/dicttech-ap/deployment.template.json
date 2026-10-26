@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "profile": "dicttech-ap-v1",
+  "common": {},
+  "devices": {
+    "ap_example": {
+      "hostname": "ap-example",
+      "maintenance_ipv4": "192.168.250.3",
+      "mac_base": "02:aa:bb:10:00:00"
+    }
+  },
+  "secrets": {
+    "wifi": {
+      "main": "",
+      "legacy": "",
+      "guest": "",
+      "iot": ""
+    },
+    "devices": {
+      "ap_example": {
+        "root_password_hash": "REPLACE_WITH_SUPPORTED_CRYPT_HASH"
+      }
+    }
+  }
+}

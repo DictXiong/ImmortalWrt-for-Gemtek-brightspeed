@@ -1,0 +1,75 @@
+name: Build DictTech AP
+
+on:
+  push:
+    branches: [dicttech/xr1710g-ap]
+  workflow_dispatch:
+    inputs:
+      layout:
+        description: XR1710G partition layout
+        required: true
+        default: legacy
+        type: choice
+        options: [legacy, ubi]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang flex bison gawk gettext git libncurses-dev libssl-dev python3 python3-setuptools rsync unzip wget xsltproc zlib1g-dev file swig jq
+      - name: Validate configuration, deployment and roaming
+        run: |
+          sudo python3 scripts/dicttech/test-ap-config.py
+          sudo python3 scripts/dicttech/test-ap-bootstrap.py
+          sudo python3 scripts/dicttech/tests/ap-deploy/test_transaction.py
+          sudo python3 scripts/dicttech/tests/ap-deploy/test_export_identity.py
+          sudo python3 scripts/dicttech/test-ap-verify.py
+          sudo python3 scripts/dicttech/tests/test_ap_image.py
+          sudo python3 scripts/dicttech/tests/test_ap_rootfs.py
+          sudo python3 scripts/dicttech/check-xr-roaming-package.py
+          sudo python3 scripts/dicttech/test-xr-roaming.py
+      - name: Build locked no-secret AP image
+        env:
+          AP_LAYOUT: ${{ inputs.layout || 'legacy' }}
+        run: bash scripts/dicttech/build-ap.sh --layout "$AP_LAYOUT" --jobs 2 2>&1 | tee dicttech-build.log
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test source UI and browser fixtures offline
+        run: |
+          npm install --prefix "$RUNNER_TEMP/dicttech-ui" --no-save playwright@1.59.1
+          "$RUNNER_TEMP/dicttech-ui/node_modules/.bin/playwright" install --with-deps chromium
+          node scripts/dicttech/test-ap-ui.cjs --require-browser \
+            --playwright-module "$RUNNER_TEMP/dicttech-ui/node_modules/playwright" \
+            --output bin/targets/airoha/an7581/dicttech-ui-tests.json
+      - name: Upload unsigned candidate for local acceptance
+        uses: actions/upload-artifact@v7
+        with:
+          name: dicttech-ap-${{ inputs.layout || 'legacy' }}-${{ github.sha }}
+          retention-days: 30
+          path: |
+            dicttech-build.log
+            bin/targets/airoha/an7581/*.itb
+            bin/targets/airoha/an7581/*.manifest
+            bin/targets/airoha/an7581/config.buildinfo
+            bin/targets/airoha/an7581/feeds.buildinfo
+            bin/targets/airoha/an7581/version.buildinfo
+            bin/targets/airoha/an7581/dicttech-*.json
+            bin/targets/airoha/an7581/*.audit.json
+            bin/targets/airoha/an7581/dicttech-sha256sums
+            bin/targets/airoha/an7581/packages/*.apk
+            bin/packages/aarch64_cortex-a53/base/ap-profile-*.apk
+            bin/packages/aarch64_cortex-a53/base/xr-roaming-*.apk

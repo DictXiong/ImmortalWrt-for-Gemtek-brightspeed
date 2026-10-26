@@ -1,0 +1,69 @@
+{
+  "wlan": {
+    "phy0": {
+      "path": "fixture/pcie/wifi-controller",
+      "info": {
+        "bands": {
+          "2G": {
+            "ht": true,
+            "he": true,
+            "eht": true,
+            "max_width": 40,
+            "modes": [
+              "NOHT",
+              "HT20",
+              "HE20",
+              "EHT20",
+              "HT40",
+              "HE40",
+              "EHT40"
+            ],
+            "default_channel": 1
+          },
+          "5G": {
+            "ht": true,
+            "vht": true,
+            "he": true,
+            "eht": true,
+            "max_width": 160,
+            "modes": [
+              "NOHT",
+              "HT20",
+              "VHT20",
+              "HE20",
+              "EHT20",
+              "HT40",
+              "VHT40",
+              "HE40",
+              "EHT40",
+              "VHT80",
+              "HE80",
+              "EHT80",
+              "VHT160",
+              "HE160",
+              "EHT160"
+            ],
+            "default_channel": 36
+          },
+          "6G": {
+            "he": true,
+            "eht": true,
+            "max_width": 160,
+            "modes": [
+              "NOHT",
+              "HE20",
+              "EHT20",
+              "HE40",
+              "EHT40",
+              "HE80",
+              "EHT80",
+              "HE160",
+              "EHT160",
+              "EHT320"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

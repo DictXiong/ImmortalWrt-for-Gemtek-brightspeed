@@ -1,0 +1,30 @@
+Subject: [PATCH] hostapd: allow complete neighbor replies for AP fleets
+
+The AP profile permits up to 15 peers with three links each. Valid neighbor
+reports and a 32-byte SSID can exceed the default 8 KiB control reply even
+though each peer response is individually bounded. Keep both ends of the
+read-only control exchange large enough for that bounded set. Requests and
+the ubus neighbor-list API are unchanged.
+
+--- a/hostapd/hostapd_cli.c
++++ b/hostapd/hostapd_cli.c
+@@ -200,7 +200,7 @@ static void hostapd_cli_msg_cb(char *msg, size_t len)
+ 
+ static int _wpa_ctrl_command(struct wpa_ctrl *ctrl, const char *cmd, int print)
+ {
+-	char buf[8192];
++	char buf[65536];
+ 	size_t len;
+ 	int ret;
+ 
+--- a/hostapd/ctrl_iface.c
++++ b/hostapd/ctrl_iface.c
+@@ -4721,7 +4721,7 @@ static void hostapd_ctrl_iface_receive(int sock, void *eloop_ctx,
+ 	struct sockaddr_storage from;
+ 	socklen_t fromlen = sizeof(from);
+ 	char *reply, *pos = buf;
+-	const int reply_size = 8192;
++	const int reply_size = 65536;
+ 	int reply_len;
+ 	int level = MSG_DEBUG;
+ #ifdef CONFIG_CTRL_IFACE_UDP

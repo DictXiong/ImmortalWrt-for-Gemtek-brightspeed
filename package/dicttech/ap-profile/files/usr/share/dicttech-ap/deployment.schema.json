@@ -1,0 +1,499 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:dicttech:ap:deployment:v1",
+  "title": "DictTech AP deployment v1",
+  "description": "Delta-only interchange produced by temporary local merge or future Nix+sops. Runtime renderer additionally validates byte lengths and fleet-wide consistency.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "profile": {
+      "const": "dicttech-ap-v1"
+    },
+    "common": {
+      "$ref": "#/$defs/common"
+    },
+    "devices": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[A-Za-z][A-Za-z0-9_]{0,47}$": {
+          "$ref": "#/$defs/device"
+        }
+      },
+      "maxProperties": 16,
+      "propertyNames": {
+        "not": {
+          "enum": [
+            "main",
+            "battalion",
+            "guest",
+            "iot"
+          ]
+        }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "wifi": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "main": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 63,
+              "description": "8–63 UTF-8 bytes; no control characters."
+            },
+            "legacy": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 63,
+              "description": "8–63 UTF-8 bytes; no control characters."
+            },
+            "guest": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 63,
+              "description": "8–63 UTF-8 bytes; no control characters."
+            },
+            "iot": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 63,
+              "description": "8–63 UTF-8 bytes; no control characters."
+            }
+          },
+          "required": [
+            "main",
+            "legacy",
+            "guest",
+            "iot"
+          ]
+        },
+        "devices": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[A-Za-z][A-Za-z0-9_]{0,47}$": {
+              "$ref": "#/$defs/deviceSecrets"
+            }
+          },
+          "propertyNames": {
+            "not": {
+              "enum": [
+                "main",
+                "battalion",
+                "guest",
+                "iot"
+              ]
+            }
+          }
+        }
+      },
+      "required": [
+        "wifi",
+        "devices"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "profile",
+    "devices",
+    "secrets"
+  ],
+  "$defs": {
+    "common": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "country": {
+          "enum": [
+            "US",
+            "CN"
+          ]
+        },
+        "ssh_port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "zonename": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "ntp_servers": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9.:-]+$"
+          }
+        },
+        "radios": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "radio0": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "channel": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 11
+                },
+                "htmode": {
+                  "enum": [
+                    "EHT20",
+                    "EHT40"
+                  ]
+                },
+                "force_40": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "radio1": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "channel": {
+                  "enum": [
+                    36,
+                    40,
+                    44,
+                    48,
+                    52,
+                    56,
+                    60,
+                    64
+                  ]
+                },
+                "htmode": {
+                  "enum": [
+                    "EHT20",
+                    "EHT40",
+                    "EHT80",
+                    "EHT160"
+                  ]
+                }
+              }
+            },
+            "radio2": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "channel": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 233,
+                  "multipleOf": 1,
+                  "description": "Renderer requires channels1,5,9,…,233."
+                },
+                "htmode": {
+                  "enum": [
+                    "EHT20",
+                    "EHT40",
+                    "EHT80",
+                    "EHT160",
+                    "EHT320"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "ssids": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "main": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 32,
+                  "description": "Renderer enforces1–32 UTF-8 bytes and rejects control characters."
+                },
+                "six_ghz": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "legacy": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 32,
+                  "description": "Renderer enforces1–32 UTF-8 bytes and rejects control characters."
+                }
+              }
+            },
+            "guest": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 32,
+                  "description": "Renderer enforces1–32 UTF-8 bytes and rejects control characters."
+                }
+              }
+            },
+            "iot": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 32,
+                  "description": "Renderer enforces1–32 UTF-8 bytes and rejects control characters."
+                },
+                "hidden": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        },
+        "roaming": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "interval": {
+              "type": "integer",
+              "minimum": 30,
+              "maximum": 300
+            },
+            "ttl": {
+              "type": "integer",
+              "minimum": 180,
+              "maximum": 1800
+            }
+          }
+        }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bridge": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+          "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+        },
+        "ethernet": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "wan": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+              "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+            },
+            "lan2": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+              "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+            },
+            "lan3": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+              "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+            },
+            "lan4": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+              "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+            },
+            "cpu": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+              "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+            }
+          }
+        },
+        "radios": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "radio0": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+              "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+            },
+            "radio1": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+              "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+            },
+            "radio2": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+              "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+            }
+          }
+        },
+        "mlds": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "main": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+              "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+            },
+            "legacy": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+              "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+            },
+            "guest": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+              "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+            }
+          }
+        },
+        "bssids": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "main": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "uniqueItems": true
+            },
+            "legacy": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+              },
+              "minItems": 2,
+              "maxItems": 2,
+              "uniqueItems": true
+            },
+            "guest": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+              },
+              "minItems": 2,
+              "maxItems": 2,
+              "uniqueItems": true
+            },
+            "iot": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+              },
+              "minItems": 1,
+              "maxItems": 1,
+              "uniqueItems": true
+            }
+          }
+        },
+        "duid": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-fA-F]{2}){4,64}$"
+        }
+      }
+    },
+    "device": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hostname": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$"
+        },
+        "maintenance_ipv4": {
+          "type": "string",
+          "pattern": "^192\\.168\\.250\\.(?:[1-9]|[1-9][0-9])$"
+        },
+        "mac_base": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+          "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+        },
+        "identity": {
+          "$ref": "#/$defs/identity"
+        },
+        "legacy_ssid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "description": "Renderer enforces1–32 UTF-8 bytes and rejects control characters."
+        },
+        "overrides": {
+          "$ref": "#/$defs/common"
+        }
+      },
+      "required": [
+        "hostname",
+        "maintenance_ipv4",
+        "mac_base"
+      ]
+    },
+    "deviceSecrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "root_password_hash": {
+          "type": "string",
+          "pattern": "^\\$(5|6)\\$(?:rounds=[0-9]{4,9}\\$)?[./A-Za-z0-9]{1,16}\\$[./A-Za-z0-9]+$",
+          "description": "Renderer enforces SHA-256/512 crypt digest lengths and valid rounds."
+        },
+        "authorized_keys": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          },
+          "description": "Absent preserves current keys; [] explicitly removes them. Key options are not accepted."
+        }
+      },
+      "required": [
+        "root_password_hash"
+      ]
+    }
+  }
+}

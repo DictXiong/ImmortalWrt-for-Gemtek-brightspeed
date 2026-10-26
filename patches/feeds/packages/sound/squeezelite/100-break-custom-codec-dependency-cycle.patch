@@ -1,0 +1,20 @@
+--- a/sound/squeezelite/Makefile
++++ b/sound/squeezelite/Makefile
+@@ -51,6 +51,8 @@
+     $(call Package/squeezelite/default)
+     TITLE+= (custom)
+     VARIANT:=custom
++    # Avoid a parent/codec Kconfig cycle through ffmpeg feature dependencies.
++    # The opt-in custom variant retains its decoder dependency unconditionally.
+     DEPENDS+= @!ALL \
+               +SQUEEZELITE_AAC:libfaad2 \
+               +SQUEEZELITE_FLAC:libflac \
+@@ -61,7 +63,7 @@
+               +SQUEEZELITE_SSL:libopenssl \
+               +SQUEEZELITE_VORBIS:libvorbis \
+               +SQUEEZELITE_VORBIS_TREMOR:libvorbisidec \
+-              +SQUEEZELITE_WMA_ALAC:libffmpeg-audio-dec
++              +libffmpeg-audio-dec
+     MENU:=1
+ endef
+ 

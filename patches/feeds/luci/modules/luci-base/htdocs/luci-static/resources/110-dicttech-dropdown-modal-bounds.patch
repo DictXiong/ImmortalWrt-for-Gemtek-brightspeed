@@ -1,0 +1,191 @@
+--- a/modules/luci-base/htdocs/luci-static/resources/ui.js
++++ b/modules/luci-base/htdocs/luci-static/resources/ui.js
+@@ -1284,116 +1284,60 @@
+ 	 * @private
+ 	 * @param {Node} sb
+ 	 */
+-	openDropdown(sb) {
+-		const ul = sb.querySelector('ul');
+-		const li = ul.querySelectorAll('li');
+-		const fl = findParent(sb, '.cbi-value-field');
+-		const sel = ul.querySelector('[selected]');
+-		const rect = sb.getBoundingClientRect();
+-		const items = Math.min(this.options.dropdown_items, li.length);
+-		const scrollParent = this.getScrollParent(sb);
+-
+-		document.querySelectorAll('.cbi-dropdown[open]').forEach(s => {
+-			s.dispatchEvent(new CustomEvent('cbi-dropdown-close', {}));
+-		});
+-
+-		sb.setAttribute('open', '');
+-
+-		const pv = ul.cloneNode(true);
+-		pv.classList.add('preview');
+-
+-		if (fl)
+-			fl.classList.add('cbi-dropdown-open');
+-
+-		if ('ontouchstart' in window) {
+-			const vpWidth = Math.max(document.documentElement.clientWidth, window.innerWidth ?? 0);
+-			const vpHeight = Math.max(document.documentElement.clientHeight, window.innerHeight ?? 0);
+-			let start = null;
+-
+-			ul.style.top = `${sb.offsetHeight}px`;
+-			ul.style.left = `${-rect.left}px`;
+-			ul.style.right = `${rect.right - vpWidth}px`;
+-			ul.style.maxHeight = `${vpHeight * 0.5}px`;
+-			ul.style.WebkitOverflowScrolling = 'touch';
+-
+-			const scrollFrom = scrollParent.scrollTop;
+-			const scrollTo = scrollFrom + rect.top - vpHeight * 0.5;
+-
+-			const scrollStep = timestamp => {
+-				if (!start) {
+-					start = timestamp;
+-					ul.scrollTop = sel ? Math.max(sel.offsetTop - sel.offsetHeight, 0) : 0;
+-				}
+-
+-				const duration = Math.max(timestamp - start, 1);
+-				if (duration < 100) {
+-					scrollParent.scrollTop = scrollFrom + (scrollTo - scrollFrom) * (duration / 100);
+-					window.requestAnimationFrame(scrollStep);
+-				}
+-				else {
+-					scrollParent.scrollTop = scrollTo;
+-				}
+-			};
+-
+-			window.requestAnimationFrame(scrollStep);
+-		}
+-		else {
+-			ul.style.maxHeight = '1px';
+-			ul.style.top = ul.style.bottom = '';
+-
+-			window.requestAnimationFrame(() => {
+-				const containerRect = scrollParent.getBoundingClientRect();
+-				const itemHeight = li.length ? li[Math.max(0, li.length - 2)].getBoundingClientRect().height : 0;
+-				const visibleItems = (items == -1 ? li.length : items);
+-				const fullHeight = itemHeight * visibleItems;
+-				const spaceAbove = rect.top - containerRect.top;
+-				const spaceBelow = containerRect.bottom - rect.bottom;
+-
+-				if (fullHeight <= spaceBelow) {
+-					ul.style.top = `${rect.height}px`;
+-					ul.style.maxHeight = `${spaceBelow}px`;
+-				}
+-				else if (fullHeight <= spaceAbove) {
+-					ul.style.bottom = `${rect.height}px`;
+-					ul.style.maxHeight = `${spaceAbove}px`;
+-				}
+-				else if (spaceBelow >= spaceAbove) {
+-					ul.style.top = `${rect.height}px`;
+-					ul.style.maxHeight = `${spaceBelow - (spaceBelow % itemHeight)}px`;
+-				}
+-				else {
+-					ul.style.bottom = `${rect.height}px`;
+-					ul.style.maxHeight = `${spaceAbove - (spaceAbove % itemHeight)}px`;
+-				}
+-
+-				ul.scrollTop = sel ? Math.max(sel.offsetTop - sel.offsetHeight, 0) : 0;
+-			});
+-		}
+-
+-		const cboxes = ul.querySelectorAll('[selected] input[type="checkbox"]');
+-		for (let i = 0; i < cboxes.length; i++) {
+-			cboxes[i].checked = true;
+-			cboxes[i].disabled = (cboxes.length == 1 && !this.options.optional);
+-		}
+-
+-		ul.classList.add('dropdown');
+-
+-		sb.insertBefore(pv, ul.nextElementSibling);
+-
+-		li.forEach(l => {
+-			if (!l.hasAttribute('unselectable'))
+-				l.setAttribute('tabindex', 0);
+-		});
+-
+-		sb.lastElementChild.setAttribute('tabindex', 0);
+-
+-		const focusFn = L.bind((el) => {
+-			this.setFocus(sb, el, true);
+-			ul.removeEventListener('transitionend', focusFn);
+-		}, this, sel ?? li[0]);
+-
+-		ul.addEventListener('transitionend', focusFn);
+-	},
++	openDropdown(sb){const ul=sb.querySelector('ul');const li=ul.querySelectorAll('li');const fl=findParent(sb,'.cbi-value-field');const sel=ul.querySelector('[selected]');const rect=sb.getBoundingClientRect();const items=Math.min(this.options.dropdown_items,li.length);document.querySelectorAll('.cbi-dropdown[open]').forEach(s=>{s.dispatchEvent(new CustomEvent('cbi-dropdown-close',{}));});sb.setAttribute('open','');const pv=ul.cloneNode(true);pv.classList.add('preview');if(fl)
++fl.classList.add('cbi-dropdown-open');if('ontouchstart'in window&&!findParent(sb,'.modal')){const scrollParent=this.getScrollParent(sb);const vpWidth=Math.max(document.documentElement.clientWidth,window.innerWidth??0);const vpHeight=Math.max(document.documentElement.clientHeight,window.innerHeight??0);let start=null;ul.style.top=`${sb.offsetHeight}px`;ul.style.left=`${-rect.left}px`;ul.style.right=`${rect.right - vpWidth}px`;ul.style.maxHeight=`${vpHeight * 0.5}px`;ul.style.WebkitOverflowScrolling='touch';const scrollFrom=scrollParent.scrollTop;const scrollTo=scrollFrom+rect.top-vpHeight*0.5;const scrollStep=timestamp=>{if(!start){start=timestamp;ul.scrollTop=sel?Math.max(sel.offsetTop-sel.offsetHeight,0):0;}
++const duration=Math.max(timestamp-start,1);if(duration<100){scrollParent.scrollTop=scrollFrom+(scrollTo-scrollFrom)*(duration/100);window.requestAnimationFrame(scrollStep);}
++else{scrollParent.scrollTop=scrollTo;}};window.requestAnimationFrame(scrollStep);}
++else {
++    ul.style.maxHeight = '1px';
++    ul.style.top = ul.style.bottom = '';
++    window.requestAnimationFrame(() => {
++        if (!sb.hasAttribute('open')) return;
++        const rect = sb.getBoundingClientRect();
++        const scrollParent = this.getScrollParent(sb);
++        const containerRect = scrollParent.getBoundingClientRect();
++        const viewportWidth = document.documentElement.clientWidth || window.innerWidth;
++        const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
++        const isRoot = scrollParent == document.scrollingElement ||
++            scrollParent == document.documentElement || scrollParent == document.body;
++        const clientLeft = containerRect.left + scrollParent.clientLeft;
++        const clientTop = containerRect.top + scrollParent.clientTop;
++        const boundsLeft = isRoot ? 0 : Math.max(0, clientLeft);
++        const boundsTop = isRoot ? 0 : Math.max(0, clientTop);
++        const boundsRight = isRoot ? viewportWidth :
++            Math.min(viewportWidth, clientLeft + scrollParent.clientWidth);
++        const boundsBottom = isRoot ? viewportHeight :
++            Math.min(viewportHeight, clientTop + scrollParent.clientHeight);
++        const boundsWidth = Math.max(0, boundsRight - boundsLeft);
++
++        ul.style.boxSizing = 'border-box';
++        ul.style.maxWidth = `${boundsWidth}px`;
++        ul.style.minWidth = `${Math.min(rect.width, boundsWidth)}px`;
++        ul.style.left = ul.style.top = '0px';
++        ul.style.right = ul.style.bottom = '';
++        const origin = ul.getBoundingClientRect();
++        const itemHeight = li.length ? li[Math.max(0, li.length - 2)].getBoundingClientRect().height : 0;
++        const visibleItems = items == -1 ? li.length : items;
++        const fullHeight = itemHeight * visibleItems;
++        const spaceAbove = Math.max(0, Math.min(rect.top, boundsBottom) - boundsTop);
++        const spaceBelow = Math.max(0, boundsBottom - Math.max(rect.bottom, boundsTop));
++        const below = fullHeight <= spaceBelow || (fullHeight > spaceAbove && spaceBelow >= spaceAbove);
++        const space = below ? spaceBelow : spaceAbove;
++        const maxHeight = fullHeight <= space || !itemHeight ? space : space - (space % itemHeight);
++        ul.style.maxHeight = `${Math.max(0, maxHeight)}px`;
++        const menuRect = ul.getBoundingClientRect();
++        const desiredLeft = Math.max(boundsLeft, Math.min(origin.left, boundsRight - menuRect.width));
++        const desiredTop = below ? Math.max(rect.bottom, boundsTop) :
++            Math.min(rect.top, boundsBottom) - menuRect.height;
++        const menuTop = Math.max(boundsTop, Math.min(desiredTop, boundsBottom - menuRect.height));
++        ul.style.left = `${desiredLeft - origin.left}px`;
++        ul.style.top = `${menuTop - origin.top}px`;
++        ul.scrollTop = sel ? Math.max(sel.offsetTop - sel.offsetHeight, 0) : 0;
++    });
++}
++const cboxes=ul.querySelectorAll('[selected] input[type="checkbox"]');for(let i=0;i<cboxes.length;i++){cboxes[i].checked=true;cboxes[i].disabled=(cboxes.length==1&&!this.options.optional);}
++ul.classList.add('dropdown');sb.insertBefore(pv,ul.nextElementSibling);li.forEach(l=>{if(!l.hasAttribute('unselectable'))
++l.setAttribute('tabindex',0);});sb.lastElementChild.setAttribute('tabindex',0);const focusFn=L.bind((el)=>{this.setFocus(sb,el,true);ul.removeEventListener('transitionend',focusFn);},this,sel??li[0]);ul.addEventListener('transitionend',focusFn);},
+ 
+ 	/**
+ 	 * @private
+@@ -1417,7 +1361,8 @@
+ 		sb.style.width = sb.style.height = '';
+ 
+ 		ul.classList.remove('dropdown');
+-		ul.style.top = ul.style.bottom = ul.style.maxHeight = '';
++		for (const property of ['top', 'bottom', 'left', 'right', 'maxHeight', 'maxWidth', 'minWidth', 'boxSizing', 'WebkitOverflowScrolling'])
++			ul.style[property] = '';
+ 
+ 		if (fl)
+ 			fl.classList.remove('cbi-dropdown-open');
+@@ -1523,6 +1468,7 @@
+ 	 */
+ 	transformItem(sb, li) {
+ 		const cbox = E('form', {}, E('input', { type: 'checkbox', tabindex: -1, onclick: 'event.preventDefault()' }));
++		cbox.firstElementChild.checked = li.hasAttribute('selected');
+ 		const label = E('label');
+ 
+ 		while (li.firstChild)

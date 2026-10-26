@@ -1,0 +1,3 @@
+#!/bin/sh
+# No credentials or device identity are included in the image.
+/usr/lib/dicttech-ap/bootstrap.sh prepare

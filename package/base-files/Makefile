@@ -232,7 +232,8 @@ else
 	$(LN) ../tmp/lock $(1)/var/lock
 	mkdir -p $(1)/tmp/lock
 endif
-	$(LN) /tmp/resolv.conf /tmp/TZ /tmp/localtime $(1)/etc/
+	$(LN) /tmp/TZ /tmp/localtime $(1)/etc/
+	$(LN) $(if $(CONFIG_PACKAGE_ap-profile),/tmp/resolv.conf.d/resolv.conf.auto,/tmp/resolv.conf) $(1)/etc/resolv.conf
 	$(LN) /tmp/sysinfo/board.json $(1)/etc/board.json
 
 	chmod 0600 $(1)/etc/shadow

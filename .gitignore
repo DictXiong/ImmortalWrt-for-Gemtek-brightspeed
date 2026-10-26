@@ -15,6 +15,14 @@
 /feeds
 /feeds.conf
 /files
+# Local deployment inputs/receipts may contain credentials. Examples live below
+# examples/ with different names; real site files stay outside this checkout.
+/ap-common.json
+/ap-devices.json
+/ap-secrets.json
+/ap-deployment.json
+/.dicttech-ap-*.json
+__pycache__/
 /target/linux/feeds
 /overlay
 /package/feeds

@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "source": "Verified naoki runtime UI fixes ported to locked C7 source package files.",
+  "feed_luci_revision": "05c955f0aca2f5e8de1c126b0ec9e9e677e83b3f",
+  "feed_glass_revision": "68e26dc41c254e68f37f184ebe64a9925da7d539",
+  "patches": {
+    "device-settings": {
+      "target": "modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js",
+      "source_sha256": "2a3ef93ca7b8c10393f05d9bf60c0cb5f5a37aef70799eabedbfb9c5159dfc16",
+      "patched_sha256": "7ebb6ac5ac5bd6bb6e501d18d39a258df35eacb8625a4d652a5b97270509b1fe",
+      "patch": "patches/feeds/luci/modules/luci-mod-network/htdocs/luci-static/resources/view/network/110-dicttech-shared-radio-settings.patch"
+    },
+    "dropdown-ui": {
+      "target": "modules/luci-base/htdocs/luci-static/resources/ui.js",
+      "source_sha256": "a5fcc1a5ec2b468beeb4b7e8ef4dfbf58ece407e9814cd34bdde625ee93da800",
+      "patched_sha256": "adb762b38fc3d5d510f2307c86b2969dd7cd769b4ae077a5575cf3279854ff1f",
+      "patch": "patches/feeds/luci/modules/luci-base/htdocs/luci-static/resources/110-dicttech-dropdown-modal-bounds.patch"
+    },
+    "dropdown-theme": {
+      "target": "htdocs/luci-static/glass/css/cascade.css",
+      "source_sha256": "ffffcd147254d7e4adf95f7a839e8a1165cf1bde2cc368e9b411706e23607c09",
+      "patched_sha256": "5ab5e50fea0f843367edaae0eb3b20e3fc97066100723e46f0ccf22aff4bf02b",
+      "patch": "patches/feeds/glass/htdocs/luci-static/glass/css/110-dicttech-dropdown-modal-bounds.patch"
+    },
+    "mlo-widths": {
+      "target": "package/emortal/luci-app-mlo/htdocs/luci-static/resources/view/mlo.js",
+      "source_sha256": "5ad4b45cdbfd85de0e22dee326512c238b364fe4eea0bc8512664a0add3d2155",
+      "patched_sha256": "1b7a65e1b39adcc44ca6a98e63d4881eee73c1df419c5ee091f7085c6667a193"
+    }
+  }
+}

@@ -136,7 +136,7 @@ set ${si}.mode='ap'
 set ${si}.ssid='${defaults?.ssid || "ImmortalWrt"}'
 set ${si}.encryption='${defaults?.encryption || encryption}'
 set ${si}.key='${defaults?.key || ""}'
-set ${si}.disabled='0'
+set ${si}.disabled='${readfile("/usr/share/dicttech-ap/defaults.json") ? "1" : "0"}'
 
 `);
 		config[name] = {};

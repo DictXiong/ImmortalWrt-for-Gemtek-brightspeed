@@ -651,6 +651,38 @@ return view.extend({
 		o.depends('mode', 'ap');
 		o.modalonly = true;
 
+
+{
+    const widthsByBand = {
+        '2g': [20, 40],
+        '5g': [20, 40, 80, 160],
+        '6g': [20, 40, 80, 160, 320]
+    };
+
+    for (const radio of radios) {
+        const widths = widthsByBand[radio.band];
+        if (!Array.isArray(widths))
+            continue;
+
+        const radioSection = m.section(form.NamedSection, radio['.name'],
+            'wifi-device', _('Device Configuration') + ': ' + radioLabel(radio));
+        radioSection.addremove = false;
+
+        const bandwidth = radioSection.option(form.ListValue, 'htmode', _('Bandwidth'));
+        const currentHtmode = uci.get('wireless', radio['.name'], 'htmode');
+        const modes = widths.map(width => 'EHT' + width);
+        bandwidth.rmempty = !currentHtmode;
+
+        if (!currentHtmode)
+            bandwidth.value('', _('unspecified'));
+        else if (modes.indexOf(currentHtmode) < 0)
+            bandwidth.value(currentHtmode, currentHtmode);
+
+        for (const width of widths)
+            bandwidth.value('EHT' + width, width + ' MHz');
+    }
+}
+
 		refreshRuntime = function(nodes) {
 			return L.resolveDefault(callLuciWirelessDevices(), {}).then(function(status) {
 				let nextRuntime = flattenWirelessStatus(status);

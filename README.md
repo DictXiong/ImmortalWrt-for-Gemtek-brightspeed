@@ -15,6 +15,9 @@ XR1710G 与 XG2010G 设备维护的 Airoha AN7581 固件项目。
 
 项目的重要功能、稳定性和补丁维护记录见 [更新日志](CHANGELOG.md)。
 
+本仓库的 `dicttech/xr1710g-ap` 自用分支另提供[统一 AP 镜像与部署流程](docs/dicttech-ap.md)，
+使用独立构建配置、无秘密的公共默认值和外部 JSON 部署。其首次启动入口与下述上游默认配置不同。
+
 当前维护两个相互隔离的硬件配置：
 
 - **XR1710G**：Brightspeed 10G Wi-Fi 7 路由器，使用 `1710.config`，包含 MT7996 无线、NPU 和 RTL8261BE 以太网支持。
