@@ -25,8 +25,9 @@ def fixture():
                 'identity': {'device_id': state['device_id'], 'bridge_mac': state['device']['identity']['bridge'], 'board_name': 'gemtek,xr1710g'}}
     data = {'contract': contract, 'snapshot_stable': True, 'guest_addresses': [{'ifname': 'br-lan.192', 'addr_info': []}],
             'sysctls': '1\n1\n0\n0\n0\n0\n', 'vlans': [], 'security': '',
-            'services': {name: {'instances': {'main': {'running': True}}} for name in ['network', 'dropbear', 'uhttpd', 'xr_roaming']},
+            'services': {name: {'instances': {'main': {'running': True}}} for name in ['network', 'sysntpd', 'dropbear', 'uhttpd', 'xr_roaming']},
             'service_links': '\n'.join('S20' + name for name in state['services']['enabled']),
+            'boot_hooks': 'S03dicttech-ap-transaction\nS04dicttech-ap-prepare\nS13dicttech-ap-finalize\n',
             'fw4': {'nftables': [{'table': {'family': 'inet', 'name': 'fw4'}}]}}
     for name, proto, device in [('lan', 'dhcp', 'br-lan.1'), ('lan6', 'dhcpv6', 'br-lan.1'), ('maintenance', 'static', 'br-lan.1'), ('guest', 'none', 'br-lan.192')]:
         data[name] = {'up': True, 'proto': proto, 'l3_device': device, 'ipv4-address': [], 'ipv6-address': []}
@@ -119,12 +120,46 @@ class Acceptance(unittest.TestCase):
     def test_config_permission_drift_and_stale_roamer_fail(self):
         self.data['contract']['modes']['etc/config/wireless'] = ['-rw-r--r--', '0']
         self.assertEqual(self.run_report()[0]['status'], 'FAIL')
+
         self.state, self.files, self.data = fixture()
         self.data['roaming_main']['snapshot_fresh'] = False
         self.assertEqual(self.run_report()[0]['status'], 'FAIL')
 
+    def test_ntp_client_must_be_enabled_and_running(self):
+        self.data['services']['sysntpd']['instances']['main']['running'] = False
+        self.assertEqual(self.run_report()[0]['status'], 'FAIL')
+
     def test_real_width_and_runtime_security_checked(self):
         self.data['radio_1'] = 'state=ENABLED\neht_oper_chwidth=1\nsecondary_channel=1\n'
+        self.assertEqual(self.run_report()[0]['status'], 'FAIL')
+
+    def test_c7_quoted_ssid2_matches_plaintext_utf8_and_literal_backslashes(self):
+        values = ['DictTech', 'DictTech-IoT', '327Battalion', '含空格 WLAN', 'A"B', r'A\B', r'not\nnewline', '"quoted"']
+        for value in values:
+            self.assertEqual(v.parse_ssid2('"' + value + '"'), value)
+            self.assertEqual(v.parse_ssid2(value.encode().hex()), value)
+        # Actual C7 generated shape uses ssid2="DictTech", not hex-only.
+        self.data['security'] = '\n'.join('ssid2="' + line[5:] + '"' if line.startswith('ssid=') else line for line in self.data['security'].splitlines())
+        report, _ = self.run_report()
+        self.assertTrue(all(t['status'] == 'PASS' for t in report['tests'] if t['id'].startswith('security_')))
+
+    def test_ssid2_printf_is_explicitly_unsupported_and_hex_is_strict(self):
+        for value in ['P"name\\x20suffix"', '"unterminated', '"name"extra', '41 42', 'a', 'zz', '""', '"' + '界' * 11 + '"']:
+            with self.assertRaises(ValueError):
+                v.parse_ssid2(value)
+        blocks = v.security_blocks('interface=fixture\nssid2=P"name\\x20suffix"\n')
+        self.assertIsNone(blocks[0]['ssid'])
+        self.assertEqual(blocks[0]['ssid_parse_error'], 'unsupported_ssid_printf_encoding')
+
+    def test_management_reachability_needs_independent_evidence(self):
+        report, _ = self.run_report()
+        self.assertEqual(next(t['status'] for t in report['tests'] if t['id'] == 'management_reachability'), 'NOT_TESTED')
+
+    def test_persistent_boot_policy_links_are_required_without_daemon_pid(self):
+        self.assertNotIn('dicttech-ap-prepare', self.data['services'])
+        report, _ = self.run_report()
+        self.assertEqual(next(t['status'] for t in report['tests'] if t['id'] == 'boot_policy_hooks'), 'PASS')
+        self.data['boot_hooks'] = self.data['boot_hooks'].replace('S04dicttech-ap-prepare\n', '')
         self.assertEqual(self.run_report()[0]['status'], 'FAIL')
         self.state, self.files, self.data = fixture()
         self.data['security'] = self.data['security'].replace('ieee80211w=2', 'ieee80211w=1')

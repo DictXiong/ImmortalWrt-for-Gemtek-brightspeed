@@ -176,8 +176,12 @@ try:
   f.run('preflight',ok=False);f.helper.write_text(original)
  record('missing_external_utility_rejected_before_state_access',missing_tool_gate)
  def wrong_owner():
-  fake=f.bin/'ls';fake.write_text('#!/bin/sh\nprintf "%s\\n" "drwx------ 2 123 0 40 Oct 26 fixture"\n');fake.chmod(0o700)
-  f.run('preflight',ok=False);fake.unlink()
+  # Exercise the real ownership gate: BusyBox ash may prefer its builtin ls
+  # applet over a PATH fixture on other distributions.
+  owner=f.state.stat().st_uid
+  os.chown(f.state,123,-1)
+  try:f.run('preflight',ok=False)
+  finally:os.chown(f.state,owner,-1)
  record('numeric_ls_owner_must_be_root',wrong_owner)
 finally:f.close()
 

@@ -34,6 +34,10 @@ The baseline checks cover:
 - Four live SSIDs and expected per-link BSSIDs/frequencies; generated hostapd
   key management, PMF and k/v flags. The main links' actual width is checked;
   2.4 GHz 20/40 coexistence may legitimately report 20 MHz.
+  C7's `ssid2` accepts ordinary double-quoted literal strings and hexadecimal
+  bytes. The verifier follows hostapd's parser semantics rather than treating
+  quoted values as JSON. Its optional `P"..."` printf encoding is deliberately
+  unsupported and fails verification instead of guessing escape semantics.
 - Fresh roaming snapshots and every configured peer. A single-AP inventory has
   an empty expected peer list and does not require a fictitious remote peer.
 - Guest bridge/inet local guards, the EAPOL exception and pinned bridge sysctls.
@@ -41,6 +45,10 @@ The baseline checks cover:
   the rule must belong to the expected family/table's actual input hook.
 - Required daemons and disabled unwanted services. Firewall is a oneshot
   service, so its live fw4 table is checked instead of requiring a daemon PID.
+- Persistent early transaction/prepare and post-boot finalize links:
+  `S03dicttech-ap-transaction`, `S04dicttech-ap-prepare` and
+  `S13dicttech-ap-finalize`. Each must be an enabled link to its executable init
+  script. These boot-policy oneshots are not required to keep a daemon PID.
 
 A changed radio frequency/width is reported as a failed policy check, not as a
 proven firmware bug. DFS, regulatory behavior or unfinished startup can require
@@ -52,6 +60,10 @@ A running AP and matching configuration do not prove actual client behavior.
 The following tests are explicitly `NOT_TESTED` unless external evidence is
 provided:
 
+- Independent management reachability at the DHCP and maintenance addresses,
+  over the intended IPv4 and IPv6 paths. An address shown by ubus does not prove
+  that another host can connect to it. A reused SSH master can continue using
+  another address or address family, so it is not proof of new reachability.
 - Four-SSID client authentication, including forced WPA2 IoT compatibility.
 - IPv4/IPv6 Internet access and DNS/HTTPS from a real wireless client.
 - Guest-client mutual communication and internal-network isolation.
@@ -102,7 +114,7 @@ different boot/configuration report; they are not attestation of the report's
 truth. Filling a report with `PASS` without executing the named tests is not
 acceptance. No report is loaded automatically from a previous run.
 
-External IDs are `wifi_client_auth`, `ipv4_ipv6_internet`,
+External IDs are `management_reachability`, `wifi_client_auth`, `ipv4_ipv6_internet`,
 `guest_client_mutual`, `guest_internal_isolation`,
 `ppe_bound_isolation_and_vlan`, `spoof_and_vlan_injection`,
 `actual_client_roaming`, `cold_boot_and_link_recovery`, `cpu_and_throughput`,

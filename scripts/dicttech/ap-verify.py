@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import sys
@@ -15,7 +16,7 @@ sys.path.insert(0, str(HERE))
 from ap_config import DEFAULTS, IFACES, ROAM_ROLES, ROLES, canonical, load_document, render, resolve, write_private
 spec = importlib.util.spec_from_file_location('dicttech_ap_deploy', HERE / 'ap-deploy.py')
 deploy = importlib.util.module_from_spec(spec); spec.loader.exec_module(deploy)
-EXTERNAL = ('wifi_client_auth', 'ipv4_ipv6_internet', 'guest_client_mutual',
+EXTERNAL = ('management_reachability', 'wifi_client_auth', 'ipv4_ipv6_internet', 'guest_client_mutual',
             'guest_internal_isolation', 'ppe_bound_isolation_and_vlan',
             'spoof_and_vlan_injection', 'actual_client_roaming',
             'cold_boot_and_link_recovery', 'cpu_and_throughput')
@@ -43,6 +44,7 @@ def collect(args, state):
                     'net.bridge.bridge-nf-filter-vlan-tagged', 'net.bridge.bridge-nf-pass-vlan-input-dev',
                     'net.bridge.bridge-nf-call-arptables', 'net.bridge.bridge-nf-filter-pppoe-tagged'],
         'service_links': ['ls', '-1', '/etc/rc.d'],
+        'boot_hooks': ['sh', '-c', 'for n in S03dicttech-ap-transaction S04dicttech-ap-prepare S13dicttech-ap-finalize; do p=/etc/rc.d/$n; [ -L "$p" ] && [ -x "$p" ] || continue; t=$(readlink "$p"); s=${n#S??}; case "$t" in "../init.d/$s"|"/etc/init.d/$s") printf "%s\\n" "$n";; esac; done'],
         # Filter on the AP: daemon argv can contain secrets and is never returned.
         'services': ['sh', '-c', "ubus -t 5 call service list | jq 'map_values({instances:(.instances // {} | map_values({running:.running}))})'"],
         # Deliberate field allowlist excludes passphrases, PSKs, SAE passwords.
@@ -54,7 +56,7 @@ def collect(args, state):
     links = 3 if state['common']['ssids']['main']['six_ghz'] else 2
     for index in range(links):
         queries['radio_' + str(index)] = ['hostapd_cli', '-p', '/var/run/hostapd', '-i', 'ap-mld1_link' + str(index), 'status']
-    text = {'sysctls', 'service_links', 'security', *('radio_' + str(i) for i in range(links))}
+    text = {'sysctls', 'service_links', 'boot_hooks', 'security', *('radio_' + str(i) for i in range(links))}
     for name, words in queries.items():
         try:
             data[name] = deploy.remote(args, 'check') if name == 'contract' else read_command(args, words, name not in text)
@@ -76,6 +78,26 @@ def collect(args, state):
     return data
 
 
+def parse_ssid2(value):
+    # Match hostapd src/utils/common.c:wpa_config_parse_string() at source
+    # 831364bf, plus hostapd's1..32byteSSIDlimit. Ordinary quoted strings
+    # are literal bytes, NOT JSON/printf strings: backslashes stay unchanged.
+    # P"..." uses hostapd printf_decode(), which we deliberately do not guess.
+    if value.startswith('P"'):
+        raise ValueError('unsupported_ssid_printf_encoding')
+    if value.startswith('"'):
+        if len(value) < 2 or not value.endswith('"'):
+            raise ValueError('invalid_ssid_string')
+        raw = value[1:-1].encode('utf-8')
+    else:
+        if len(value) % 2 or not re.fullmatch('[0-9a-fA-F]+', value):
+            raise ValueError('invalid_ssid_hex')
+        raw = bytes.fromhex(value)
+    if not 1 <= len(raw) <= 32:
+        raise ValueError('invalid_ssid_length')
+    return raw.decode('utf-8')
+
+
 def security_blocks(value):
     blocks, current = [], {}
     for line in value.splitlines():
@@ -90,9 +112,10 @@ def security_blocks(value):
     for block in blocks:
         if 'ssid2' in block:
             try:
-                block['ssid'] = bytes.fromhex(block['ssid2']).decode()
-            except (ValueError, UnicodeError):
+                block['ssid'] = parse_ssid2(block['ssid2'])
+            except (ValueError, UnicodeError) as error:
                 block['ssid'] = None
+                block['ssid_parse_error'] = 'unsupported_ssid_printf_encoding' if str(error) == 'unsupported_ssid_printf_encoding' else 'invalid_ssid_encoding'
     return blocks
 
 
@@ -201,6 +224,7 @@ def evaluate(state, files, data, external=None):
     test('required_services', all(enabled(name) and (fw4 if name == 'firewall' else running.get(name)) for name in core), 'Required daemons running; oneshot firewall enabled with live fw4 table')
     disabled = state['services']['disabled']
     test('unwanted_services', all(not running.get(name, False) and not enabled(name) for name in disabled), 'Unwanted services neither enabled nor running')
+    test('boot_policy_hooks', set(data.get('boot_hooks', '').splitlines()) == {'S03dicttech-ap-transaction', 'S04dicttech-ap-prepare', 'S13dicttech-ap-finalize'}, 'Executable enabled early rollback/prepare and post-boot finalize links; oneshots need no PID')
     binding = {'schema_version': 1, 'profile': state['profile'], 'device_id': state['device_id'], 'boot_id': contract.get('boot_id'), 'desired_sha256': hashlib.sha256(canonical(expected)).hexdigest()}
     valid_external = isinstance(external, dict) and all(external.get(k) == v for k, v in binding.items())
     if external is not None:
