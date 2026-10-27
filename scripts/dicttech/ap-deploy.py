@@ -196,6 +196,16 @@ def public_status(status):
     return {key: value for key, value in status.items() if key != 'token'}
 
 
+def bootstrap_access(identity):
+    """Describe setup entry points without treating a DHCP lease as identity."""
+    if not (identity.get('bootstrap_isolated') or identity.get('bootstrap_dhcp')):
+        return None
+    return {'mode': 'dhcp' if identity.get('bootstrap_dhcp') else 'isolated',
+            'offline': {'port': 'lan4', 'address': '192.168.250.1', 'ssh_port': 12022, 'http_port': 80},
+            'dhcp': {'ready': identity.get('bootstrap_dhcp_ready') is True,
+                     'ssh_port': 12022, 'public_key_only': True}}
+
+
 def receipt_path(args):
     if not args.receipt:
         raise ValueError('--receipt is required for mutating commands')
@@ -252,7 +262,7 @@ def main():
     parser.add_argument('--control-socket')
     parser.add_argument('--jump-host')
     parser.add_argument('--receipt')
-    parser.add_argument('--initialize', action='store_true', help='allow first provisioning after physically identifying the isolated device')
+    parser.add_argument('--initialize', action='store_true', help='allow first provisioning after identifying an unprovisioned setup device')
     parser.add_argument('--expect-boot-id', help='required boot identity pin for first provisioning')
     parser.add_argument('--output')
     parser.add_argument('--preserve-host-identity', action='store_true', help='read same-device SSH/HTTPS identity for an existing-device upgrade export')
@@ -292,8 +302,10 @@ def main():
                 raise RuntimeError('target board is not allowed by the selected profile')
             desired_mac = resolved['device']['identity']['bridge']
             if identity.get('bridge_mac') != desired_mac:
-                if not (args.initialize and identity.get('device_id', '') in ('', args.device) and identity.get('bootstrap_isolated') and args.expect_boot_id == contract.get('boot_id')):
-                    raise RuntimeError('target bridge MAC differs; first provisioning requires an identified isolated bootstrap device')
+                if not (args.initialize and not identity.get('device_id')
+                        and (identity.get('bootstrap_isolated') is True or identity.get('bootstrap_dhcp') is True)
+                        and args.expect_boot_id == contract.get('boot_id')):
+                    raise RuntimeError('target bridge MAC differs; first provisioning requires an identified bootstrap device and pinned boot ID')
             if args.command == 'apply' and identity.get('ssh_port') != str(resolved['common']['ssh_port']):
                 raise RuntimeError('live SSH port changes are unsupported; use offline provisioning')
         if contract is not None and contract.get('defaults_sha256') != resolved['defaults_sha256']:
@@ -303,9 +315,13 @@ def main():
                    or contract.get('modes', {}).get(path) != ['-rw-------', '0']
                    or (path == 'etc/dicttech-ap/root-password-hash' and not contract.get('root_password_synced'))}
         if args.command == 'plan':
-            out({'device_id': args.device, 'profile': PROFILE,
+            result = {'device_id': args.device, 'profile': PROFILE,
                  'comparison': 'remote' if contract else 'not-connected',
-                 'changed_paths': list(changed) + ([] if contract is None or contract.get('resolver_correct') else ['etc/resolv.conf'])})
+                 'changed_paths': list(changed) + ([] if contract is None or contract.get('resolver_correct') else ['etc/resolv.conf'])}
+            access = bootstrap_access(contract.get('identity', {})) if contract else None
+            if access is not None:
+                result['bootstrap_access'] = access
+            out(result)
             return
         if contract is None:
             parser.error('--host is required for apply')
@@ -315,11 +331,14 @@ def main():
         path = receipt_path(args)
         if path.exists() or path.is_symlink():
             raise RuntimeError('receipt already exists; choose a new private receipt path')
-        manifest, payload = bundle(files, contract, args.device, args.ttl, {'device_id': args.device, 'bridge_mac': resolved['device']['identity']['bridge'], 'allowed_boards': resolved['platform']['board_names'], 'initialize': args.initialize})
+        manifest, payload = bundle(files, contract, args.device, args.ttl, {'device_id': args.device, 'bridge_mac': resolved['device']['identity']['bridge'], 'allowed_boards': resolved['platform']['board_names'], 'initialize': args.initialize, 'expect_boot_id': args.expect_boot_id})
         receipt = {'profile': PROFILE, 'device_id': args.device, 'token': manifest['token'],
                    'boot_id': contract['boot_id'], 'host': args.host,
                    'maintenance_host': resolved['device']['maintenance_ipv4'].split('/')[0],
                    'changed_paths': manifest['changed_paths'], 'state': 'prepared'}
+        access = bootstrap_access(contract.get('identity', {}))
+        if access is not None:
+            receipt['bootstrap_access'] = access
         save_receipt(path, receipt)
         staged = remote(args, 'stage', data=payload)
         if staged.get('token') != manifest['token']:
@@ -341,6 +360,9 @@ def main():
         if args.command == 'check':
             for key in ('files', 'modes', 'shadow_sha256', 'shadow_security'):
                 result.pop(key, None)
+            access = bootstrap_access(result.get('identity', {}))
+            if access is not None:
+                result['bootstrap_access'] = access
         out(public_status(result))
         return
     path, receipt = load_receipt(args)

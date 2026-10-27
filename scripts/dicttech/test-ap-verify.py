@@ -25,7 +25,7 @@ def fixture(common=None):
                 'identity': {'device_id': state['device_id'], 'bridge_mac': state['device']['identity']['bridge'], 'board_name': 'gemtek,xr1710g'}}
     data = {'contract': contract, 'snapshot_stable': True, 'guest_addresses': [{'ifname': 'br-lan.192', 'addr_info': []}],
             'sysctls': '1\n1\n0\n0\n0\n0\n', 'vlans': [], 'security': '',
-            'services': {name: {'instances': {'main': {'running': True}}} for name in ['network', 'sysntpd', 'dropbear', 'uhttpd', 'xr_roaming']},
+            'services': {name: {'instances': {'main': {'running': True}}} for name in ['network', 'sysntpd', 'dropbear', 'uhttpd', 'xr_roaming', 'wifihistory']},
             'service_links': '\n'.join('S20' + name for name in state['services']['enabled']),
             'boot_hooks': 'S03dicttech-ap-transaction\nS04dicttech-ap-prepare\nS13dicttech-ap-finalize\n',
             'luci_features': {'hostapd': {'cli': True, '11be': True, 'sae': True}},

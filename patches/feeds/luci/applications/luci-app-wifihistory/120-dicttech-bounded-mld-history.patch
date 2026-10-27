@@ -1,0 +1,779 @@
+diff --git a/applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js b/applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js
+index 076c97a..8412439 100644
+--- a/applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js
++++ b/applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js
+@@ -1,181 +1,210 @@
+ 'use strict';
+ 'require view';
+ 'require poll';
+ 'require rpc';
+ 'require ui';
+ 
+ const callGetHistory = rpc.declare({
+ 	object: 'luci.wifihistory',
+ 	method: 'getHistory',
+ 	expect: { history: {} }
+ });
+ 
++const callGetStatus = rpc.declare({
++	object: 'luci.wifihistory',
++	method: 'getStatus',
++	expect: { status: {} }
++});
++
+ const callClearHistory = rpc.declare({
+ 	object: 'luci.wifihistory',
+ 	method: 'clearHistory',
+ 	expect: { result: true }
+ });
+ 
+ function formatDate(epoch) {
+ 	if (!epoch || epoch <= 0)
+ 		return '-';
+ 
+ 	return new Date(epoch * 1000).toLocaleString();
+ }
+ 
+ return view.extend({
+ 	load() {
+-		return callGetHistory();
++		return Promise.all([ callGetHistory(), callGetStatus() ]);
++	},
++
++	updateStatus(node, status) {
++		let message;
++		if (!status.active)
++			message = _('Collector is stopped or has not sampled yet.');
++		else if (status.state == 'failed')
++			message = _('Collector could not read wireless status; last known history is retained.');
++		else if (status.state == 'partial')
++			message = _('Some wireless interfaces could not be sampled; their last known state is retained.');
++		else
++			message = _('Collector is running. Last sample: %s.').format(formatDate(status.last_poll));
++		L.dom.content(node, message);
+ 	},
+ 
+ 	updateTable(table, history) {
+ 		const stations = Object.values(history);
+ 
+ 		/* Sort connected stations first, then by most recently seen */
+ 		stations.sort((a, b) => {
+ 			if (a.connected !== b.connected)
+ 				return a.connected ? -1 : 1;
+ 
+ 			return (b.last_seen || 0) - (a.last_seen || 0);
+ 		});
+ 
+ 		const rows = [];
+ 
+ 		for (const s of stations) {
+ 			let hint;
+ 			if (s.hostname && s.ipv4 && s.ipv6)
+ 				hint = '%s (%s, %s)'.format(s.hostname, s.ipv4, s.ipv6);
+ 			else if (s.hostname && (s.ipv4 || s.ipv6))
+ 				hint = '%s (%s)'.format(s.hostname, s.ipv4 || s.ipv6);
+ 			else if (s.ipv4 || s.ipv6)
+ 				hint = s.ipv4 || s.ipv6;
+ 			else
+ 				hint = '-';
+ 
+ 			let sig_value = '-';
+ 			let sig_title = '';
+ 
+ 			if (s.signal && s.signal !== 0) {
+ 				if (s.noise && s.noise !== 0) {
+ 					sig_value = '%d/%d\xa0%s'.format(s.signal, s.noise, _('dBm'));
+ 					sig_title = '%s: %d %s / %s: %d %s / %s %d'.format(
+ 						_('Signal'), s.signal, _('dBm'),
+ 						_('Noise'), s.noise, _('dBm'),
+ 						_('SNR'), s.signal - s.noise);
+ 				}
+ 				else {
+ 					sig_value = '%d\xa0%s'.format(s.signal, _('dBm'));
+ 					sig_title = '%s: %d %s'.format(_('Signal'), s.signal, _('dBm'));
+ 				}
+ 			}
+ 
+ 			let icon;
+ 			if (!s.connected) {
+ 				icon = L.resource('icons/signal-none.svg');
+ 			}
+ 			else {
+ 				/* Estimate signal quality as percentage:
+ 				 * Map dBm range [-110, -40] to [0%, 100%] */
+ 				const q = Math.min((s.signal + 110) / 70 * 100, 100);
+ 				if (q == 0)
+ 					icon = L.resource('icons/signal-000-000.svg');
+ 				else if (q < 25)
+ 					icon = L.resource('icons/signal-000-025.svg');
+ 				else if (q < 50)
+ 					icon = L.resource('icons/signal-025-050.svg');
+ 				else if (q < 75)
+ 					icon = L.resource('icons/signal-050-075.svg');
+ 				else
+ 					icon = L.resource('icons/signal-075-100.svg');
+ 			}
+ 
+ 			rows.push([
+ 				E('span', {
+ 					'class': 'ifacebadge',
+ 					'style': s.connected ? '' : 'opacity:0.5',
+ 					'title': s.connected ? _('Connected') : _('Disconnected')
+ 				}, [
+ 					E('img', { 'src': icon, 'style': 'width:16px;height:16px' }),
+ 					E('span', {}, [ ' ', s.connected ? _('Yes') : _('No') ])
+ 				]),
+ 				s.mac,
+ 				hint,
+ 				s.network || '-',
+ 				E('span', { 'title': sig_title }, sig_value),
+ 				formatDate(s.first_seen),
+ 				formatDate(s.last_seen)
+ 			]);
+ 		}
+ 
+ 		cbi_update_table(table, rows, E('em', _('No station history available')));
+ 	},
+ 
+ 	handleClearHistory(ev) {
+ 		return ui.showModal(_('Clear Station History'), [
+ 			E('p', _('This will permanently delete all recorded station history. Are you sure?')),
+ 			E('div', { 'class': 'right' }, [
+ 				E('button', {
+ 					'class': 'btn',
+ 					'click': ui.hideModal
+ 				}, _('Cancel')), ' ',
+ 				E('button', {
+ 					'class': 'btn cbi-button-negative',
+ 					'click': ui.createHandlerFn(this, function() {
+-						return callClearHistory().then(L.bind(function() {
++						return callClearHistory().then(L.bind(function(result) {
++						if (!result) {
++							ui.addNotification(null, E('p', _('The collector is busy. Try clearing history again.')), 'warning');
++							return;
++						}
+ 							ui.hideModal();
+ 							return callGetHistory().then(L.bind(function(history) {
+ 								this.updateTable('#wifi_history_table', history);
+ 							}, this));
+ 						}, this));
+ 					})
+ 				}, _('Clear'))
+ 			])
+ 		]);
+ 	},
+ 
+-	render(history) {
++	render(data) {
++		const history = data[0], status = data[1];
+ 		const isReadonlyView = !L.hasViewPermission();
+ 
+ 		const v = E([], [
+ 			E('h2', _('Station History')),
+ 			E('div', { 'class': 'cbi-map-descr' },
+ 				_('This page displays a history of all WiFi stations that have connected to this device, including currently connected and previously seen devices.')),
++			E('p', { 'class': 'cbi-map-descr' },
++				_('Stored in RAM: up to 512 stations, retained for seven days and cleared on reboot. Stations are sampled every 30 seconds.')),
++			E('p', { 'id': 'wifi_history_status', 'class': 'cbi-map-descr' }),
+ 
+ 			E('div', { 'class': 'cbi-section' }, [
+ 				E('div', { 'class': 'right', 'style': 'margin-bottom:1em' }, [
+ 					E('button', {
+ 						'class': 'btn cbi-button-negative',
+ 						'disabled': isReadonlyView,
+ 						'click': ui.createHandlerFn(this, 'handleClearHistory')
+ 					}, _('Clear History'))
+ 				]),
+ 
+ 				E('table', { 'class': 'table', 'id': 'wifi_history_table' }, [
+ 					E('tr', { 'class': 'tr table-titles' }, [
+ 						E('th', { 'class': 'th' }, _('Connected')),
+ 						E('th', { 'class': 'th' }, _('MAC address')),
+ 						E('th', { 'class': 'th' }, _('Host')),
+ 						E('th', { 'class': 'th' }, _('Network')),
+ 						E('th', { 'class': 'th' }, '%s / %s'.format(_('Signal'), _('Noise'))),
+ 						E('th', { 'class': 'th' }, _('First seen')),
+ 						E('th', { 'class': 'th' }, _('Last seen'))
+ 					])
+ 				])
+ 			])
+ 		]);
+ 
+ 		this.updateTable(v.querySelector('#wifi_history_table'), history);
++		this.updateStatus(v.querySelector('#wifi_history_status'), status);
+ 
+ 		poll.add(L.bind(function() {
+-			return callGetHistory().then(L.bind(function(history) {
+-				this.updateTable('#wifi_history_table', history);
++			return Promise.all([ callGetHistory(), callGetStatus() ]).then(L.bind(function(data) {
++				this.updateTable('#wifi_history_table', data[0]);
++				this.updateStatus(document.querySelector('#wifi_history_status'), data[1]);
+ 			}, this));
+ 		}, this), 5);
+ 
+ 		return v;
+ 	},
+ 
+ 	handleSaveApply: null,
+ 	handleSave: null,
+ 	handleReset: null
+ });
+diff --git a/applications/luci-app-wifihistory/po/zh_Hans/wifihistory.po b/applications/luci-app-wifihistory/po/zh_Hans/wifihistory.po
+index 2083c05..78637fd 100644
+--- a/applications/luci-app-wifihistory/po/zh_Hans/wifihistory.po
++++ b/applications/luci-app-wifihistory/po/zh_Hans/wifihistory.po
+@@ -1,116 +1,134 @@
+ msgid ""
+ msgstr ""
+ "Project-Id-Version: PACKAGE VERSION\n"
+ "PO-Revision-Date: 2026-09-28 18:23+0000\n"
+ "Last-Translator: Hosted Weblate user 54392 "
+ "<hamburger2048@users.noreply.hosted.weblate.org>\n"
+ "Language-Team: Chinese (Simplified Han script) <https://hosted.weblate.org/"
+ "projects/openwrt/luciapplicationswifihistory/zh_Hans/>\n"
+ "Language: zh_Hans\n"
+ "MIME-Version: 1.0\n"
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+ "Plural-Forms: nplurals=1; plural=0;\n"
+ "X-Generator: Weblate 2026.10.dev0\n"
+ 
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:120
+ msgid "Cancel"
+ msgstr "取消"
+ 
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:131
+ msgid "Clear"
+ msgstr "清除"
+ 
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:150
+ msgid "Clear History"
+ msgstr "清除历史"
+ 
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:114
+ msgid "Clear Station History"
+ msgstr "清除客户端历史记录"
+ 
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:96
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:155
+ msgid "Connected"
+ msgstr "已连接"
+ 
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:96
+ msgid "Disconnected"
+ msgstr "已断开"
+ 
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:160
+ msgid "First seen"
+ msgstr "首次连接时间"
+ 
+ #: applications/luci-app-wifihistory/root/usr/share/rpcd/acl.d/luci-app-wifihistory.json:3
+ msgid "Grant access to WiFi station history"
+ msgstr "授予 WiFi 客户端历史记录的权限"
+ 
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:157
+ msgid "Host"
+ msgstr "主机"
+ 
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:161
+ msgid "Last seen"
+ msgstr "最后一次连接时间"
+ 
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:156
+ msgid "MAC address"
+ msgstr "MAC 地址"
+ 
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:158
+ msgid "Network"
+ msgstr "网络"
+ 
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:99
+ msgid "No"
+ msgstr "不"
+ 
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:110
+ msgid "No station history available"
+ msgstr "无客户端连接历史记录"
+ 
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:63
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:159
+ msgid "Noise"
+ msgstr "噪声"
+ 
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:64
+ msgid "SNR"
+ msgstr "信噪比"
+ 
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:62
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:68
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:159
+ msgid "Signal"
+ msgstr "信号"
+ 
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:140
+ #: applications/luci-app-wifihistory/root/usr/share/luci/menu.d/luci-app-wifihistory.json:3
+ msgid "Station History"
+ msgstr "WiFi 客户端历史记录"
+ 
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:142
+ msgid ""
+ "This page displays a history of all WiFi stations that have connected to "
+ "this device, including currently connected and previously seen devices."
+ msgstr ""
+ "本页面展示所有连接过本设备的 WiFi 客户端历史记录，包括正在连接和曾经连接过的"
+ "客户端。"
+ 
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:115
+ msgid ""
+ "This will permanently delete all recorded station history. Are you sure?"
+ msgstr "即将永久删除所有客户端连接历史记录。确定吗？"
+ 
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:99
+ msgid "Yes"
+ msgstr "是"
+ 
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:60
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:62
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:63
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:67
+ #: applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js:68
+ msgid "dBm"
+ msgstr "dBm"
++
++msgid "Stored in RAM: up to 512 stations, retained for seven days and cleared on reboot. Stations are sampled every 30 seconds."
++msgstr "记录保存在内存中，最多 512 台设备，保留七天，重启后清空。每 30 秒采集一次。"
++
++msgid "Collector is stopped or has not sampled yet."
++msgstr "采集器已停止，或尚未开始采样。"
++
++msgid "Collector could not read wireless status; last known history is retained."
++msgstr "采集器未能读取无线状态，已保留上一次的历史记录。"
++
++msgid "Some wireless interfaces could not be sampled; their last known state is retained."
++msgstr "部分无线接口采集失败，已保留其上一次的状态。"
++
++msgid "Collector is running. Last sample: %s."
++msgstr "采集器正在运行，上次采集：%s。"
++
++msgid "The collector is busy. Try clearing history again."
++msgstr "采集器正忙，请稍后再清空历史记录。"
+diff --git a/applications/luci-app-wifihistory/root/etc/init.d/wifihistory b/applications/luci-app-wifihistory/root/etc/init.d/wifihistory
+index 2811c68..cc960de 100755
+--- a/applications/luci-app-wifihistory/root/etc/init.d/wifihistory
++++ b/applications/luci-app-wifihistory/root/etc/init.d/wifihistory
+@@ -1,24 +1,26 @@
+ #!/bin/sh /etc/rc.common
+ 
+ START=99
+ STOP=10
+ USE_PROCD=1
+ 
+ NAME=wifihistory
+ PROG=/usr/sbin/wifihistory
+ INTERVAL=30
+ 
+ start_service() {
++	umask 077
+ 	mkdir -p /var/lib/wifihistory
++	chmod 700 /var/lib/wifihistory
+ 
+ 	procd_open_instance "$NAME"
+ 	procd_set_param command /bin/sh -c "while true; do /usr/bin/ucode $PROG; sleep $INTERVAL; done"
+ 	procd_set_param respawn 3600 5 5
+ 	procd_set_param stdout 1
+ 	procd_set_param stderr 1
+ 	procd_close_instance
+ }
+ 
+ service_triggers() {
+ 	procd_add_reload_trigger "wireless"
+ }
+diff --git a/applications/luci-app-wifihistory/root/usr/sbin/wifihistory b/applications/luci-app-wifihistory/root/usr/sbin/wifihistory
+index c0cfcd2..fc11448 100755
+--- a/applications/luci-app-wifihistory/root/usr/sbin/wifihistory
++++ b/applications/luci-app-wifihistory/root/usr/sbin/wifihistory
+@@ -1,124 +1,180 @@
+ #!/usr/bin/env ucode
+-
++// Apache-2.0; based on the upstream LuCI WiFi station history collector.
+ 'use strict';
+ 
+-import { readfile, writefile, open, mkdir, rename } from 'fs';
++import { readfile, open, mkdir, rename, chmod, unlink } from 'fs';
+ import { connect } from 'ubus';
+ 
++// /var is a RAM symlink on OpenWrt. Never write station activity to flash.
+ const HISTORY_DIR = '/var/lib/wifihistory';
+ const HISTORY_FILE = HISTORY_DIR + '/history.json';
++const STATUS_FILE = HISTORY_DIR + '/status.json';
+ const LOCK_FILE = '/var/lock/wifihistory.lock';
++const MAX_ENTRIES = 512;
++const RETENTION_SECONDS = 7 * 86400;
++const MAX_IFACES = 32;
++const MAX_CLIENTS_PER_IFACE = 1024;
+ 
+-function load_history() {
+-	let content = readfile(HISTORY_FILE);
+-	if (content == null)
+-		return {};
+-
++function read_json(path) {
+ 	try {
+-		return json(content) || {};
++		let value = json(readfile(path));
++		return type(value) == 'object' ? value : {};
+ 	}
+-	catch (e) {
+-		return {};
++	catch (e) { return {}; }
++}
++
++function write_json(path, data) {
++	let tmp = path + '.tmp';
++	unlink(tmp);
++	let file = open(tmp, 'wx', 0600);
++	if (!file) return false;
++	let text = sprintf('%J', data);
++	let written = file.write(text);
++	file.close();
++	if (written != length(text) || !rename(tmp, path)) {
++		unlink(tmp);
++		return false;
+ 	}
++	return true;
+ }
+ 
+-function save_history(data) {
+-	let tmp = HISTORY_FILE + '.tmp';
++function mac_address(value) {
++	if (type(value) != 'string') return null;
++	let parts = split(uc(value), ':');
++	if (length(parts) != 6) return null;
++	for (let part in parts)
++		if (length(part) != 2 || !match(part, /^[0-9A-F]{2}$/)) return null;
++	if ((int(parts[0], 16) & 1) || join(':', parts) == '00:00:00:00:00:00')
++		return null;
++	return join(':', parts);
++}
+ 
+-	writefile(tmp, sprintf('%J', data));
+-	rename(tmp, HISTORY_FILE);
++function bounded_text(value, limit) {
++	return type(value) == 'string' && length(value) <= limit ? value : '';
++}
++function timestamp(value) {
++	return type(value) == 'int' && value > 0 ? value : 0;
++}
++function signal_dbm(value) {
++	if (type(value) != 'int') return 0;
++	if (value > 2147483647) value -= 4294967296;
++	return value >= -127 && value <= 0 ? value : 0;
++}
++
++function prune_history(history, now) {
++	let rows = [];
++	for (let key, row in history) {
++		let mac = mac_address(key);
++		let last = timestamp(row?.last_seen);
++		if (!mac || type(row) != 'object' || !last || last < now - RETENTION_SECONDS)
++			continue;
++		push(rows, {
++			mac: mac, hostname: bounded_text(row.hostname, 128),
++			ipv4: bounded_text(row.ipv4, 64), ipv6: bounded_text(row.ipv6, 80),
++			network: bounded_text(row.network, 128), ifname: bounded_text(row.ifname, 15),
++			connected: row.connected == true,
++			signal: signal_dbm(row.signal), noise: signal_dbm(row.noise),
++			first_seen: timestamp(row.first_seen) || last, last_seen: last
++		});
++	}
++	sort(rows, function(a, b) {
++		return (a.connected != b.connected) ? (a.connected ? -1 : 1) :
++			(a.last_seen != b.last_seen ? b.last_seen - a.last_seen : (a.mac < b.mac ? -1 : 1));
++	});
++	let result = {};
++	for (let i = 0; i < min(length(rows), MAX_ENTRIES); i++)
++		if (!result[rows[i].mac]) result[rows[i].mac] = rows[i];
++	return result;
+ }
+ 
+ function poll_stations() {
+-	let ubus = connect();
++	let now = time();
++	let history = prune_history(read_json(HISTORY_FILE), now);
++	let seen_macs = {}, failed_ifaces = {}, interfaces = {};
++	let sampled = 0, errors = 0;
++	let ubus = connect(null, 2);
+ 	if (!ubus) {
+-		warn('Failed to connect to ubus\n');
++		write_json(STATUS_FILE, { last_poll: now, state: 'failed', interfaces: 0, stations: 0 });
+ 		return;
+ 	}
+-
+-	let now = time();
+-	let history = load_history();
+-	let seen_macs = {};
+-
+ 	let wifi_status = ubus.call('network.wireless', 'status');
+-	if (!wifi_status)
++	if (type(wifi_status) != 'object') {
++		ubus.disconnect();
++		write_json(STATUS_FILE, { last_poll: now, state: 'failed', interfaces: 0, stations: 0 });
+ 		return;
+-
++	}
+ 	let hints = ubus.call('luci-rpc', 'getHostHints') || {};
+-
+-	for (let radio in wifi_status) {
+-		let ifaces = wifi_status[radio]?.interfaces;
+-		if (!ifaces)
+-			continue;
+-
+-		for (let iface in ifaces) {
+-			let ifname = iface?.ifname;
+-			if (!ifname)
+-				continue;
+-
+-			let info = ubus.call('iwinfo', 'info', { device: ifname });
+-			let ssid = info?.ssid || '';
+-
++	let normalized_hints = {};
++	for (let key, value in hints) {
++		let mac = mac_address(key);
++		if (mac && type(value) == 'object') normalized_hints[mac] = value;
++	}
++	// netifd lists a shared MLD once per radio. Query its aggregate only once.
++	for (let radio in wifi_status)
++		for (let iface in wifi_status[radio]?.interfaces || []) {
++			let ifname = bounded_text(iface?.ifname, 15);
++			if (ifname && !interfaces[ifname] && length(keys(interfaces)) < MAX_IFACES)
++				interfaces[ifname] = bounded_text(iface?.config?.ssid, 128);
++		}
++	for (let ifname, configured_ssid in interfaces) {
++		let clients = ubus.call('hostapd.' + ifname, 'get_clients');
++		let status = ubus.call('hostapd.' + ifname, 'get_status');
++		let info, rows = [];
++		let ssid = bounded_text(status?.ssid, 128) || configured_ssid;
++		if (type(clients?.clients) == 'object') {
++			// C7 aggregates MLD links and omits secondary link STAs.
++			for (let key, value in clients.clients) {
++				if (length(rows) >= MAX_CLIENTS_PER_IFACE) break;
++				if (type(value) == 'object' && value.assoc != false)
++					push(rows, { mac: key, signal: value.signal, links: value.links });
++			}
++		}
++		else {
++			// Compatibility fallback for backends without hostapd get_clients.
++			info = ubus.call('iwinfo', 'info', { device: ifname });
++			ssid = ssid || bounded_text(info?.ssid, 128);
+ 			let assoc = ubus.call('iwinfo', 'assoclist', { device: ifname });
+-			if (!assoc?.results)
+-				continue;
+-
+-			for (let bss in assoc.results) {
+-				let mac = bss?.mac;
+-				if (!mac)
+-					continue;
+-
+-				mac = uc(mac);
+-				seen_macs[mac] = true;
+-
+-				let hostname = hints?.[mac]?.name || '';
+-				let ipv4 = hints?.[mac]?.ipaddrs?.[0] || '';
+-				let ipv6 = hints?.[mac]?.ip6addrs?.[0] || '';
+-
+-				let existing = history[mac];
+-				let first_seen = existing?.first_seen || now;
+-
+-				history[mac] = {
+-					mac: mac,
+-					hostname: hostname,
+-					ipv4: ipv4,
+-					ipv6: ipv6,
+-					network: ssid,
+-					ifname: ifname,
+-					connected: true,
+-					signal: bss?.signal || 0,
+-					noise: bss?.noise || 0,
+-					first_seen: first_seen,
+-					last_seen: now
+-				};
++			if (type(assoc?.results) != 'array') {
++				failed_ifaces[ifname] = true; errors++; continue;
+ 			}
++			rows = slice(assoc.results, 0, MAX_CLIENTS_PER_IFACE);
++		}
++		sampled++;
++		for (let row in rows) {
++			let mac = mac_address(row?.mac);
++			if (!mac) continue;
++			let hint = normalized_hints[mac];
++			for (let link in row?.links || [])
++				hint = hint || normalized_hints[mac_address(link?.address)];
++			let existing = history[mac] || history[lc(mac)];
++			let first = timestamp(existing?.first_seen);
++			if (!first || first > now) first = now;
++			seen_macs[mac] = true;
++			history[mac] = {
++				mac: mac,
++				hostname: bounded_text(hint?.name, 128) || bounded_text(existing?.hostname, 128),
++				ipv4: bounded_text(hint?.ipaddrs?.[0], 64) || bounded_text(existing?.ipv4, 64),
++				ipv6: bounded_text(hint?.ip6addrs?.[0], 80) || bounded_text(existing?.ipv6, 80),
++				network: ssid, ifname: ifname, connected: true,
++				signal: signal_dbm(row?.signal), noise: signal_dbm(row?.noise),
++				first_seen: first, last_seen: now
++			};
+ 		}
+ 	}
+-
+-	for (let mac in history)
+-		if (!seen_macs[mac])
+-			history[mac].connected = false;
+-
+ 	ubus.disconnect();
+-
+-	save_history(history);
+-}
+-
+-mkdir(HISTORY_DIR);
+-
+-let lock_fd = open(LOCK_FILE, 'w');
+-if (!lock_fd) {
+-	warn('Failed to open lock file\n');
+-	exit(1);
+-}
+-
+-if (!lock_fd.lock('xn')) {
+-	warn('Another instance is already running\n');
+-	lock_fd.close();
+-	exit(1);
++	for (let key, row in history)
++		if (type(row) == 'object' && !seen_macs[mac_address(key)] && !failed_ifaces[row.ifname])
++			row.connected = false;
++	history = prune_history(history, now);
++	if (!write_json(HISTORY_FILE, history)) return;
++	write_json(STATUS_FILE, { last_poll: now, state: errors ? 'partial' : 'ok',
++		interfaces: sampled, stations: length(keys(seen_macs)) });
+ }
+ 
++mkdir(HISTORY_DIR, 0700);
++chmod(HISTORY_DIR, 0700);
++let lock_fd = open(LOCK_FILE, 'w', 0600);
++if (!lock_fd || !lock_fd.lock('xn')) exit(1);
+ poll_stations();
+-
+ lock_fd.lock('u');
+ lock_fd.close();
+diff --git a/applications/luci-app-wifihistory/root/usr/share/rpcd/acl.d/luci-app-wifihistory.json b/applications/luci-app-wifihistory/root/usr/share/rpcd/acl.d/luci-app-wifihistory.json
+index b0f790f..6815242 100644
+--- a/applications/luci-app-wifihistory/root/usr/share/rpcd/acl.d/luci-app-wifihistory.json
++++ b/applications/luci-app-wifihistory/root/usr/share/rpcd/acl.d/luci-app-wifihistory.json
+@@ -1,16 +1,23 @@
+ {
+ 	"luci-app-wifihistory": {
+ 		"description": "Grant access to WiFi station history",
+ 		"read": {
+ 			"ubus": {
+-				"iwinfo": [ "assoclist" ],
+-				"luci.wifihistory": [ "getHistory" ]
++				"iwinfo": [
++					"assoclist"
++				],
++				"luci.wifihistory": [
++					"getHistory",
++					"getStatus"
++				]
+ 			}
+ 		},
+ 		"write": {
+ 			"ubus": {
+-				"luci.wifihistory": [ "clearHistory" ]
++				"luci.wifihistory": [
++					"clearHistory"
++				]
+ 			}
+ 		}
+ 	}
+ }
+diff --git a/applications/luci-app-wifihistory/root/usr/share/rpcd/ucode/wifihistory.uc b/applications/luci-app-wifihistory/root/usr/share/rpcd/ucode/wifihistory.uc
+index 918ad98..4ba4ef7 100644
+--- a/applications/luci-app-wifihistory/root/usr/share/rpcd/ucode/wifihistory.uc
++++ b/applications/luci-app-wifihistory/root/usr/share/rpcd/ucode/wifihistory.uc
+@@ -1,33 +1,61 @@
+ #!/usr/bin/env ucode
+-
+ 'use strict';
++import { readfile, open, rename, unlink, mkdir, chmod } from 'fs';
+ 
+-import { readfile, writefile } from 'fs';
++const HISTORY_DIR = '/var/lib/wifihistory';
++const HISTORY_FILE = HISTORY_DIR + '/history.json';
++const STATUS_FILE = HISTORY_DIR + '/status.json';
++const LOCK_FILE = '/var/lock/wifihistory.lock';
+ 
+-const HISTORY_FILE = '/var/lib/wifihistory/history.json';
++function read_json(path) {
++	try {
++		let value = json(readfile(path));
++		return type(value) == 'object' ? value : {};
++	}
++	catch (e) { return {}; }
++}
+ 
+ const methods = {
+ 	getHistory: {
++		call: function() { return { history: read_json(HISTORY_FILE) }; }
++	},
++	getStatus: {
+ 		call: function() {
+-			let content = readfile(HISTORY_FILE);
+-			if (content == null)
+-				return { history: {} };
+-
+-			try {
+-				return { history: json(content) || {} };
+-			}
+-			catch (e) {
+-				return { history: {} };
+-			}
++			let status = read_json(STATUS_FILE);
++			let last = type(status.last_poll) == 'int' ? status.last_poll : 0;
++			return { status: {
++				active: last > 0 && time() >= last && time() - last <= 90,
++				last_poll: last,
++				state: status.state == 'ok' ? 'ok' : status.state == 'partial' ? 'partial' : 'failed'
++			} };
+ 		}
+ 	},
+-
+ 	clearHistory: {
+ 		call: function() {
+-			writefile(HISTORY_FILE, '{}');
+-			return { result: true };
++			mkdir(HISTORY_DIR, 0700);
++			chmod(HISTORY_DIR, 0700);
++			let lock = open(LOCK_FILE, 'w', 0600);
++			if (!lock) return { result: false };
++			if (!lock.lock('xn')) {
++				lock.close();
++				return { result: false };
++			}
++			// Clearing and polling share the lock; an in-flight old snapshot
++			// must not resurrect history after the user's clear action.
++			let tmp = HISTORY_FILE + '.clear';
++			unlink(tmp);
++			let file = open(tmp, 'wx', 0600);
++			let result = false;
++			if (file) {
++				let written = file.write('{}');
++				file.close();
++				result = written == 2 && rename(tmp, HISTORY_FILE);
++			}
++			if (!result) unlink(tmp);
++			lock.lock('u');
++			lock.close();
++			return { result: !!result };
+ 		}
+ 	}
+ };
+-
+ return { 'luci.wifihistory': methods };

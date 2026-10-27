@@ -91,8 +91,12 @@ that generates disabled Wi-Fi interfaces, and confirms upstream credential and
 wireless defaults are suppressed. It does not execute a hardware-dependent UCI
 wireless generator on the build host.
 
-Device deployment state, preset usable root passwords, nonempty authorized
-keys and private SSH/HTTPS host identities are rejected in the shared image.
+Device deployment state, preset usable root passwords and private SSH/HTTPS
+host identities are rejected in the shared image. The owner public-key file
+is required to match the reviewed `cli-profile` asset exactly, as a regular
+0600 file; missing, empty, extra or replaced keys fail. CLI assets, helper,
+root rc files, ARP policy and the reviewed history collector/RPC/init/ACL
+postimages are also checked for source drift and applicable permissions.
 The manifest policy reuses `REQUIRED` and `FORBIDDEN` from `check-build.py`, so
 package selection and artifact checks share one policy. Manifest checking is
 optional; supply the manifest produced alongside the exact finished image.

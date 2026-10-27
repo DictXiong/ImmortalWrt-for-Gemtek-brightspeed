@@ -29,6 +29,9 @@
     "timezone": "CST-8",
     "zonename": "Asia/Shanghai",
     "ntp_servers": [
+      "time0.dxng.net",
+      "ntp.ibd.ink",
+      "ntp.dxng.cn",
       "ntp.tencent.com",
       "ntp1.aliyun.com",
       "ntp.ntsc.ac.cn",
@@ -52,14 +55,17 @@
     "ssids": {
       "main": {
         "name": "DictTech",
-        "six_ghz": true
+        "six_ghz": true,
+        "encryption": "sae"
       },
       "guest": {
-        "name": "DictTech-Guest"
+        "name": "DictTech-Guest",
+        "encryption": "sae"
       },
       "iot": {
         "name": "DictTech-IoT",
-        "hidden": true
+        "hidden": true,
+        "encryption": "sae-mixed"
       }
     },
     "roaming": {
@@ -69,20 +75,6 @@
     },
     "extra_ssids": []
   },
-  "security": {
-    "main": {
-      "encryption": "sae",
-      "pmf": 2
-    },
-    "guest": {
-      "encryption": "sae",
-      "pmf": 2
-    },
-    "iot": {
-      "encryption": "sae-mixed",
-      "pmf": 1
-    }
-  },
   "services": {
     "enabled": [
       "network",
@@ -90,7 +82,8 @@
       "firewall",
       "dropbear",
       "uhttpd",
-      "xr_roaming"
+      "xr_roaming",
+      "wifihistory"
     ],
     "disabled": [
       "dnsmasq",
@@ -101,7 +94,6 @@
       "watchcat",
       "umdns",
       "npu-jitter",
-      "wifihistory",
       "zerotier",
       "miniupnpd",
       "ddns",

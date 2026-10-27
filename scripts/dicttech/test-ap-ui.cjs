@@ -80,6 +80,7 @@ function stageFiles(args, stage) {
     ['dropdown-ui', 'feeds/luci', 'modules/luci-base/htdocs/luci-static/resources/ui.js', 'www/luci-static/resources/ui.js', manifest.feed_luci_revision],
     ['dropdown-theme', 'feeds/glass', 'htdocs/luci-static/glass/css/cascade.css', 'www/luci-static/glass/css/cascade.css', manifest.feed_glass_revision],
     ['footer-branding', 'feeds/glass', 'ucode/template/themes/glass/footer.ut', 'usr/share/ucode/luci/template/themes/glass/footer.ut', manifest.feed_glass_revision],
+    ['wifi-history', 'feeds/luci', 'applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js', 'www/luci-static/resources/view/status/wifihistory.js', manifest.feed_luci_revision],
     ['mlo-widths', '', 'package/emortal/luci-app-mlo/htdocs/luci-static/resources/view/mlo.js', 'www/luci-static/resources/view/mlo.js', null]
   ];
   const sourceSHA = {};

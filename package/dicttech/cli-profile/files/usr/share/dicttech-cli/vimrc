@@ -1,0 +1,55 @@
+" OpenWrt adaptation of DictXiong/dotfiles .vimrc2; see sources.json.
+set nocompatible
+set nomodeline
+let s:profile = exists('$DICTTECH_CLI_ROOT') && !empty($DICTTECH_CLI_ROOT) ? $DICTTECH_CLI_ROOT : '/usr/share/dicttech-cli'
+execute 'set runtimepath^=' . fnameescape(s:profile . '/vim')
+filetype plugin indent on
+syntax on
+set background=dark
+colorscheme onedark
+set cursorline autoindent smartindent expandtab
+set tabstop=4 softtabstop=4 shiftwidth=4
+set backspace=indent,eol,start
+set number history=1000 ignorecase smartcase linebreak
+set completeopt=preview,menu laststatus=2
+
+" Private RAM history/swap avoids repeated flash writes during editing.
+let s:cache = exists('$DICTTECH_CLI_CACHE') && !empty($DICTTECH_CLI_CACHE) ? $DICTTECH_CLI_CACHE : '/tmp/dicttech-cli-0'
+if getftype(s:cache) == ''
+  silent! call mkdir(s:cache, '', 0700)
+endif
+" Vim has no portable file-owner query. BusyBox ash's test -O checks the
+" effective uid; an unavailable check safely disables editor persistence.
+let s:cache_owned = 0
+if getftype(s:cache) == 'dir' && getfperm(s:cache) == 'rwx------'
+  call system('test -O ' . shellescape(s:cache))
+  let s:cache_owned = v:shell_error == 0
+endif
+if s:cache_owned
+  silent! call mkdir(s:cache . '/vim-swap', '', 0700)
+  silent! call mkdir(s:cache . '/vim-backup', '', 0700)
+  execute 'set directory=' . fnameescape(s:cache . '/vim-swap//')
+  execute 'set backupdir=' . fnameescape(s:cache . '/vim-backup//')
+  execute 'set viminfofile=' . fnameescape(s:cache . '/viminfo')
+else
+  set viminfo= noswapfile nobackup nowritebackup
+endif
+
+augroup dicttech_cli
+  autocmd!
+  autocmd FileType c,cpp,nix,yaml setlocal tabstop=2 softtabstop=2 shiftwidth=2
+  autocmd InsertEnter * hi User3 ctermfg=15 ctermbg=5
+  autocmd InsertLeave * hi User3 ctermfg=15 ctermbg=2
+  autocmd BufReadPost *
+        \ if line("'\"") >= 1 && line("'\"") <= line('$') && &ft !~# 'commit'
+        \ | execute "normal! g`\""
+        \ | endif
+augroup END
+hi User1 ctermfg=14 ctermbg=236
+hi User2 ctermfg=237 ctermbg=214
+hi User3 ctermfg=15 ctermbg=2
+set statusline=%3*\ %{mode()}\ %*[%n][%F](%{&fenc==''?&enc:&fenc},%{&ff},%Y)%2*%r%1*%m%*%<%=\'0x%B\'\ [Line:%l/%L,Col:%c][%p%%]
+nnoremap <silent> <C-n> :let [&nu, &rnu] = [!&rnu, &nu+&rnu==1]<CR>
+if filereadable(expand('~/.vimrc.local'))
+  source ~/.vimrc.local
+endif

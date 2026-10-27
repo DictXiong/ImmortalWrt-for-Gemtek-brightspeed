@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "repo": "ohmyzsh/ohmyzsh",
+      "commit": "d2b7f557cceaddb16ba89bbf8200d8a8df35c4d8",
+      "path": "themes/ys.zsh-theme",
+      "sha256": "1670fcbd16fe46e7098522498972af453d6109ca09c82682d8372c7754049794",
+      "installed_relative_path": "zsh/ys.zsh-theme"
+    },
+    {
+      "repo": "ohmyzsh/ohmyzsh",
+      "commit": "d2b7f557cceaddb16ba89bbf8200d8a8df35c4d8",
+      "path": "LICENSE.txt",
+      "sha256": "6772e603fd19666902ab7541f49f3d9e92637539fb0840605615d8c6d18fc3f6",
+      "installed_relative_path": "licenses/ohmyzsh-MIT.txt"
+    },
+    {
+      "repo": "ohmyzsh/ohmyzsh",
+      "commit": "d2b7f557cceaddb16ba89bbf8200d8a8df35c4d8",
+      "path": "lib/git.zsh",
+      "sha256": "b135c2cae03645ed07bbefa87f03d6d1c8c6893d654b5846f8349b8ccdcfb1dc",
+      "installed_relative_path": "zsh/git.zsh"
+    },
+    {
+      "repo": "joshdick/onedark.vim",
+      "commit": "47bec7a6196a843dad195d2666c3ac84c6e80c78",
+      "path": "colors/onedark.vim",
+      "sha256": "9f479bac957e75a84dcd44426bc69d99c6aae96c1a4f2f5f04ed011cfeeb642a",
+      "installed_relative_path": "vim/colors/onedark.vim"
+    },
+    {
+      "repo": "joshdick/onedark.vim",
+      "commit": "47bec7a6196a843dad195d2666c3ac84c6e80c78",
+      "path": "autoload/onedark.vim",
+      "sha256": "32d9f9daecccb45e108393efb68c11bb0055e5e1ae3955db0d5dab5646f2dd68",
+      "installed_relative_path": "vim/autoload/onedark.vim"
+    },
+    {
+      "repo": "joshdick/onedark.vim",
+      "commit": "47bec7a6196a843dad195d2666c3ac84c6e80c78",
+      "path": "LICENSE",
+      "sha256": "ae99c6b8673c66c951b5a90d0b18e92714c18681c534fcd7cd635784c46c59a5",
+      "installed_relative_path": "licenses/onedark-MIT.txt"
+    },
+    {
+      "repo": "DictXiong/dotfiles",
+      "commit": "e1aaeea93fbf333aebce73f4bc0d83f175577505",
+      "path": ".ssh/authorized_keys2",
+      "git_blob": "efd264ce90af6c7252b84377ee22800a3762de23",
+      "sha256": "8d85e9b6f0bded08886380539156ad668d63db8063a326d89c0cffdc85c0c684",
+      "installed_relative_path": "authorized_keys"
+    }
+  ],
+  "configuration_origin": {
+    "repo": "DictXiong/dotfiles",
+    "commit": "e1aaeea93fbf333aebce73f4bc0d83f175577505",
+    "paths": [
+      ".zshrc2",
+      ".vimrc2",
+      ".tmux.conf2"
+    ],
+    "adaptation": "Owner-requested offline OpenWrt subset. No installer, plugin downloader, auto updater, login beacon, identity or signing configuration is executed or copied."
+  }
+}

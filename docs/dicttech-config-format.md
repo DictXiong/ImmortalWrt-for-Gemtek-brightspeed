@@ -77,6 +77,12 @@ requests an empty authorized-key file. Device SSH host keys are not part of
 this document or model rendering. Updating root's password hash must preserve
 all other shadow rows.
 
+Fresh images contain the owner's reviewed public-key set pinned in
+`cli-profile`; there are no private keys. Preservation includes that default
+set on a new AP. An explicit key list replaces it, and `[]` revokes it without
+the next boot silently restoring it. Image rebuilds do not fetch keys during
+login or automatically merge new keys into an already provisioned AP.
+
 ## Supported differences
 
 `common` and optional per-device `overrides` accept this curated surface:
@@ -87,7 +93,8 @@ all other shadow rows.
 - `radios.radio1`: `channel` (36–64 in steps of four), `htmode` through `EHT160`.
 - `radios.radio2`: a valid 6 GHz primary `channel`, `htmode` through `EHT320`.
 - `ssids.main.name` and `ssids.main.six_ghz`; `ssids.guest.name`;
-  `ssids.iot.name` and `ssids.iot.hidden`.
+  `ssids.iot.name` and `ssids.iot.hidden`. Each SSID also owns its `encryption`:
+  Main/Guest require `sae`; IoT accepts `sae`, `sae-mixed` or `psk2`.
 - `extra_ssids`: an ordered array of zero or more ordinary custom SSIDs.
 - `roaming.enabled`, `roaming.interval` (30–300), `roaming.ttl` (180–1800), with
   TTL at least three check intervals.
@@ -106,6 +113,13 @@ Main (`DictTech`) is 2.4+5 GHz MLO with optional 6 GHz, WPA3 SAE and required PM
 Guest (`DictTech-Guest`) is 2.4+5 GHz MLO with the same security and VLAN 192.
 IoT (`DictTech-IoT`) is hidden by default, 2.4 GHz single-link, WPA2/WPA3 mixed
 with optional PMF. Guest clients may communicate. FT remains disabled.
+
+Encryption belongs beside each SSID rather than in a separate `security`
+table. PMF is derived (required for SAE, optional for mixed/WPA2), preventing
+contradictory settings. Passwords remain in private `secrets.wifi`, referenced
+by profile, so the public SSID configuration can stay secret-free. The default
+NTP list starts with `time0.dxng.net`, `ntp.ibd.ink`, `ntp.dxng.cn` and retains
+the existing public fallback servers; `ntp_servers` can replace the whole list.
 
 A custom SSID needs only a stable ID and a name:
 

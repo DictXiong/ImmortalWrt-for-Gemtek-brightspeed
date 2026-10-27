@@ -50,10 +50,11 @@ if [[ $layout == ubi ]]; then
  printf '%s\n' 'CONFIG_TARGET_airoha_an7581_DEVICE_gemtek_xr1710g-ubi=y' >>.config
 fi
 revision="$(git rev-parse --short=12 HEAD)"
-version="2.0.0-$revision"
+version="2.1.0-$revision"
 [[ -z $(git status --porcelain) ]] || version+="-dirty"
 printf 'CONFIG_VERSION_NUMBER="%s"\nCONFIG_VERSION_CODE="%s"\n' "$version" "$revision" >>.config
 make defconfig
+python3 scripts/dicttech/test-cli-feed-metadata.py
 python3 scripts/dicttech/check-build.py --layout "$layout" --output "bin/dicttech-$layout-build.json"
 if [[ $prepare_only == 1 ]]; then exit 0; fi
 make download -j"$jobs"

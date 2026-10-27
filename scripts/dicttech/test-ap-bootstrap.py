@@ -19,7 +19,7 @@ def main():
     args = parser.parse_args()
     if not sys.platform.startswith('linux'):
         parser.error('the inert /proc and shell fixtures require Linux')
-    commands = ['sh', 'jq', 'tar', 'cp', 'mv', 'chmod', 'wc', 'tr', 'readlink',
+    commands = ['sh', 'jq', 'tar', 'cp', 'mv', 'chmod', 'wc', 'tr', 'readlink', 'hexdump',
                 'ln', 'rm', 'mkdir', 'sed', 'sha256sum', 'awk', 'cat', 'touch']
     missing = [name for name in commands if not shutil.which(name)]
     if missing:
@@ -31,6 +31,8 @@ def main():
               package / 'usr/share/dicttech-ap/defaults.json',
               package / 'etc/init.d/dicttech-ap-prepare',
               package / 'etc/init.d/dicttech-ap-finalize']
+    inputs.extend(sorted((package / 'usr/lib/dicttech-ap/setup').iterdir()))
+    inputs.append(source / 'package/network/services/dropbear/files/dropbear.init')
     for item in inputs:
         if not item.is_file():
             parser.error('missing package source: ' + str(item))
@@ -42,7 +44,7 @@ def main():
     report = {'schema_version': 1, 'offline_only': True, 'router_access': False,
               'host_services_modified': False, 'sourceSHA': pins,
               'passed': True, 'suites': {}}
-    for name in ['bootstrap', 'services']:
+    for name in ['bootstrap', 'setup', 'services']:
         try:
             result = subprocess.run([sys.executable, str(fixtures / (name + '.py'))],
                                     env=environment, capture_output=True, text=True,

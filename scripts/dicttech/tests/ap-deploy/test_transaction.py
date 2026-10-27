@@ -223,11 +223,12 @@ class Transaction(unittest.TestCase):
     def assertOriginal(self, services=True):
         for name, value in self.before.items():
             self.assertEqual((self.root / name).read_bytes(), value, name)
-        self.assertFalse((self.root / 'etc/config/wireless').exists())
-        self.assertFalse((self.root / 'etc/dicttech-ap/root-password-hash').exists())
+        for name in ['etc/config/wireless', 'etc/dicttech-ap/root-password-hash']:
+            if name not in self.before:
+                self.assertFalse((self.root / name).exists())
         self.assertFalse((self.root / 'etc/resolv.conf').is_symlink())
         self.assertFalse((self.root / 'etc/resolv.conf').exists())
-        self.assertEqual((self.root / 'etc/config/network').stat().st_mode & 0o777, 0o644)
+        self.assertEqual((self.root / 'etc/config/network').stat().st_mode & 0o777, self.original_network_mode if hasattr(self, 'original_network_mode') else 0o644)
         if services:
             self.assertEqual(json.loads(self.service_state.read_text()), json.loads(self.original_services))
 
@@ -368,18 +369,123 @@ class Transaction(unittest.TestCase):
         self.call('stage', data=payload, good=False)
         self.assertOriginal()
 
-    def test_isolated_initialization_requires_exact_setup_and_board(self):
-        self.put('tmp/dicttech-ap-bootstrap-isolated', b'')
-        self.put('usr/lib/dicttech-ap/setup/network', b'original network\n')
-        (self.root / 'sys/class/net/br-lan/address').unlink()
-        self.before.pop('sys/class/net/br-lan/address')
-        self.ubus.write_text('#!/bin/sh\nprintf \'%s\\n\' \'{"up":true,"proto":"static","l3_device":"lan4","ipv4-address":[{"address":"192.168.250.1","mask":24}]}\'\n')
-        contract = self.call('check'); self.assertTrue(contract['identity']['bootstrap_isolated'])
-        approved = {'device_id': 'fixture_ap', 'bridge_mac': '02:00:00:00:99:00', 'allowed_boards': ['gemtek,xr1710g'], 'initialize': True}
+    def fresh_bootstrap(self, mode='dhcp'):
+        fixture_source = CONTROLLER.parent / 'tests/bootstrap/setup.py'
+        spec = importlib.util.spec_from_file_location('bootstrap_setup_fixture', fixture_source)
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        setup = module.SetupFixture(self.base, self.root)
+        if mode == 'isolated': setup.shell_tool('hexdump', 'exit 1\n')
+        shutil.rmtree(self.root / 'sys/class/net/br-lan')
+        setup.call('prepare'); setup.activate(); setup.call('check-setup')
+        self.script.write_text(self.script.read_text().replace(
+            'BOOTSTRAP=' + shlex.quote(str(self.base / 'no-bootstrap')),
+            'BOOTSTRAP=' + shlex.quote(str(setup.script))))
+        self.before = {str(p.relative_to(self.root)): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        self.original_network_mode = 0o600
+        return setup
+
+    def test_isolated_initialization_requires_exact_setup_and_pinned_boot(self):
+        self.fresh_bootstrap('isolated')
+        contract = self.call('check')
+        self.assertTrue(contract['identity']['bootstrap_isolated'])
+        self.assertFalse(contract['identity']['bootstrap_dhcp'])
+        self.assertEqual(contract['identity']['ssh_port'], '12022')
+        approved = {'device_id': 'fixture_ap', 'bridge_mac': '02:00:00:00:99:00',
+                    'allowed_boards': ['gemtek,xr1710g'], 'initialize': True,
+                    'expect_boot_id': contract['boot_id']}
         manifest, payload = deploy.bundle(self.files, contract, 'fixture_ap', 120, approved)
         self.call('stage', data=payload)
         self.call('rollback', manifest['token'])
         self.assertOriginal()
+
+    def test_dhcp_initialization_rejects_missing_flag_wrong_boot_and_tampered_proof(self):
+        setup = self.fresh_bootstrap()
+        contract = self.call('check')
+        self.assertTrue(contract['identity']['bootstrap_dhcp'])
+        self.assertFalse(contract['identity']['bootstrap_isolated'])
+        self.assertEqual(contract['identity']['bridge_mac'], setup.identity['mac'])
+        self.assertEqual(contract['identity']['ssh_port'], '12022')
+        approved = {'device_id': 'fixture_ap', 'bridge_mac': '02:00:00:00:99:00',
+                    'allowed_boards': ['gemtek,xr1710g'], 'initialize': False,
+                    'expect_boot_id': contract['boot_id']}
+        for flag, pin in [(False, contract['boot_id']), (True, None),
+                          (True, '22222222-2222-4222-8222-222222222222')]:
+            approved.update(initialize=flag, expect_boot_id=pin)
+            _, payload = deploy.bundle(self.files, contract, 'fixture_ap', 120, approved)
+            self.call('stage', data=payload, good=False)
+        approved.update(initialize=True, expect_boot_id=contract['boot_id'])
+        with (self.root / 'etc/config/dropbear').open('a') as stream: stream.write('# tampered setup\n')
+        altered_contract = self.call('check')
+        self.assertFalse(altered_contract['identity']['bootstrap_dhcp'])
+        _, payload = deploy.bundle(self.files, altered_contract, 'fixture_ap', 120, approved)
+        self.call('stage', data=payload, good=False)
+
+    def test_dhcp_initialization_rollback_restores_generated_setup_and_identity(self):
+        setup = self.fresh_bootstrap()
+        identity = setup.identity
+        contract = self.call('check')
+        approved = {'device_id': 'fixture_ap', 'bridge_mac': '02:00:00:00:99:00',
+                    'allowed_boards': ['gemtek,xr1710g'], 'initialize': True,
+                    'expect_boot_id': contract['boot_id']}
+        manifest, payload = deploy.bundle(self.files, contract, 'fixture_ap', 120, approved)
+        self.call('stage', data=payload); self.call('apply', manifest['token'])
+        wait(lambda: (self.state / 'reload-complete').exists())
+        self.call('rollback', manifest['token'])
+        wait(lambda: not (self.state / 'services-restore-pending').exists())
+        self.assertOriginal()
+        self.assertEqual(setup.identity, identity)
+        self.assertEqual(json.loads(setup.call('check-setup').stdout)['mode'], 'dhcp')
+
+    def test_offline_lan4_initialization_works_with_pending_dhcp_and_reports_access(self):
+        setup = self.fresh_bootstrap()
+        runtime = json.loads(setup.runtime.read_text())
+        runtime['network.interface.bootstrap'] = {'up': False, 'pending': True,
+            'proto': 'dhcp', 'device': 'br-setup.1'}
+        setup.runtime.write_text(json.dumps(runtime))
+        contract = self.call('check')
+        self.assertTrue(contract['identity']['bootstrap_dhcp'])
+        self.assertFalse(contract['identity']['bootstrap_dhcp_ready'])
+        access = deploy.bootstrap_access(contract['identity'])
+        self.assertEqual(access['offline']['address'], '192.168.250.1')
+        self.assertFalse(access['dhcp']['ready'])
+        approved = {'device_id': 'fixture_ap', 'bridge_mac': '02:00:00:00:99:00',
+                    'allowed_boards': ['gemtek,xr1710g'], 'initialize': True,
+                    'expect_boot_id': contract['boot_id']}
+        manifest, payload = deploy.bundle(self.files, contract, 'fixture_ap', 120, approved)
+        self.call('stage', data=payload); self.call('rollback', manifest['token'])
+        self.assertOriginal()
+
+    def test_setup_ssh_port_uses_named_first_instance_without_main(self):
+        self.uci.write_text('#!/bin/sh\ncase "$*" in\n'
+                           ' "-q show dropbear") printf "%s\\n" "dropbear.setup=dropbear" "dropbear.bootstrap=dropbear";;\n'
+                           ' "-q get dropbear.setup.Port") printf "12022\\n";;\n'
+                           'esac\n')
+        self.assertEqual(self.call('check')['identity']['ssh_port'], '12022')
+
+    def test_controller_initialization_requires_unregistered_device_proof_and_boot_pin(self):
+        import contextlib
+        from unittest.mock import patch
+        contract = self.call('check')
+        resolved = {'defaults_sha256': contract['defaults_sha256'],
+                    'device': {'identity': {'bridge': '02:00:00:00:99:00'}},
+                    'platform': {'board_names': ['gemtek,xr1710g']}, 'common': {'ssh_port': 12022}}
+        argv = [str(CONTROLLER), 'plan', '--config', 'unused.json', '--device', 'fixture_ap', '--host', 'ap.example.invalid']
+        for mode in ['isolated', 'dhcp']:
+            contract['identity'].update(device_id='', bootstrap_isolated=mode == 'isolated', bootstrap_dhcp=mode == 'dhcp')
+            for extra, good in [([], False), (['--initialize'], False),
+                                (['--initialize', '--expect-boot-id', 'wrong'], False),
+                                (['--initialize', '--expect-boot-id', contract['boot_id']], True)]:
+                with patch.object(deploy, 'model', return_value=(resolved, self.files)), \
+                     patch.object(deploy, 'remote', return_value=contract), \
+                     patch.object(deploy.sys, 'argv', argv + extra), contextlib.redirect_stdout(io.StringIO()):
+                    if good: deploy.main()
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, 'target bridge MAC differs'): deploy.main()
+            contract['identity']['device_id'] = 'fixture_ap'
+            with patch.object(deploy, 'model', return_value=(resolved, self.files)), \
+                 patch.object(deploy, 'remote', return_value=contract), \
+                 patch.object(deploy.sys, 'argv', argv + ['--initialize', '--expect-boot-id', contract['boot_id']]):
+                with self.assertRaisesRegex(RuntimeError, 'target bridge MAC differs'): deploy.main()
 
     def test_controller_refuses_wrong_master_device_before_any_stage(self):
         from unittest.mock import patch

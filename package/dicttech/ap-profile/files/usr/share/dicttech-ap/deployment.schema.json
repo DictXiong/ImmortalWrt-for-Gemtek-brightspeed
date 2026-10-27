@@ -232,6 +232,12 @@
                 },
                 "six_ghz": {
                   "type": "boolean"
+                },
+                "encryption": {
+                  "enum": [
+                    "sae"
+                  ],
+                  "description": "Security belongs to its SSID. PMF is derived: SAE requires it; WPA2 policies make it optional."
                 }
               }
             },
@@ -244,6 +250,12 @@
                   "minLength": 1,
                   "maxLength": 32,
                   "description": "Renderer enforces1\u201332 UTF-8 bytes and rejects control characters."
+                },
+                "encryption": {
+                  "enum": [
+                    "sae"
+                  ],
+                  "description": "Security belongs to its SSID. PMF is derived: SAE requires it; WPA2 policies make it optional."
                 }
               }
             },
@@ -259,6 +271,14 @@
                 },
                 "hidden": {
                   "type": "boolean"
+                },
+                "encryption": {
+                  "enum": [
+                    "sae",
+                    "sae-mixed",
+                    "psk2"
+                  ],
+                  "description": "Security belongs to its SSID. PMF is derived: SAE requires it; WPA2 policies make it optional."
                 }
               }
             }

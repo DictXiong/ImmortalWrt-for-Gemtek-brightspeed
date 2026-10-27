@@ -99,13 +99,25 @@ The build does not publish a public binary/package repository automatically.
 
 ## A newly flashed device
 
-Without a valid configuration the image provides isolated setup on **lan4**,
-`192.168.250.1/24`, SSH port `12022`. Wi-Fi is disabled. Connect a computer
-directly to that port and give it, for example, `192.168.250.100/24` with no
-gateway/DNS. Complete SSH host-key identification on this isolated connection
-and establish any required authentication before using batch deployment.
-The blank initial root credential is confined to this physical setup network;
-provisioning installs the private password hash before normal operation.
+An unprovisioned image has two management entries. **wan/lan2/lan3** form a
+temporary native-VLAN-1 bridge and obtain a DHCP address. A private, persistent
+random locally administered MAC and `xr1710g-setup-<MAC>` hostname distinguish
+fresh APs in the upstream lease list, even if factory MACs were duplicated.
+That DHCP entry permits **public-key SSH only**, port `12022`, using the owner's
+pinned key set. It has no HTTP listener or password/blank-password SSH access.
+
+**lan4** remains isolated at `192.168.250.1/24`, with HTTP and SSH `12022`.
+Connect directly and assign, for example, `192.168.250.100/24` without a gateway
+or DNS. This fallback works without a DHCP uplink. The blank initial root
+credential is confined to this physical setup entry; provisioning installs
+the private password hash. Wi-Fi, DHCP server, IPv6 and NAT are disabled during
+setup. ARP settings keep the static setup address off the DHCP bridge, avoiding
+default-IP collisions during batch enrollment. A quarantined invalid managed
+configuration fails closed to **lan4 only**, rather than joining an uplink.
+
+Discovering a DHCP lease is not proof of device identity: verify its SSH host
+key on a trusted/physical connection before enrolling it. Do not clone host
+private keys from another router.
 For password-based setup, establish an interactive master first, then pass its
 socket to the batch commands below (and identify the host key before accepting
 it). Do not put a password in a shell argument:
@@ -139,7 +151,7 @@ python3 scripts/dicttech/ap-deploy.py apply \
 ```
 
 `ap_new` and `BOOT_ID` are placeholders, not preconfigured identities. Initial
-provisioning requires the exact isolated setup state and an explicit boot pin.
+provisioning requires the exact generated setup state and an explicit boot pin.
 A configured device with another ID is always refused. A control socket is
 not proof of target identity: both controller and target check the identity.
 
@@ -245,6 +257,27 @@ profile IDs and SSID names with roaming enabled exchange candidates; custom
 entries can be absent or differently named on another AP. The AP tool does
 not modify pi1 reservations or deploy NixOS; those are separate upstream
 network prerequisites.
+
+## Owner tools and status pages
+
+The image includes Zsh, full Vim, tmux, less, HTTPS Git and rsync. Its offline
+ys/OneDark configuration follows the reviewed dotfiles snapshot; it runs no
+plugin installer, updater or network request at login. Root's default login
+shell becomes Zsh after a successful executable check; system `/bin/sh` stays
+BusyBox ash. Local overrides live in `.zshrc.local`, `.vimrc.local` and
+`.tmux.conf.local`. Shell/editor transient state uses private RAM storage.
+
+System / Device serial number and System / Software remain available. The
+serial tool is informational unless the installed factory layout supports
+its write operation; this profile does not rewrite factory data. Package
+exploration remains possible, with matching release kmods required.
+
+Status / WiFi client history is enabled on provisioned APs. It samples every
+30 seconds, deduplicates shared MLO interfaces and retains at most 512 devices
+for seven days in RAM. Reboot clears it. The page reports collector health;
+an empty history before the first association is normal. Pure APs may lack
+upstream DHCP hostname/IP hints. A client present entirely between samples
+can be missed. This is a bounded diagnostic view, not an audit log.
 
 ## Tests and release handling
 

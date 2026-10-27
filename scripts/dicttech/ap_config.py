@@ -166,9 +166,11 @@ def validate_delta(delta: Any, path: str = "common") -> None:
         obj(delta["ssids"], path + ".ssids", set(ROLES))
         for role, values in delta["ssids"].items():
             where = path + ".ssids." + role
-            obj(values, where, {"name", "six_ghz"} if role == "main" else {"name", "hidden"} if role == "iot" else {"name"})
+            obj(values, where, {"name", "six_ghz", "encryption"} if role == "main" else {"name", "hidden", "encryption"} if role == "iot" else {"name", "encryption"})
             if "name" in values:
                 text(values["name"], where + ".name", 1, 32)
+            if "encryption" in values and values["encryption"] not in ("sae", "sae-mixed", "psk2"):
+                fail(where + ".encryption", "unsupported security policy")
             for key in ("six_ghz", "hidden"):
                 if key in values:
                     boolean(values[key], where + "." + key)
@@ -213,11 +215,13 @@ def validate_delta(delta: Any, path: str = "common") -> None:
 def _ssid_specs(common: dict, defaults: dict, path: str) -> list[dict]:
     """Resolve public per-ESS policy before assigning MAC identities."""
     def preset(role, bands):
-        security = defaults["security"][role]
+        encryption = common["ssids"][role]["encryption"]
+        if role != "iot" and encryption != "sae":
+            fail(path + ".ssids." + role, "MLO requires WPA3 SAE with required PMF")
         return {"key": role, "section": SECTIONS[role], "iface": IFACES[role],
                 "name": common["ssids"][role]["name"], "bands": bands,
                 "mlo": role != "iot", "network": "guest" if role == "guest" else "lan",
-                "encryption": security["encryption"], "pmf": security["pmf"],
+                "encryption": encryption, "pmf": 2 if encryption == "sae" else 1,
                 "hidden": common["ssids"][role].get("hidden", False),
                 "roaming": common["roaming"]["enabled"], "password_ref": role}
     main = preset("main", list(BANDS if common["ssids"]["main"]["six_ghz"] else BANDS[:2]))
@@ -531,7 +535,6 @@ def resolve(document: dict, device_id: str, defaults_path: str | Path | None = N
     return {"schema_version": SCHEMA_VERSION, "profile": PROFILE, "defaults_sha256": digest,
             "device_id": device_id, "device": current["device"], "common": current["common"], "ssids": current["ssids"],
             "platform": copy.deepcopy(defaults["platform"]),
-            "security": {value["key"]: {key: value[key] for key in ("encryption", "pmf")} for value in current["ssids"]},
             "services": copy.deepcopy(defaults["services"]), "peers": peers,
             "credentials": {"wifi": copy.deepcopy(document["secrets"]["wifi"]), **copy.deepcopy(document["secrets"]["devices"][device_id])}}
 

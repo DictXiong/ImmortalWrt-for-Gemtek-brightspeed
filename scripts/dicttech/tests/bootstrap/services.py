@@ -7,7 +7,7 @@ with tempfile.TemporaryDirectory(prefix='dt-ap-services-', dir='/tmp') as d:
  f=pathlib.Path(d)
  for p in ['etc/init.d','etc/rc.d','etc/dicttech-ap','usr/share/dicttech-ap','bin','running']:(f/p).mkdir(parents=True)
  shutil.copy(R/'package/dicttech/ap-profile/files/usr/share/dicttech-ap/defaults.json',f/'usr/share/dicttech-ap/defaults.json')
- names=['network','sysntpd','firewall','dropbear','uhttpd','xr_roaming','sysctl','cpufreq','airoha-npu','fan','dnsmasq','usteer','npu-jitter','radius','3proxy']
+ names=['network','sysntpd','firewall','dropbear','uhttpd','xr_roaming','wifihistory','sysctl','cpufreq','airoha-npu','fan','dnsmasq','usteer','npu-jitter','radius','3proxy']
  for name in names:
   p=f/'etc/init.d'/name
   p.write_text('''#!/bin/sh
@@ -42,7 +42,7 @@ esac
  for n in ['dnsmasq','usteer','npu-jitter','radius','3proxy']:
   assert not (f/'running'/n).exists()
   assert not list((f/'etc/rc.d').glob('S??'+n))
- for n in ['network','sysntpd','firewall','dropbear','uhttpd','xr_roaming']:assert (f/'running'/n).exists(),n
+ for n in ['network','sysntpd','firewall','dropbear','uhttpd','xr_roaming','wifihistory']:assert (f/'running'/n).exists(),n
  for n in ['sysctl','cpufreq','airoha-npu','fan']:assert n+' start' in (f/'actions').read_text(),n
  report.append({'case':'apply_required_optional_and_disabled','passed':True})
  o=run('restore',snap,'links');assert o.returncode==0,o.stderr
@@ -59,6 +59,7 @@ esac
  report.append({'case':'reject_whitespace_service_injection','passed':True})
  count=(f/'actions').read_text();active={x.name for x in (f/'running').iterdir()};o=run('setup');assert o.returncode==0,o.stderr
  assert not list((f/'etc/rc.d').glob('S??xr_roaming'))
+ assert not list((f/'etc/rc.d').glob('S??wifihistory'))
  assert not list((f/'etc/rc.d').glob('S??npu-jitter'))
  assert list((f/'etc/rc.d').glob('S??network'))
  assert {x.name for x in (f/'running').iterdir()}==active

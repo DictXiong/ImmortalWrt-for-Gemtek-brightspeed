@@ -77,13 +77,13 @@ policy() {
   case " $disabled_words " in *" $service "*) return 1;; esac
  done
  for service in $enabled; do
-  [ "$mode:$service" != setup:xr_roaming ] || continue
+  case "$mode:$service" in setup:xr_roaming|setup:wifihistory) continue;; esac
   printf 'enable %s\n' "$service" || return 1
  done
  # Hardware support services are package-specific and optional when absent.
  for service in sysctl cpufreq airoha-npu fan; do printf 'enable %s\n' "$service" || return 1; done
  for service in $disabled; do printf 'disable %s\n' "$service" || return 1; done
- [ "$mode" != setup ] || printf '%s\n' 'disable xr_roaming'
+ [ "$mode" != setup ] || printf '%s\n' 'disable xr_roaming' 'disable wifihistory'
 }
 
 apply_policy() {

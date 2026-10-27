@@ -15,7 +15,11 @@ REQUIRED = {
     'curl', 'coreutils-timeout', 'flock', 'firewall4', 'kmod-nft-bridge',
     'kmod-nft-offload', 'luci-app-mlo', 'luci-app-airoha-fancontrol',
     'luci-app-airoha-npu', 'luci-theme-glass', 'dropbear', 'uhttpd', 'cpufreq',
-    'luci-i18n-base-zh-cn',
+    'luci-i18n-base-zh-cn', 'cli-profile', 'zsh', 'vim-full', 'tmux', 'less',
+    'git-http', 'rsync', 'luci-app-airoha-factory',
+    'luci-app-package-manager', 'luci-app-wifihistory',
+    'luci-i18n-airoha-factory-zh-cn', 'luci-i18n-package-manager-zh-cn',
+    'luci-i18n-wifihistory-zh-cn',
 }
 FORBIDDEN = {
     'usteer', 'dawn', 'luci-app-usteer', 'luci-app-dawn', 'miniupnpd',

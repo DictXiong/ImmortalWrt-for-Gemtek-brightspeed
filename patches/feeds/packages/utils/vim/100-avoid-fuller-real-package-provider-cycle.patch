@@ -1,0 +1,11 @@
+--- a/utils/vim/Makefile
++++ b/utils/vim/Makefile
+@@ -52,7 +52,7 @@
+ define Package/vim-fuller
+   $(call Package/vim/Default)
+   TITLE+= (Huge)
+-  PROVIDES:=vim vim-full
++  PROVIDES:=vim
+   CONFLICTS:=vim vim-full
+   DEPENDS:=+vim-runtime
+   EXTRA_DEPENDS:=vim-runtime (=$(PKG_VERSION)-r$(PKG_RELEASE))

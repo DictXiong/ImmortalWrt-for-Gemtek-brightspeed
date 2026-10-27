@@ -257,25 +257,36 @@ status() {
   '{state:$state,reload_complete:$reload_complete,deadline:$deadline,device_id:$m[0].device_id,token:$m[0].token,boot_id:$m[0].boot_id,now:($now|tonumber),changed_paths:$m[0].changed_paths}'
 }
 target_identity() {
- local device_id= board= bridge= isolated=false ssh_port= section name
+ local device_id= board= bridge= isolated=false dhcp=false ready=false ssh_port= proof= mode= section
  if plain "$(p /etc/dicttech-ap/device.json)"; then
   device_id=$("$JQ" -r 'if .profile=="dicttech-ap-v2" and .schema_version==2 and (.device_id|type)=="string" then .device_id else "" end' "$(p /etc/dicttech-ap/device.json)" 2>/dev/null || true)
  fi
  test ! -f "$(p /tmp/sysinfo/board_name)" || board=$(cat "$(p /tmp/sysinfo/board_name)")
  if test -r "$(p /sys/class/net/br-lan/address)"; then bridge=$("$TIMEOUT" 3 cat "$(p /sys/class/net/br-lan/address)" 2>/dev/null || true); fi
  ssh_port=$("$UCI" -q get dropbear.main.Port 2>/dev/null || true)
- if plain "$(p /tmp/dicttech-ap-bootstrap-isolated)" &&
-    plain "$(p /etc/config/network)" && plain "$(p /usr/lib/dicttech-ap/setup/network)" &&
-    cmp -s "$(p /etc/config/network)" "$(p /usr/lib/dicttech-ap/setup/network)" && test -z "$bridge" &&
-    "$TIMEOUT" 3 "$UBUS" -t 2 call network.interface.ap_maintenance status 2>/dev/null |
-      "$JQ" -e '.up==true and .proto=="static" and .l3_device=="lan4" and (."ipv4-address"|type=="array" and length==1 and .[0].address=="192.168.250.1" and .[0].mask==24)' >/dev/null; then
-  isolated=true
-  for section in $("$UCI" -q show wireless 2>/dev/null | sed -n 's/^wireless\.\([^.=]*\)=wifi-\(device\|iface\)$/\1/p'); do
-   test "$("$UCI" -q get "wireless.$section.disabled" 2>/dev/null || true)" = 1 || isolated=false
+ if test -z "$ssh_port"; then
+  for section in $("$UCI" -q show dropbear 2>/dev/null | sed -n 's/^dropbear\.\([^.=]*\)=dropbear$/\1/p'); do
+   ssh_port=$("$UCI" -q get "dropbear.$section.Port" 2>/dev/null || true)
+   test -z "$ssh_port" || break
   done
  fi
- "$JQ" -cn --arg id "$device_id" --arg board "$board" --arg bridge "$bridge" --arg ssh_port "$ssh_port" --argjson isolated "$isolated" \
-  '{device_id:$id,board_name:$board,bridge_mac:$bridge,bootstrap_isolated:$isolated,ssh_port:$ssh_port}'
+ # The bootstrap helper owns the complete, read-only setup proof. A stamp or
+ # isolated network file alone can never authorize changing device identity.
+ if test -z "$device_id" && test -z "$bridge" && test -x "$BOOTSTRAP"; then
+  proof=$("$TIMEOUT" 10 "$BOOTSTRAP" check-setup 2>/dev/null || true)
+  if printf '%s' "$proof" | "$JQ" -e '
+   type=="object" and (.mode=="isolated" or .mode=="dhcp") and .ssh_port=="12022" and (.dhcp_ready|type=="boolean") and
+   (if .mode=="dhcp" then (.bridge_mac|type=="string" and test("^02(:[0-9a-f]{2}){5}$")) else .bridge_mac=="" end)
+  ' >/dev/null 2>&1; then
+   mode=$(printf '%s' "$proof" | "$JQ" -r .mode)
+   if test "$mode" = dhcp; then dhcp=true; else isolated=true; fi
+   bridge=$(printf '%s' "$proof" | "$JQ" -r .bridge_mac)
+   ready=$(printf '%s' "$proof" | "$JQ" -r .dhcp_ready)
+   ssh_port=$(printf '%s' "$proof" | "$JQ" -r .ssh_port)
+  fi
+ fi
+ "$JQ" -cn --arg id "$device_id" --arg board "$board" --arg bridge "$bridge" --arg ssh_port "$ssh_port" --argjson isolated "$isolated" --argjson dhcp "$dhcp" --argjson ready "$ready" \
+  '{device_id:$id,board_name:$board,bridge_mac:$bridge,bootstrap_isolated:$isolated,bootstrap_dhcp:$dhcp,bootstrap_dhcp_ready:$ready,ssh_port:$ssh_port}'
 }
 validate_target_approval() {
  local current expected proposed id bridge allow_init
@@ -284,12 +295,14 @@ validate_target_approval() {
  expected=$("$JQ" -c .baseline.identity "$STATE/manifest.json")
  printf '%s' "$current" | "$JQ" -e --argjson expected "$expected" '.==$expected' >/dev/null || fail target_identity_changed
  proposed=$("$JQ" -c .approved_target "$STATE/manifest.json")
- printf '%s' "$proposed" | "$JQ" -e --argjson current "$current" --arg device "$("$JQ" -r .device_id "$STATE/manifest.json")" '
+ printf '%s' "$proposed" | "$JQ" -e --argjson current "$current" --arg boot "$(boot)" --arg device "$("$JQ" -r .device_id "$STATE/manifest.json")" '
   .device_id==$device and (.bridge_mac|type=="string" and length==17) and
   (.allowed_boards|type=="array" and length>=1) and
   ($current.board_name as $board|.allowed_boards|index($board)!=null) and
   ($current.device_id=="" or $current.device_id==.device_id) and
-  (if $current.bridge_mac==.bridge_mac then true else .initialize==true and ($current.device_id=="" or $current.device_id==.device_id) and $current.bootstrap_isolated==true end)
+  (if $current.bridge_mac==.bridge_mac then true else
+   .initialize==true and .expect_boot_id==$boot and $current.device_id=="" and
+   ($current.bootstrap_isolated==true or $current.bootstrap_dhcp==true) end)
  ' >/dev/null || fail wrong_target_identity
 }
 

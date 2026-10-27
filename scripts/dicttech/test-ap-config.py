@@ -64,7 +64,32 @@ class Configuration(unittest.TestCase):
         self.assertEqual(m.render(a), m.render(self.state()))
         self.assertEqual([p['key'] for p in m.ssid_profiles(a)], ['main', 'guest', 'iot'])
         self.assertEqual(a['common']['extra_ssids'], [])
-        self.assertNotIn('legacy', a['security'])
+        self.assertNotIn('security', a)
+        self.assertEqual(a['common']['ssids']['main']['encryption'], 'sae')
+
+    def test_preset_security_lives_with_ssid_and_derives_pmf(self):
+        for encryption, pmf in [('sae', 2), ('sae-mixed', 1), ('psk2', 1)]:
+            value = document()
+            value['common']['ssids'] = {'iot': {'encryption': encryption}}
+            state = self.state(value)
+            profile = next(p for p in state['ssids'] if p['key'] == 'iot')
+            self.assertEqual((profile['encryption'], profile['pmf']), (encryption, pmf))
+            rows = {r['name']: r for r in parse_uci(m.render(state)['etc/config/wireless'])}
+            self.assertEqual(rows['ssid_iot']['options']['encryption'], encryption)
+            self.assertEqual(rows['ssid_iot']['options']['ieee80211w'], str(pmf))
+        for role in ['main', 'guest']:
+            for encryption in ['psk2', 'sae-mixed', 'none']:
+                value = document()
+                value['common']['ssids'] = {role: {'encryption': encryption}}
+                self.reject(lambda: self.state(value))
+
+    def test_default_ntp_keeps_owner_servers_and_fallbacks(self):
+        state = self.state()
+        servers = state['common']['ntp_servers']
+        self.assertEqual(servers[:3], ['time0.dxng.net', 'ntp.ibd.ink', 'ntp.dxng.cn'])
+        self.assertEqual(len(servers), len(set(servers)))
+        rows = {r['name']: r for r in parse_uci(m.render(state)['etc/config/system'])}
+        self.assertEqual(rows['ntp']['lists']['server'], servers)
 
     def test_custom_minimal_defaults_and_explicit_mld_order(self):
         value = document()

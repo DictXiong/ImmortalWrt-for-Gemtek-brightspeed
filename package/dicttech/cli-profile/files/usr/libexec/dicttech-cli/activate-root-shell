@@ -1,0 +1,27 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Explicit bootstrap integration point; never executed by a shell rc file.
+set -eu
+passwd=/etc/passwd
+shell=/usr/bin/zsh
+[ -x "$shell" ] && "$shell" -f -c ':' >/dev/null 2>&1 || exit 0
+[ -f "$passwd" ] && [ ! -L "$passwd" ] || exit 1
+current=$(awk -F: '$1=="root" { if(NF!=7)exit 1; count++; value=$7 } END { if(count!=1)exit 1; print value }' "$passwd") || exit 1
+case "$current" in
+ /usr/bin/zsh) exit 0;;
+ /bin/ash|/bin/sh) ;;
+ *) exit 0;;
+esac
+temporary=$passwd.dicttech-cli.$$
+rendered=$temporary.new
+[ ! -e "$temporary" ] && [ ! -L "$temporary" ] && [ ! -e "$rendered" ] && [ ! -L "$rendered" ] || exit 1
+trap 'rm -f "$temporary" "$rendered"' EXIT HUP INT TERM
+# cp -p retains owner and mode; awk rewrites only root's final field.
+cp -p "$passwd" "$temporary"
+cp -p "$temporary" "$rendered"
+awk -F: -v OFS=: '$1=="root" {$7="/usr/bin/zsh"} {print}' "$temporary" > "$rendered"
+# Refuse to overwrite account edits observed while rendering this snapshot.
+cmp -s "$temporary" "$passwd" || exit 1
+mv "$rendered" "$passwd"
+rm -f "$temporary"
+trap - EXIT HUP INT TERM

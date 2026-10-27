@@ -1,0 +1,24 @@
+{
+  "now": 2000000000,
+  "calls": {
+    "network.wireless.status": {
+      "radio0": { "interfaces": [ { "ifname": "ap-mld0", "config": { "ssid": "DictTech" } } ] },
+      "radio1": { "interfaces": [ { "ifname": "ap-mld0", "config": { "ssid": "DictTech" } } ] },
+      "radio2": { "interfaces": [ { "ifname": "ap-mld0", "config": { "ssid": "DictTech" } } ] }
+    },
+    "luci-rpc.getHostHints": {
+      "02:11:22:33:44:55": { "name": "test-client", "ipaddrs": [ "192.0.2.23" ], "ip6addrs": [ "2001:db8::23" ] }
+    },
+    "hostapd.ap-mld0.get_clients": {
+      "freq": 5220,
+      "clients": {
+        "02:aa:bb:cc:dd:ee": {
+          "auth": true, "assoc": true, "authorized": true,
+          "signal": 4294967255,
+          "links": [ { "link_id": 0, "address": "02:11:22:33:44:55", "bssid": "02:80:01:00:00:01" } ]
+        }
+      }
+    },
+    "hostapd.ap-mld0.get_status": { "ssid": "DictTech", "bssid": "02:80:01:00:00:00" }
+  }
+}

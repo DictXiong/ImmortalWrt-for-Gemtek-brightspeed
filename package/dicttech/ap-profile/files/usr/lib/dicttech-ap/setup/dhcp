@@ -1,1 +1,1 @@
-# No DHCP, RA, DNS proxy or NAT service in the isolated setup profile.
+# No DHCP/RA server, DNS proxy or NAT service in either setup profile.

@@ -32,6 +32,12 @@
       "source_sha256": "a93c4f79956250d786794d1ff2980514d9be4395953bfbb8ba6973f2ca17390c",
       "patched_sha256": "f27ceda55ca9ed5f9223f5b403342c56f660348e83d1d8aeccb4aeeb9a0956c1",
       "patch": "patches/feeds/glass/ucode/template/themes/glass/110-dicttech-custom-edition-footer.patch"
+    },
+    "wifi-history": {
+      "target": "applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js",
+      "source_sha256": "0a1596fe36395ac2316f23e80db2753e86783e6bd62c911afe96aed278d1d50a",
+      "patched_sha256": "cda88dab4a36742484299519a0e2cef160c8fdf1f28b3c151c499dad032796d5",
+      "patch": "patches/feeds/luci/applications/luci-app-wifihistory/120-dicttech-bounded-mld-history.patch"
     }
   }
 }

@@ -1,5 +1,5 @@
 config dropbear 'setup'
-	option Interface 'ap_maintenance'
+	option DirectInterface 'ap_maintenance'
 	option Port '12022'
 	option PasswordAuth 'on'
 	option RootPasswordAuth 'on'

@@ -38,12 +38,84 @@ def safe_ancestors(rootfs, relative):
         require(not current.is_symlink(), 'rootfs path has a symlinked parent: ' + relative)
 
 
-def compare(source, target, relative):
-    require(regular(source), 'source is not a regular package file: ' + str(source))
+def compare_bytes(expected, target, relative):
     require(regular(target), 'installed file missing or symlinked: ' + relative)
-    expected = source.read_bytes()
     require(target.read_bytes() == expected, 'installed bytes differ from authoritative source: ' + relative)
     return {'path': relative, 'sha256': digest(expected)}
+
+
+def compare(source, target, relative):
+    require(regular(source), 'source is not a regular package file: ' + str(source))
+    return compare_bytes(source.read_bytes(), target, relative)
+
+
+def cli_map(source_root):
+    package = source_root / 'package/dicttech/cli-profile/files'
+    require(package.is_dir(), 'authoritative cli-profile source directory missing')
+    mapping = {str(p.relative_to(package)): p for p in package.rglob('*') if p.is_file() or p.is_symlink()}
+    required = {'usr/share/dicttech-cli/authorized_keys', 'usr/share/dicttech-cli/zshrc',
+                'usr/share/dicttech-cli/vimrc', 'usr/share/dicttech-cli/tmux.conf',
+                'usr/share/dicttech-cli/sources.json', 'usr/libexec/dicttech-cli/activate-root-shell',
+                'root/.zshrc', 'root/.vimrc', 'root/.tmux.conf'}
+    require(required <= mapping.keys(), 'cli-profile package is missing a required asset or root rc file')
+    return mapping
+
+
+def check_cli_modes(rootfs, mapping):
+    for relative in mapping:
+        path = rootfs / relative
+        expected = 0o600 if relative.startswith('root/') else 0o755 if relative.startswith('usr/libexec/') else 0o644
+        require(path.stat().st_mode & 0o7777 == expected, 'CLI asset has unsafe or unexpected mode: ' + relative)
+        for parent in path.parents:
+            if parent == rootfs:
+                break
+            require(not parent.stat().st_mode & 0o022, 'CLI asset parent is group/other writable: ' + str(parent.relative_to(rootfs)))
+
+
+HISTORY_PATCH = 'patches/feeds/luci/applications/luci-app-wifihistory/120-dicttech-bounded-mld-history.patch'
+HISTORY_FILES = {
+    'usr/sbin/wifihistory': 'root/usr/sbin/wifihistory',
+    'etc/init.d/wifihistory': 'root/etc/init.d/wifihistory',
+    'usr/share/rpcd/ucode/wifihistory.uc': 'root/usr/share/rpcd/ucode/wifihistory.uc',
+    'usr/share/rpcd/acl.d/luci-app-wifihistory.json': 'root/usr/share/rpcd/acl.d/luci-app-wifihistory.json',
+}
+
+
+def patch_postimage(patch, target):
+    # These reviewed feed patches intentionally retain complete file context.
+    # Auditing against their postimages also works before feeds are fetched.
+    require(regular(patch), 'reviewed full-context feed patch missing or symlinked: ' + str(patch))
+    lines = patch.read_text().splitlines(keepends=True)
+    marker = '+++ b/' + target + '\n'
+    require(lines.count(marker) == 1, 'reviewed patch target is missing or ambiguous: ' + target)
+    start = lines.index(marker) + 1
+    require(start < len(lines), 'reviewed feed patch has no postimage hunk: ' + target)
+    match = re.fullmatch(r'@@ -1,\d+ \+1,(\d+) @@\n', lines[start])
+    require(match is not None, 'reviewed feed patch lacks full file context: ' + target)
+    result = []
+    for line in lines[start + 1:]:
+        if line.startswith('diff --git '):
+            break
+        require(not line.startswith('@@'), 'reviewed feed patch has incomplete postimage context: ' + target)
+        if line.startswith((' ', '+')):
+            result.append(line[1:])
+    require(len(result) == int(match.group(1)), 'reviewed feed patch postimage length mismatch: ' + target)
+    return ''.join(result).encode()
+
+
+def history_sources(source_root):
+    expected = {}
+    patch = source_root / HISTORY_PATCH
+    package = Path('applications/luci-app-wifihistory')
+    feed = source_root / 'feeds/luci'
+    for relative, suffix in HISTORY_FILES.items():
+        target = str(package / suffix)
+        expected[relative] = patch_postimage(patch, target)
+        if feed.exists() or feed.is_symlink():
+            current = feed / target
+            require(regular(current) and current.read_bytes() == expected[relative],
+                    'prepared feed differs from reviewed history patch: ' + target)
+    return expected
 
 
 def roaming_map(source_root):
@@ -92,7 +164,7 @@ def check_generators(source_root, rootfs):
     return rows
 
 
-def check_unprovisioned(rootfs):
+def check_unprovisioned(rootfs, source_root):
     directory = rootfs / 'etc/dicttech-ap'
     require(directory.is_dir() and not directory.is_symlink(), 'private deployment directory is absent or symlinked')
     require(directory.stat().st_mode & 0o777 == 0o700, 'private deployment directory must have mode 0700')
@@ -103,8 +175,11 @@ def check_unprovisioned(rootfs):
         paths.extend(rootfs.glob(pattern))
     require(not paths, 'virgin rootfs contains a device SSH/HTTPS private key')
     authorized = rootfs / 'etc/dropbear/authorized_keys'
-    require(not authorized.is_symlink() and (not authorized.exists() or authorized.read_bytes() == b''),
-            'virgin rootfs contains preset authorized SSH keys')
+    keys_source = source_root / 'package/dicttech/cli-profile/files/usr/share/dicttech-cli/authorized_keys'
+    require(regular(keys_source) and bool(keys_source.read_bytes().strip()), 'authoritative public SSH key set missing or empty')
+    require(regular(authorized) and authorized.read_bytes() == keys_source.read_bytes(),
+            'virgin rootfs must contain exactly the reviewed public authorized SSH keys')
+    require(authorized.stat().st_mode & 0o7777 == 0o600, 'virgin rootfs authorized SSH keys must have mode 0600')
     shadow = rootfs / 'etc/shadow'
     require(regular(shadow), 'virgin rootfs shadow is missing or symlinked')
     require(shadow.stat().st_mode & 0o777 == 0o600, 'virgin rootfs shadow must have mode 0600')
@@ -133,7 +208,7 @@ def check_unprovisioned(rootfs):
     resolver = rootfs / 'etc/resolv.conf'
     require(resolver.is_symlink() and os.readlink(resolver) == '/tmp/resolv.conf.d/resolv.conf.auto', 'virgin AP resolver must use netifd DNS without dnsmasq')
     return {'deployment_state': 'absent', 'private_host_identity': 'absent', 'preset_root_password': False,
-            'preset_authorized_keys': False, 'wireless_generation': 'AP marker selects disabled interfaces; upstream defaults suppressed',
+            'preset_authorized_keys': 'reviewed public DictTech set', 'authorized_keys_sha256': digest(keys_source.read_bytes()), 'wireless_generation': 'AP marker selects disabled interfaces; upstream defaults suppressed',
             'roaming_publication': 'RAM symlink', 'resolver': 'netifd automatic DNS symlink'}
 
 
@@ -199,12 +274,17 @@ def check_rootfs(rootfs, source_root=REPO, manifest=None):
     mapping = {str(p.relative_to(source)): p for p in source.rglob('*') if p.is_file() or p.is_symlink()}
     require(bool(mapping), 'ap-profile source is empty')
     mapping.update(roaming_map(source_root))
-    for relative in {**mapping, **GENERATOR_FILES}:
+    cli = cli_map(source_root)
+    mapping.update(cli)
+    history = history_sources(source_root)
+    for relative in {**mapping, **GENERATOR_FILES, **history}:
         safe_ancestors(rootfs, relative)
     rows = [compare(path, rootfs / relative, relative) for relative, path in sorted(mapping.items())]
     rows += check_generators(source_root, rootfs)
+    rows += [compare_bytes(expected, rootfs / relative, relative) for relative, expected in sorted(history.items())]
+    check_cli_modes(rootfs, cli)
     result = {'schema_version': 1, 'passed': True, 'files_checked': rows,
-              'clean_image': check_unprovisioned(rootfs), 'luci_rpc': check_luci_rpc(rootfs),
+              'clean_image': check_unprovisioned(rootfs, source_root), 'luci_rpc': check_luci_rpc(rootfs),
               'scope': 'virgin assembled or extracted rootfs; not a running/provisioned AP'}
     if manifest:
         result['packages'] = manifest_policy(source_root, manifest)

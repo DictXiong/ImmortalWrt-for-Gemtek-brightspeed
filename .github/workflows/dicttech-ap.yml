@@ -29,9 +29,10 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential clang flex bison gawk gettext git libncurses-dev libssl-dev python3 python3-setuptools rsync unzip wget xsltproc zlib1g-dev file swig jq
+          sudo apt-get install -y build-essential clang flex bison gawk gettext git libncurses-dev libssl-dev python3 python3-setuptools rsync unzip wget xsltproc zlib1g-dev file swig jq zsh vim-nox tmux qemu-user
       - name: Validate configuration, deployment and roaming
         run: |
+          python3 package/dicttech/cli-profile/tests/test_cli_profile.py
           sudo python3 scripts/dicttech/test-ap-config.py
           sudo python3 scripts/dicttech/tests/test_ap_migrate.py
           sudo python3 scripts/dicttech/test-ap-bootstrap.py
@@ -48,6 +49,12 @@ jobs:
         env:
           AP_LAYOUT: ${{ inputs.layout || 'legacy' }}
         run: bash scripts/dicttech/build-ap.sh --layout "$AP_LAYOUT" --jobs 2 2>&1 | tee "$RUNNER_TEMP/dicttech-build.log"
+      - name: Exercise the history collector with the built ARM64 interpreter
+        run: |
+          rootfs=$(find build_dir/target-*/root-airoha -maxdepth 0 -type d -print -quit)
+          test -n "$rootfs"
+          python3 scripts/dicttech/tests/wifihistory/test_history.py \
+            --ucode "qemu-aarch64 -L $rootfs $rootfs/usr/bin/ucode -L $rootfs/usr/lib/ucode"
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
