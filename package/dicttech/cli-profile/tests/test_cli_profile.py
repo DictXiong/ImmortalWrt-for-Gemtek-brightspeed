@@ -56,8 +56,28 @@ class ProfileTests(unittest.TestCase):
         return executable
 
     def zsh(self, script, *, interactive=True):
+        executable = self.tool("zsh")
+        # compaudit inspects the runner's entire inherited fpath, including
+        # unrelated site completions with potentially writable ancestors.
+        # Test the real host functions in an owned, private fixture instead
+        # of weakening the shipped profile's completion security check.
+        functions = ("compinit", "compaudit", "compdump", "colors", "is-at-least")
+        sources = run([executable, "-fc", '''
+for name in compinit compaudit compdump colors is-at-least; do
+    autoload -Uz +X "$name" || exit 23
+    print -r -- "${functions_source[$name]}"
+done
+'''], env=self.env).stdout.splitlines()
+        self.assertEqual(len(sources), len(functions))
+        completion_path = self.directory / "zsh-functions"
+        completion_path.mkdir(mode=0o700)
+        for name, source in zip(functions, sources):
+            path = completion_path / name
+            shutil.copyfile(source, path)
+            path.chmod(0o644)
+        self.env["FPATH"] = str(completion_path)
         flags = "-fic" if interactive else "-fc"
-        return run([self.tool("zsh"), flags, 'source "$DICTTECH_CLI_ROOT/zshrc"\n' + script],
+        return run([executable, flags, 'source "$DICTTECH_CLI_ROOT/zshrc"\n' + script],
                    env=self.env, cwd=self.home)
 
     def test_pinned_source_hashes_and_public_key_wire_format(self):
