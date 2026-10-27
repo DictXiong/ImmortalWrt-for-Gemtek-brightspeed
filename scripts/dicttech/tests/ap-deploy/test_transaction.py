@@ -571,6 +571,7 @@ class Transaction(unittest.TestCase):
         before = time.monotonic()
         self.clock.write_text('221.00 0\n')
         wait(lambda: (self.state / 'rolled-back').exists() and
+             (self.state / 'reload-complete').exists() and
              not (self.state / 'services-restore-pending').exists(), timeout=8)
         self.assertLess(time.monotonic() - before, 8)
         self.assertOriginal()
