@@ -4,12 +4,15 @@ def chars_in($alphabet):
     explode | all(.[]; . as $c | $alphabet | explode | index($c) != null)
   end;
 def hex: chars_in("0123456789abcdef");
-def profile_meta:
+def legacy_profile_meta:
   {main:{iface:"ap-mld1",mld:true,max_links:3},
    battalion:{iface:"ap-mld0",mld:true,max_links:2},
    guest:{iface:"ap-mld2",mld:true,max_links:2},
    iot:{iface:"phy0.0-ap1",mld:false,max_links:1}};
-def profile_ok: . as $p | ["main","battalion","guest","iot"] | index($p)!=null;
+def profile_ok:
+  type=="string" and length>=1 and length<=48 and
+  chars_in("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_") and
+  (.[0:1]|chars_in("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"));
 def section_token:
   type=="string" and length>=1 and length<=64 and
   chars_in("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_");
@@ -35,6 +38,20 @@ def uint_string($max):
     length >= 1 and length <= 10 and chars_in("0123456789") and
     (length == 1 or (startswith("0") | not)) and (tonumber <= $max)
   end;
+def iface_ok:
+  type=="string" and length>=1 and length<=15 and
+  chars_in("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-") and
+  (.[0:1]|chars_in("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"));
+def metadata_ok:
+  . as $c | (.iface|iface_ok) and (.mld|type)=="boolean" and
+  (.max_links|type)=="number" and (.max_links|floor)==.max_links and
+  .max_links>=1 and .max_links<=3 and
+  (if .mld then (.iface|startswith("ap-mld")) and (.iface[6:]|uint_string(15))
+   else .max_links==1 and (.iface|startswith("ap-mld")|not) end) and
+  (if .legacy_metadata then
+    legacy_profile_meta[$c.profile] as $meta |
+    $meta!=null and .iface==$meta.iface and .mld==$meta.mld and .max_links==$meta.max_links
+   else true end);
 def mac:
   if type != "string" then false else
     . as $m | split(":") as $p |
@@ -78,9 +95,8 @@ def private_ipv4:
   end;
 def config_base_ok:
   . as $c | type == "object" and .enabled == "1" and (.profile|profile_ok) and (.ssid|ssid_ok) and
-  .iface==(profile_meta[$c.profile].iface) and .mld==(profile_meta[$c.profile].mld) and
-  .max_links==(profile_meta[$c.profile].max_links) and
-  ((.section|section_token) or (.profile=="main" and .section=="")) and
+  metadata_ok and
+  ((.section|section_token) or (.legacy_metadata==true and .profile=="main" and .section=="")) and
   (.self_mac|mac) and
   (.interval | type == "number" and floor == . and . >= 30 and . <= 300) and
   (.ttl | type == "number" and floor == . and . >= 180 and . <= 1800) and
@@ -88,14 +104,14 @@ def config_base_ok:
 def config_ok:
   . as $c | config_base_ok and
   (.peer | private_ipv4) and (.peer_mac | mac) and .self_mac != .peer_mac and
-  (.peer_bssids | type == "array" and length >= 1 and length <= $c.max_links and
+  (.peer_bssids | type == "array" and length >= 1 and length <= 3 and
    all(.[]; mac) and (unique | length) == length);
 def fleet_config_ok:
   . as $c | config_base_ok and .peer_mode=="fleet" and
   (.peers | type=="array" and length<=15) and
   (.peers | all(.[];
     (.id|section_token) and (.address|private_ipv4) and (.bridge_mac|mac) and .bridge_mac!=$c.self_mac and
-    (.bssids|type=="array" and length>=1 and length<=$c.max_links and all(.[];mac) and (unique|length)==length))) and
+    (.bssids|type=="array" and length>=1 and length<=3 and all(.[];mac) and (unique|length)==length))) and
   ([.peers[].id]|unique|length)==(.peers|length) and
   ([.peers[].address]|unique|length)==(.peers|length) and
   ([.peers[].bridge_mac]|unique|length)==(.peers|length) and

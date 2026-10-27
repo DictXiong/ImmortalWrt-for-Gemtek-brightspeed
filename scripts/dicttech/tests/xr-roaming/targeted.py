@@ -181,7 +181,8 @@ record('status_reports_transient_error_expiry_recovery_and_transition_logs',fail
 def procd_reload():
  m=Multi()
  try:
-  init=m.p/'init';init.write_text((S/'init.sh').read_text().replace('/tmp/xr-roaming-private',str(m.state)))
+  helper=m.p/'inert-profiles';helper.write_text('#!/bin/sh\n[ "$1" = profiles ] || exit 1\nprintf "%s\\n" guest\n');helper.chmod(0o700)
+  init=m.p/'init';init.write_text((S/'init.sh').read_text().replace('/tmp/xr-roaming-private',str(m.state)).replace('/usr/lib/xr-roaming/helper.sh',str(helper)))
   output=m.p/'reload-sequence'
   script='''uci() { case "$*" in *guest.enabled) printf '1\\n';; *) printf '0\\n';; esac; }
 procd_open_instance() { printf 'OPEN %s\\n' "$1" >> "$OUT"; }

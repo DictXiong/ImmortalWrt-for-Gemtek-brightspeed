@@ -71,6 +71,18 @@ def main():
             assert run().returncode == 0
             assert calls.read_text().splitlines() == ["stop"]
             calls.unlink()
+            dynamic = state / 'profile-office'
+            dynamic.mkdir()
+            with (dynamic / 'lock').open('w') as held:
+                fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                failed = run()
+                assert failed.returncode != 0, 'upgrade ignored a dynamic profile worker lock'
+                assert 'not released' in failed.stderr
+                assert calls.read_text().splitlines() == ['stop', 'start']
+            calls.unlink()
+            assert run().returncode == 0
+            assert calls.read_text().splitlines() == ['stop']
+            calls.unlink()
             lock.unlink()
             sentinel = root / "unrelated"
             sentinel.write_text("keep me\n")
@@ -90,7 +102,8 @@ def main():
             profiles.append(section.splitlines()[0].strip("'"))
             assert "option enabled '0'" in section
             assert "option peer " not in section and "list peer_bssid " not in section
-        assert profiles == ["main", "battalion", "guest", "iot"]
+        assert profiles == ["main", "guest", "iot"]
+        assert config.count("option mlo '") == 3 and config.count("option max_links '") == 3
         conffiles = makefile.split("define Package/xr-roaming/conffiles\n", 1)[1].split("\nendef", 1)[0]
         assert conffiles.splitlines() == ["/etc/config/xr_roaming"]
         assert "uci-defaults" not in makefile

@@ -184,7 +184,7 @@ try:
  record('profile_token_rejects_path_shell_and_case_aliases',traversal)
  def procd_profiles():
   output=m.p/'procd-instances';helper=m.p/'inert-preflight'
-  helper.write_text('#!/bin/sh\n[ "$1" = preflight ]\n');helper.chmod(0o700)
+  helper.write_text('#!/bin/sh\n[ "$1" = profiles ] || exit 1\nprintf "%s\\n" main battalion guest iot\n');helper.chmod(0o700)
   init=(S/'init.sh').read_text().replace('/usr/lib/xr-roaming/helper.sh',str(helper))
   initpath=m.p/'init-fixture';initpath.write_text(init)
   script='''uci() { printf '1\\n'; }

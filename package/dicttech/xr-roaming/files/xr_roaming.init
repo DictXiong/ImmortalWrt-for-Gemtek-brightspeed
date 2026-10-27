@@ -3,8 +3,9 @@ START=95
 STOP=10
 USE_PROCD=1
 start_service() {
- local profile
- for profile in main battalion guest iot; do
+ local profile profiles
+ profiles=$(/usr/lib/xr-roaming/helper.sh profiles) || return 1
+ for profile in $profiles; do
   [ "$(uci -q get xr_roaming.$profile.enabled)" = 1 ] || continue
   # The daemon validates its tools/config and takes its own exclusive lock.
   # Preflight here would race a running instance during declarative reload.

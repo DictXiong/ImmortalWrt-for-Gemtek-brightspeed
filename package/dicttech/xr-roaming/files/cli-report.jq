@@ -16,6 +16,8 @@ def neighbor_row:
     ($p[1]|startswith("ssid=")) and ($p[2]|startswith("nr="))) |
   {bssid:($p[0]|ascii_downcase),ssidhex:($p[1][5:]|ascii_downcase),
    nr:($p[2][3:]|ascii_downcase)};
+# The fallback serves old standalone parser callers only; every helper call
+# supplies its validated configured iface explicitly.
 ($ARGS.named.iface // "ap-mld1") as $iface |
 (if $ARGS.named|has("mld") then $ARGS.named.mld else true end) as $mld |
 ($socket | socket_parts($iface;$mld)) as $s |

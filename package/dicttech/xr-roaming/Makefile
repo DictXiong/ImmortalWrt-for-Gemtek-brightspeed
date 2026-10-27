@@ -3,7 +3,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=xr-roaming
-PKG_VERSION:=5.0.0
+PKG_VERSION:=6.0.0
 PKG_RELEASE:=1
 PKG_LICENSE:=GPL-2.0-only
 PKGARCH:=all
@@ -20,7 +20,7 @@ endef
 
 define Package/xr-roaming/description
   Validated multi-link neighbor-report exchange for the C7 XR1710G AP profile.
-  Maintains separate candidate lists for four configured ESSes over wired LAN.
+  Maintains separate candidate lists for up to seventeen configured ESSes over wired LAN.
   Does not change wireless configuration, select channels or steer clients.
 endef
 
@@ -44,9 +44,24 @@ define Package/xr-roaming/preinst
 [ -x /etc/init.d/xr_roaming ] || exit 0
 /etc/init.d/xr_roaming stop || exit 1
 # An old shell must not continue running while its jq modules are replaced.
-for profile in main battalion guest iot; do
-	state=/tmp/xr-roaming-private
-	[ "$$profile" = main ] || state=$$state/$$profile
+base=/tmp/xr-roaming-private
+[ ! -L "$$base" ] || exit 1
+count=0
+# The main lock and every old/new profile lock live at depth zero or one.
+# Do not infer the old worker set from the newly supplied UCI configuration.
+for state in "$$base" "$$base"/*; do
+	if [ -L "$$state" ]; then
+		echo 'xr-roaming: refusing a symlinked runtime lock directory' >&2
+		/etc/init.d/xr_roaming start >/dev/null 2>&1 || true
+		exit 1
+	fi
+	[ -d "$$state" ] || continue
+	count=$$((count + 1))
+	if [ "$$count" -gt 64 ]; then
+		echo 'xr-roaming: too many stale runtime directories' >&2
+		/etc/init.d/xr_roaming start >/dev/null 2>&1 || true
+		exit 1
+	fi
 	if [ -L "$$state" ] || [ -L "$$state/lock" ]; then
 		echo 'xr-roaming: refusing a symlinked runtime lock' >&2
 		/etc/init.d/xr_roaming start >/dev/null 2>&1 || true

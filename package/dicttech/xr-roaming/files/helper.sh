@@ -43,23 +43,58 @@ note() { printf '%s [%s] %s\n' "$(now)" "$ROAM_PROFILE" "$*" >&2; }
 get() { "$UCI" -q get "xr_roaming.$ROAM_PROFILE.$1" 2>/dev/null || true; }
 select_profile() {
  ROAM_PROFILE=$1
+ case "$ROAM_PROFILE" in ""|*[!A-Za-z0-9_]* ) return 1;; esac
+ case "$ROAM_PROFILE" in [A-Za-z]*) :;; *) return 1;; esac
+ [ "${#ROAM_PROFILE}" -le 48 ] || return 1
+ EXPECTED_IFACE=""; ROAM_MLD=""; ROAM_LIMIT=""
+ # Only unextended old configurations use these historical interface names.
  case "$ROAM_PROFILE" in
   main) EXPECTED_IFACE=ap-mld1; ROAM_MLD=true; ROAM_LIMIT=3;;
   battalion) EXPECTED_IFACE=ap-mld0; ROAM_MLD=true; ROAM_LIMIT=2;;
   guest) EXPECTED_IFACE=ap-mld2; ROAM_MLD=true; ROAM_LIMIT=2;;
   iot) EXPECTED_IFACE=phy0.0-ap1; ROAM_MLD=false; ROAM_LIMIT=1;;
-  *) return 1;;
+  *) :;;
  esac
  STATE=$BASE_STATE; PUBLIC=$BASE_PUBLIC; URI=own.json
  if [ "$ROAM_PROFILE" != main ]; then
-  STATE=$BASE_STATE/$ROAM_PROFILE; PUBLIC=$BASE_PUBLIC/$ROAM_PROFILE
+  case "$ROAM_PROFILE" in battalion|guest|iot) STATE=$BASE_STATE/$ROAM_PROFILE;;
+   *) STATE=$BASE_STATE/profile-$ROAM_PROFILE;; esac
+  PUBLIC=$BASE_PUBLIC/$ROAM_PROFILE
   URI=$ROAM_PROFILE/own.json
  fi
 }
 
+list_profiles() {
+ local raw profiles profile enabled seen="" count=0
+ raw=$("$UCI" -q show xr_roaming 2>/dev/null) || return 1
+ [ "${#raw}" -le 65536 ] || return 1
+ profiles=$(printf '%s\n' "$raw" | sed -n 's/^xr_roaming\.\([^.=]*\)=roaming$/\1/p')
+ # Validate the whole list before emitting even the first instance.
+ for profile in $profiles; do
+  select_profile "$profile" || return 1
+  case " $seen " in *" $profile "*) return 1;; esac
+  seen="$seen $profile"; count=$((count+1))
+  [ "$count" -le 17 ] || return 1
+  [ "$("$UCI" -q get "xr_roaming.$profile" 2>/dev/null)" = roaming ] || return 1
+  enabled=$("$UCI" -q get "xr_roaming.$profile.enabled" 2>/dev/null || true)
+  case "$enabled" in ''|0|1) :;; *) return 1;; esac
+ done
+ for profile in $profiles; do
+  [ "$("$UCI" -q get "xr_roaming.$profile.enabled" 2>/dev/null)" != 1 ] || printf '%s\n' "$profile"
+ done
+}
+
 load_config() {
- local section name bridge_mac="" raw_interval raw_ttl raw_bssids raw_section raw_ssid raw_iface raw_peer_mode peer_id
+ local section name bridge_mac="" raw_interval raw_ttl raw_bssids raw_section raw_ssid raw_iface raw_peer_mode peer_id raw_mlo raw_max_links legacy_metadata=false
  [ "$("$UCI" -q get "xr_roaming.$ROAM_PROFILE" 2>/dev/null)" = roaming ] || return 1
+ raw_mlo=$(get mlo); raw_max_links=$(get max_links)
+ if [ -z "$raw_mlo" ] && [ -z "$raw_max_links" ]; then
+  [ -n "$EXPECTED_IFACE" ] || return 1
+  legacy_metadata=true
+ else
+  case "$raw_mlo:$raw_max_links" in 1:1|1:2|1:3) ROAM_MLD=true; ROAM_LIMIT=$raw_max_links;;
+   0:1) ROAM_MLD=false; ROAM_LIMIT=1;; *) return 1;; esac
+ fi
  # Static UCI identity avoids netdev/sysfs/RTNL reads during a driver fault.
  for section in $("$UCI" -q show network 2>/dev/null | sed -n 's/^network\.\([^.=]*\)=device$/\1/p'); do
   name=$("$UCI" -q get "network.$section.name" 2>/dev/null || true)
@@ -98,21 +133,21 @@ load_config() {
   [ "${#raw_section}" -le 64 ] || return 1
   [ "$("$UCI" -q get "wireless.$raw_section" 2>/dev/null)" = wifi-iface ] || return 1
   raw_ssid=$("$UCI" -q get "wireless.$raw_section.ssid" 2>/dev/null) || return 1
- elif [ "$ROAM_PROFILE" = main ]; then
+ elif [ "$legacy_metadata" = true ] && [ "$ROAM_PROFILE" = main ]; then
   # One-profile legacy config compatibility; v2 bundles reference named SSID sections.
   raw_ssid=$(get ssid)
  else return 1
  fi
- [ -n "$raw_iface" ] || { [ "$ROAM_PROFILE" = main ] && raw_iface=$EXPECTED_IFACE; } || return 1
+ [ -n "$raw_iface" ] || { [ "$legacy_metadata" = true ] && [ "$ROAM_PROFILE" = main ] && raw_iface=$EXPECTED_IFACE; } || return 1
  case "$raw_interval:$raw_ttl" in *[!0-9:]*|:*|*:) return 1;; esac
  "$JQ" -cn --arg enabled "$(get enabled)" --arg ssid "$raw_ssid" \
   --arg profile "$ROAM_PROFILE" --arg section "$raw_section" --arg iface "$raw_iface" \
-  --argjson mld "$ROAM_MLD" --argjson max_links "$ROAM_LIMIT" \
+  --argjson mld "$ROAM_MLD" --argjson max_links "$ROAM_LIMIT" --argjson legacy_metadata "$legacy_metadata" \
   --arg peer "$(get peer)" --arg peer_mac "$(get peer_mac | tr A-F a-f)" \
   --arg self_mac "$bridge_mac" --arg allowed "$raw_bssids" \
   --argjson interval "$raw_interval" --argjson ttl "$raw_ttl" \
   --arg peer_mode "$raw_peer_mode" --slurpfile peers "$STATE/fleet.config.next" \
-  '{enabled:$enabled,profile:$profile,section:$section,iface:$iface,mld:$mld,max_links:$max_links,
+  '{enabled:$enabled,profile:$profile,section:$section,iface:$iface,mld:$mld,max_links:$max_links,legacy_metadata:$legacy_metadata,
     ssid:$ssid,peer:$peer,peer_mac:$peer_mac,self_mac:$self_mac,
     peer_bssids:($allowed|ascii_downcase|split(" ")|map(select(length>0))),
     interval:$interval,ttl:$ttl} |
@@ -605,6 +640,7 @@ run_cycle() {
 main() {
  local mode=${1:-} start elapsed delay
  [ "$#" -le 2 ] || return 2
+ [ "$mode" != profiles ] || { [ "$#" = 1 ] && list_profiles; return; }
  select_profile "${2:-main}" || return 2
  [ "$mode" != status ] || { read_status; return; }
  tools || { note "required C7 tools missing"; return 1; }
@@ -651,7 +687,7 @@ main() {
     roam_sleep_pid=""
    done
    ;;
-  *) printf '%s\n' "usage: helper.sh status|inspect|preflight|once|daemon|clear [main|battalion|guest|iot]" >&2; return 2;;
+  *) printf '%s\n' "usage: helper.sh profiles | status|inspect|preflight|once|daemon|clear [PROFILE]" >&2; return 2;;
  esac
 }
 main "$@"
