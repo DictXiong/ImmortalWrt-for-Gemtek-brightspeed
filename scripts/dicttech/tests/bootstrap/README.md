@@ -67,3 +67,24 @@ guard is quarantined and isolated before network services.
 These tests verify control flow and local file transformations. Actual netifd,
 firewall, wireless, cold-start and offload behavior still require hardware
 acceptance separately.
+
+After extracting a C7 image, also run its actual ARM BusyBox ash, UCI, jq and
+rc.common/procd enable paths through qemu-user:
+
+```sh
+python3 scripts/dicttech/test-ap-bootstrap-c7.py \
+  --c7-rootfs /absolute/path/to/extracted-rom \
+  --output c7-bootstrap-tests.json
+```
+
+This second fixture needs root for target ownership checks and `qemu-aarch64`.
+It copies the ROM into a private temporary tree, overlays the selected source
+bootstrap helpers, and redirects filesystem paths and command execution there.
+Actual init scripts are restricted to enable/disable/links; ubus and IP state are
+inert responses, with network services and nft blocked. It verifies fresh DHCP,
+canonical S13 repair after real UCI commits, offline pending-DHCP enrollment,
+transaction identity proof, template/MAC tamper rejection, and optional CLI
+activation. C7 intentionally ships jq without Oniguruma, so this fixture first
+confirms that regex calls fail; bootstrap generation and validation must use
+literal split/join and ASCII checks instead of jq test/gsub. This catches target
+feature differences that the host jq fixtures cannot expose.

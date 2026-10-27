@@ -282,6 +282,11 @@ can be missed. This is a bounded diagnostic view, not an audit log.
 ## Tests and release handling
 
 The public tests exercise the model, transactions and synthetic radio state.
+CI also executes the bootstrap against the built ARM ash/UCI/slim-jq binaries.
+The host's full jq does not have the same feature set: C7 intentionally omits
+Oniguruma, so regular-expression filters must not enter target bootstrap code.
+Run `test-ap-bootstrap-c7.py --c7-rootfs EXTRACTED_ROM --qemu qemu-aarch64`
+as root for the private, inert ownership/runtime fixture before hardware trials.
 See the component READMEs for commands and optional target-ash checks. The
 read-only verifier distinguishes on-AP configuration evidence from real
 client/Internet/PPE/isolation/roaming/cold-boot evidence. Missing evidence is

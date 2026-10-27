@@ -276,7 +276,10 @@ target_identity() {
   proof=$("$TIMEOUT" 10 "$BOOTSTRAP" check-setup 2>/dev/null || true)
   if printf '%s' "$proof" | "$JQ" -e '
    type=="object" and (.mode=="isolated" or .mode=="dhcp") and .ssh_port=="12022" and (.dhcp_ready|type=="boolean") and
-   (if .mode=="dhcp" then (.bridge_mac|type=="string" and test("^02(:[0-9a-f]{2}){5}$")) else .bridge_mac=="" end)
+   (if .mode=="dhcp" then (.bridge_mac|type=="string" and length==17 and
+     (split(":")|length==6 and .[0]=="02" and
+       all(.[];length==2 and (explode|all(.[];(.>=48 and .<=57) or (.>=97 and .<=102))))))
+    else .bridge_mac=="" end)
   ' >/dev/null 2>&1; then
    mode=$(printf '%s' "$proof" | "$JQ" -r .mode)
    if test "$mode" = dhcp; then dhcp=true; else isolated=true; fi

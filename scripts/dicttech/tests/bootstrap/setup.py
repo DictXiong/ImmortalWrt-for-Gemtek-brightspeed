@@ -222,6 +222,15 @@ def main():
         assert 'CLI root shell activation failed' in result.stderr
     check('optional_cli_activation_failure_preserves_setup_recovery', shell_failure)
 
+    def shell_timeout(f):
+        import time
+        f.write('usr/libexec/dicttech-cli/activate-root-shell', b'#!/bin/sh\nsleep 60\n', 0o700)
+        before = time.monotonic()
+        result = f.call('prepare'); elapsed = time.monotonic() - before
+        f.activate(); f.call('check-setup')
+        assert elapsed < 12 and 'CLI root shell activation failed' in result.stderr
+    check('optional_cli_activation_timeout_preserves_dhcp_setup', shell_timeout)
+
     def direct_dropbear_binding(f):
         source = (ROOT / 'package/network/services/dropbear/files/dropbear.init').read_text()
         def function(name):

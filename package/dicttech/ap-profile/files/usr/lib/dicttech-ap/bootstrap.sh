@@ -21,7 +21,7 @@ activate_root_shell() {
  # CLI setup is optional to recovery. A missing/failed customization must not
  # prevent installing or restoring the wired setup network.
  if [ -x /usr/libexec/dicttech-cli/activate-root-shell ]; then
-  /usr/libexec/dicttech-cli/activate-root-shell || note 'CLI root shell activation failed; wired recovery remains available'
+  timeout 5 /usr/libexec/dicttech-cli/activate-root-shell || note 'CLI root shell activation failed; wired recovery remains available'
  fi
 }
 
@@ -287,8 +287,10 @@ valid_setup_identity() {
  private_file "$IDENTITY" || return 1
  jq -e '
   type=="object" and (keys==["hostname","mac","schema_version"]) and .schema_version==1 and
-  (.mac|type=="string" and test("^02(:[0-9a-f]{2}){5}$")) and
-  .hostname==("xr1710g-setup-"+(.mac|gsub(":";"")))
+  (.mac|type=="string" and length==17 and
+    (split(":")|length==6 and .[0]=="02" and
+      all(.[];length==2 and (explode|all(.[];(.>=48 and .<=57) or (.>=97 and .<=102)))))) and
+  .hostname==("xr1710g-setup-"+(.mac|split(":")|join("")))
  ' "$IDENTITY" >/dev/null 2>&1
 }
 
@@ -303,7 +305,7 @@ setup_identity() {
  mac=02:$(printf '%s' "$hex" | sed 's/../&:/g;s/:$//')
  [ ! -e "$tmp" ] && [ ! -L "$tmp" ] || return 1
  (set -C; umask 077; jq -cn --arg mac "$mac" \
-  '{schema_version:1,mac:$mac,hostname:("xr1710g-setup-"+($mac|gsub(":";"")))}' > "$tmp") || return 1
+  '{schema_version:1,mac:$mac,hostname:("xr1710g-setup-"+($mac|split(":")|join("")))}' > "$tmp") || return 1
  chmod 600 "$tmp" || return 1
  mv "$tmp" "$IDENTITY" || return 1
  valid_setup_identity

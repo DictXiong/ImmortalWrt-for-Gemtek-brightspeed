@@ -19,7 +19,7 @@ def main():
     args = parser.parse_args()
     if not sys.platform.startswith('linux'):
         parser.error('the inert /proc and shell fixtures require Linux')
-    commands = ['sh', 'jq', 'tar', 'cp', 'mv', 'chmod', 'wc', 'tr', 'readlink', 'hexdump',
+    commands = ['sh', 'jq', 'tar', 'cp', 'mv', 'chmod', 'wc', 'tr', 'readlink', 'hexdump', 'timeout',
                 'ln', 'rm', 'mkdir', 'sed', 'sha256sum', 'awk', 'cat', 'touch']
     missing = [name for name in commands if not shutil.which(name)]
     if missing:
