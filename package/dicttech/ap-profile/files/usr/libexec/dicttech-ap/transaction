@@ -56,6 +56,27 @@ reloader_alive() {
  read -r pid ticks token extra < "$STATE/reload.ready" || return 1
  test "$token" = "$("$JQ" -r .token "$STATE/manifest.json")" && test -z "$extra" && process_same "$pid" "$ticks"
 }
+reload_recoveries() {
+ local count=0
+ if test -e "$STATE/reload-recoveries" || test -L "$STATE/reload-recoveries"; then
+  plain "$STATE/reload-recoveries" || return 1
+  IFS= read -r count < "$STATE/reload-recoveries" || return 1
+ fi
+ case "$count" in 0|1|2|3) printf '%s\n' "$count";; *) return 1;; esac
+}
+recover_reloader() {
+ local count
+ test -f "$STATE/applied" && test ! -f "$STATE/reload-complete" && test ! -f "$STATE/reload-error" || return 0
+ # The original apply must be allowed to return its status before starting
+ # service reloads. Only recover a worker that had actually registered itself.
+ plain "$STATE/reload.ready" || return 0
+ reloader_alive && return 0
+ count=$(reload_recoveries) || { record reload-error reload_recovery_state_invalid; return 0; }
+ if test "$count" -ge 3; then record reload-error reload_worker_recovery_exhausted; return 0; fi
+ # The procd watcher survives replacement of the SSH service that launched
+ # apply. Never wait here: the watcher must keep enforcing the lease deadline.
+ (trap '' HUP; exec 9>&-; exec 8>&-; exec "$SELF" reload "$TOKEN" recover) </dev/null >/dev/null 2>&1 &
+}
 stop_reloader() {
  stop_recorded "$STATE/reload.child" && stop_recorded "$STATE/reload.ready"
 }
@@ -193,7 +214,9 @@ restore_locked() {
 }
 reload_step() {
  local seconds=$1; shift
- "$TIMEOUT" -s TERM -k 2 "$seconds" "$@" >/dev/null 2>&1 &
+ # Only the reload worker owns the reload lock. A killed SSH worker must not
+ # leave that lock inherited by its still-running timeout/service descendant.
+ (exec 8>&-; exec 9>&-; exec "$TIMEOUT" -s TERM -k 2 "$seconds" "$@") >/dev/null 2>&1 &
  reload_child=$!
  printf '%s %s %s\n' "$reload_child" "$(awk '{print $22}' /proc/$reload_child/stat)" "$TOKEN" > "$STATE/reload.child"
  if wait "$reload_child"; then reload_child=; rm -f "$STATE/reload.child"; return 0; fi
@@ -535,16 +558,41 @@ case "$command" in
     trap on_reload_term TERM INT
     unlock
     if ! reload_services; then record rollback-incomplete runtime_reload_failed; exit 1; fi; exit 0; fi
+   recover_reloader
    unlock; sleep 2
   done;;
  reload)
+  secure_dir "$STATE" && test ! -L "$STATE/reload.lock" || fail unsafe_reload_lock
+  exec 8> "$STATE/reload.lock"
+  flock -n 8 || exit 0
   lock
   test "${2:-}" = "$("$JQ" -r .token "$STATE/manifest.json")" || fail token_mismatch
   TOKEN=$2
+  # The delayed apply worker and watcher recovery can race. Re-check after
+  # both locks, and do not repeat a reload that the other worker completed.
+  if test -f "$STATE/reload-complete" && test ! -f "$STATE/services-restore-pending"; then unlock; exit 0; fi
   if reloader_alive; then unlock; exit 0; fi
+  if test ! -f "$STATE/rolled-back"; then
+   active || { unlock; exit 0; }
+   load
+   test -f "$STATE/applied" && test "$BASE" = "$(boot)" && test "$(now)" -lt "$DEADLINE" || { unlock; exit 0; }
+  fi
+  case "${3:-}" in
+   '') ;;
+   recover)
+    test ! -f "$STATE/reload-error" || { unlock; exit 0; }
+    count=$(reload_recoveries) || { record reload-error reload_recovery_state_invalid; unlock; exit 0; }
+    if test "$count" -ge 3; then record reload-error reload_worker_recovery_exhausted; unlock; exit 0; fi
+    record reload-recoveries "$((count+1))";;
+   *) fail invalid_reload_mode;;
+  esac
   printf '%s %s %s\n' "$$" "$(awk '{print $22}' /proc/$$/stat)" "$TOKEN" > "$STATE/reload.ready"
-  unlock
   trap on_reload_term TERM INT
+  unlock
+  # A SIGKILLed parent may leave its bounded service child alive. Stop that
+  # exact PID/starttime/token outside the transaction lock before replaying.
+  stop_recorded "$STATE/reload.child" || { record reload-error orphan_reload_child_would_not_stop; exit 1; }
+  rm -f "$STATE/reload.child"
   if ! reload_services; then test ! -f "$STATE/rolled-back" || record rollback-incomplete runtime_reload_failed; exit 1; fi;;
  finish-rollback) finish_rollback;;
  status) status;;

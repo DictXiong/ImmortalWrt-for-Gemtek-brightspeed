@@ -58,6 +58,8 @@ class Transaction(unittest.TestCase):
         self.service_state.write_text('{"enabled":["fixture_service"],"running":["fixture_service"]}')
         self.original_services = self.service_state.read_bytes()
         self.service_hang = self.base / 'service-hang'
+        self.service_fail = self.base / 'service-fail'
+        self.service_restore_barrier = self.base / 'service-restore-barrier'
         self.service_started = self.base / 'service-started'
         self.services = self.base / 'services'
         self.services.write_text('#!' + shutil.which('python3') + '\nimport sys,pathlib,json,time,os\n'
@@ -66,10 +68,13 @@ class Transaction(unittest.TestCase):
             + 'if sys.argv[1]=="snapshot":pathlib.Path(sys.argv[2]).write_bytes(state.read_bytes())\n'
             + 'elif sys.argv[1]=="apply":\n'
             + ' state.write_text(json.dumps({"enabled":["candidate"],"running":["candidate"]}))\n'
+            + ' if pathlib.Path(' + repr(str(self.service_fail)) + ').exists():sys.exit(7)\n'
             + ' if pathlib.Path(' + repr(str(self.service_hang)) + ').exists():\n'
             + '  pathlib.Path(' + repr(str(self.service_started)) + ').write_text(str(os.getpid()))\n'
             + '  time.sleep(60)\n'
             + 'elif sys.argv[1]=="restore":\n'
+            + ' if sys.argv[3]=="running":\n'
+            + '  while pathlib.Path(' + repr(str(self.service_restore_barrier)) + ').exists():time.sleep(.02)\n'
             + ' old=json.loads(pathlib.Path(sys.argv[2]).read_text());current=json.loads(state.read_text())\n'
             + ' key="enabled" if sys.argv[3]=="links" else "running"\n'
             + ' current[key]=old[key];state.write_text(json.dumps(current))\n')
@@ -517,15 +522,118 @@ class Transaction(unittest.TestCase):
         self.stage(); self.call('apply', self.token)
         wait(lambda: self.service_started.exists())
         child = int(self.service_started.read_text())
+        self.service_restore_barrier.touch()
         self.call('rollback', self.token)
         contract = self.call('check'); _, payload = deploy.bundle(self.files, contract, 'fixture_ap', 120)
         self.call('stage', data=payload, good=False)
+        self.service_restore_barrier.unlink()
         wait(lambda: not (self.state / 'services-restore-pending').exists())
         self.assertOriginal()
         stat = Path(f'/proc/{child}/stat')
         self.assertTrue(not stat.exists() or stat.read_text().split(') ', 1)[1].split()[0] == 'Z')
         time.sleep(.1)
         self.assertEqual(json.loads(self.service_state.read_text()), json.loads(self.original_services))
+
+    def kill_recorded_reloader(self):
+        pid, ticks, token = (self.state / 'reload.ready').read_text().split()
+        pid, ticks = int(pid), int(ticks)
+        self.assertEqual(token, self.token)
+        self.assertTrue(self.owns_process(pid, ticks), 'fixture reloader is not the recorded live process')
+        self.signal_fixture_process(pid, ticks, signal.SIGKILL)
+        wait(lambda: not self.owns_process(pid, ticks))
+        return pid
+
+    def test_procd_watcher_recovers_silently_killed_ssh_reloader_and_can_confirm(self):
+        self.service_hang.touch()
+        self.stage(); self.call('apply', self.token)
+        wait(lambda: self.service_started.exists() and (self.state / 'reload.child').exists())
+        child_pid, child_ticks, child_token = (self.state / 'reload.child').read_text().split()
+        self.assertEqual(child_token, self.token)
+        self.assertTrue(self.owns_process(int(child_pid), int(child_ticks)))
+        self.kill_recorded_reloader()
+        self.service_hang.unlink()
+        wait(lambda: (self.state / 'reload-complete').exists(), timeout=12)
+        self.assertEqual((self.state / 'reload-recoveries').read_text().strip(), '1')
+        self.assertFalse((self.state / 'reload-error').exists())
+        self.assertFalse(self.owns_process(int(child_pid), int(child_ticks)), 'old service timeout survived recovery')
+        self.assertEqual(self.service_log.read_text().splitlines().count('apply'), 2)
+        self.assertEqual(self.call('confirm', self.token)['state'], 'confirmed')
+
+    def test_recovered_hung_worker_never_blocks_watcher_lease_expiry(self):
+        self.service_hang.touch()
+        self.stage(); self.call('apply', self.token)
+        wait(lambda: self.service_started.exists())
+        original_service = self.service_started.read_text()
+        self.kill_recorded_reloader()
+        wait(lambda: self.service_started.read_text() != original_service and
+             (self.state / 'reload-recoveries').exists(), timeout=12)
+        self.assertFalse((self.state / 'reload-complete').exists())
+        before = time.monotonic()
+        self.clock.write_text('221.00 0\n')
+        wait(lambda: (self.state / 'rolled-back').exists() and
+             not (self.state / 'services-restore-pending').exists(), timeout=8)
+        self.assertLess(time.monotonic() - before, 8)
+        self.assertOriginal()
+
+    def test_silent_worker_recovery_budget_is_bounded_and_never_confirms_failure(self):
+        self.service_hang.touch()
+        self.stage(); self.call('apply', self.token)
+        previous_service = None
+        for number in range(4):
+            wait(lambda: self.service_started.exists() and self.service_started.read_text() != previous_service,
+                 timeout=12)
+            previous_service = self.service_started.read_text()
+            if number:
+                self.assertEqual((self.state / 'reload-recoveries').read_text().strip(), str(number))
+            self.kill_recorded_reloader()
+        wait(lambda: (self.state / 'reload-error').exists())
+        self.assertEqual((self.state / 'reload-error').read_text().strip(), 'reload_worker_recovery_exhausted')
+        self.assertEqual((self.state / 'reload-recoveries').read_text().strip(), '3')
+        self.assertEqual(self.service_log.read_text().splitlines().count('apply'), 4)
+        self.call('confirm', self.token, good=False)
+        self.clock.write_text('221.00 0\n')
+        wait(lambda: (self.state / 'rolled-back').exists() and
+             not (self.state / 'services-restore-pending').exists(), timeout=8)
+        self.assertOriginal()
+
+    def test_explicit_service_error_is_not_silently_retried(self):
+        self.service_fail.touch()
+        self.stage(); self.call('apply', self.token)
+        wait(lambda: (self.state / 'reload-error').exists())
+        time.sleep(2.5)  # Cross the independent watcher's next polling interval.
+        self.assertEqual((self.state / 'reload-error').read_text().strip(), 'service_policy_failed')
+        self.assertFalse((self.state / 'reload-recoveries').exists())
+        self.assertEqual(self.service_log.read_text().splitlines().count('apply'), 1)
+        self.clock.write_text('221.00 0\n')
+        wait(lambda: (self.state / 'rolled-back').exists() and
+             not (self.state / 'services-restore-pending').exists())
+        self.assertOriginal()
+
+    def test_watcher_never_preempts_apply_response_before_worker_registration(self):
+        text = self.script.read_text()
+        start = text.index(' apply)\n')
+        end = text.index(' confirm)\n', start)
+        apply = text[start:end]
+        self.assertIn('  status\n  (trap', apply)
+        apply = apply.replace('  status\n  (trap', '  sleep 4\n  status\n  (trap')
+        self.script.write_text(text[:start] + apply + text[end:])
+        self.stage()
+        process = subprocess.Popen(self.shell + [str(self.script), 'apply', self.token],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=self.env, start_new_session=True)
+        wait(lambda: (self.state / 'applied').exists())
+        time.sleep(2.5)  # Cross the watcher tick while the SSH response is pending.
+        self.assertIsNone(process.poll())
+        self.assertFalse((self.state / 'reload.ready').exists())
+        self.assertFalse((self.state / 'reload-recoveries').exists())
+        self.assertNotIn('apply', self.service_log.read_text().splitlines())
+        stdout, stderr = process.communicate(timeout=10)
+        self.assertEqual(process.returncode, 0, stderr.decode())
+        self.assertEqual(json.loads(stdout)['state'], 'applied')
+        wait(lambda: (self.state / 'reload-complete').exists())
+        self.assertEqual(self.service_log.read_text().splitlines().count('apply'), 1)
+        self.assertFalse((self.state / 'reload-error').exists())
+        self.assertEqual(self.call('confirm', self.token)['state'], 'confirmed')
 
     def test_check_to_stage_drift_rejected(self):
         contract = self.call('check'); _, payload = deploy.bundle(self.files, contract, 'fixture_ap', 120)
