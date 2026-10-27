@@ -11,6 +11,7 @@ SELF=/usr/libexec/dicttech-ap/transaction
 INIT=/etc/init.d/dicttech-ap-transaction
 SERVICES=/usr/lib/dicttech-ap/services.sh
 BOOTSTRAP=/usr/lib/dicttech-ap/bootstrap.sh
+KEYLIFE=/usr/libexec/dicttech-ap/bootstrap-key
 UBUS=/bin/ubus
 JQ=/usr/bin/jq
 UCI=/sbin/uci
@@ -94,7 +95,12 @@ no_pending() { test -z "$("$UCI" -q changes)"; }
 no_flash() { for x in /tmp/sysupgrade /tmp/sysupgrade.tgz /tmp/sysupgrade-trigger; do test ! -e "$(p "$x")" || return 1; done; }
 allowed() {
  case "$1" in
- etc/config/network|etc/config/wireless|etc/config/firewall|etc/config/dhcp|etc/config/system|etc/config/dropbear|etc/config/uhttpd|etc/config/fan|etc/config/cpufreq|etc/config/airoha_npu|etc/config/xr_roaming|etc/sysctl.d/13-nf-bridge.conf|etc/xr-guest-vlan192.nft|etc/dicttech-ap/root-password-hash|etc/dicttech-ap/device.json|etc/dicttech-ap/managed-files.json|etc/dicttech-ap/accepted.json|etc/dropbear/authorized_keys) return 0;; *) return 1;; esac
+ etc/config/network|etc/config/wireless|etc/config/firewall|etc/config/dhcp|etc/config/system|etc/config/dropbear|etc/config/uhttpd|etc/config/fan|etc/config/cpufreq|etc/config/airoha_npu|etc/config/xr_roaming|etc/sysctl.d/13-nf-bridge.conf|etc/xr-guest-vlan192.nft|etc/dicttech-ap/root-password-hash|etc/dicttech-ap/device.json|etc/dicttech-ap/managed-files.json|etc/dicttech-ap/accepted.json|etc/dropbear/authorized_keys|etc/dicttech-ap-bootstrap-key/state) return 0;; *) return 1;; esac
+}
+retire_initialization_key() {
+ if test -x "$KEYLIFE" && "$JQ" -e '.approved_target.initialize==true' "$STATE/manifest.json" >/dev/null; then
+  "$KEYLIFE" retire || fail initialization_key_retirement_failed
+ fi
 }
 path_safe() {
  local rel=$1 next current=$SYSROOT
@@ -381,7 +387,7 @@ file_private() { test "$(ls -nd "$1" | awk '{print $1 ":" $3}')" = '-rw-------:0
 inventory() {
  local rel dest rows
  rows=$(mktemp)
- for rel in etc/config/network etc/config/wireless etc/config/firewall etc/config/dhcp etc/config/system etc/config/dropbear etc/config/uhttpd etc/config/fan etc/config/cpufreq etc/config/airoha_npu etc/config/xr_roaming etc/sysctl.d/13-nf-bridge.conf etc/xr-guest-vlan192.nft etc/dicttech-ap/root-password-hash etc/dicttech-ap/device.json etc/dicttech-ap/managed-files.json etc/dicttech-ap/accepted.json etc/dropbear/authorized_keys; do
+ for rel in etc/config/network etc/config/wireless etc/config/firewall etc/config/dhcp etc/config/system etc/config/dropbear etc/config/uhttpd etc/config/fan etc/config/cpufreq etc/config/airoha_npu etc/config/xr_roaming etc/sysctl.d/13-nf-bridge.conf etc/xr-guest-vlan192.nft etc/dicttech-ap/root-password-hash etc/dicttech-ap/device.json etc/dicttech-ap/managed-files.json etc/dicttech-ap/accepted.json etc/dropbear/authorized_keys etc/dicttech-ap-bootstrap-key/state; do
   dest=$(p /$rel)
   if plain "$dest"; then printf '%s %s %s\n' "$rel" "$(sha "$dest")" "$(ls -nd "$dest" | awk '{print $1 " " $3}')" >> "$rows"; fi
  done
@@ -461,6 +467,21 @@ case "$command" in
    else printf '%s absent - %s\n' "$rel" "$index" >> "$incoming/before"; fi
    if test "$rel" = etc/dicttech-ap/root-password-hash; then validate_root_hash "$incoming/candidate/$index"; : > "$incoming/root-hash-required"; fi
   done < "$incoming/files"
+  # Even omitted authorization is touched when initialization confirms. Keep
+  # the original grant and tombstone in the same rollback journal as config.
+  if test -x "$KEYLIFE" && "$JQ" -e '.approved_target.initialize==true' "$incoming/manifest.json" >/dev/null; then
+   for rel in etc/dropbear/authorized_keys etc/dicttech-ap-bootstrap-key/state; do
+    grep -q "^$rel " "$incoming/before" && continue
+    path_safe "$rel" || fail unsafe_initialization_key_state
+    index=bootstrap-key-${rel##*/}; dest=$(p /$rel)
+    if test -e "$dest" || test -L "$dest"; then
+     plain "$dest" && file_private "$dest" || fail unsafe_initialization_key_state
+     oldsha=$(sha "$dest"); cp -p "$dest" "$incoming/backup/$index"
+     test "$(sha "$incoming/backup/$index")" = "$oldsha" || fail initialization_key_changed_during_backup
+     printf '%s present %s %s\n' "$rel" "$oldsha" "$index" >> "$incoming/before"
+    else printf '%s absent - %s\n' "$rel" "$index" >> "$incoming/before"; fi
+   done
+  fi
   if test -f "$incoming/root-hash-required"; then
    plain "$(p /etc/shadow)" || fail unsafe_shadow
    oldsha=$(sha "$(p /etc/shadow)"); cp -p "$(p /etc/shadow)" "$incoming/backup/shadow"
@@ -501,7 +522,13 @@ case "$command" in
    if test "$state" = present; then plain "$(p /$rel)" && test "$(sha "$(p /$rel)")" = "$digest" || fail configuration_changed_after_stage
    else test ! -e "$(p /$rel)" || fail configuration_changed_after_stage; fi
   done < "$STATE/before"
-  if current_matches; then record confirmed noop; sync; unlock; status; exit 0; fi
+  if current_matches; then
+   if test -x "$KEYLIFE" && "$JQ" -e '.approved_target.initialize==true' "$STATE/manifest.json" >/dev/null; then
+    record applying "$(boot)"; retire_initialization_key
+    current_matches || fail confirmation_readback_mismatch
+   fi
+   record confirmed noop; sync; unlock; status; exit 0
+  fi
   record applying "$(boot)"
   while IFS=' ' read -r rel digest bytes index; do
    atomic_install "$STATE/candidate/$index" "$(p /$rel)" 600
@@ -520,6 +547,8 @@ case "$command" in
   no_pending && verify_candidate && current_matches || fail confirmation_readback_mismatch
   identity=$(target_identity)
   printf '%s' "$identity" | "$JQ" -e --arg device "$("$JQ" -r .device_id "$STATE/manifest.json")" --arg bridge "$("$JQ" -r .approved_target.bridge_mac "$STATE/manifest.json")" '.device_id==$device and .bridge_mac==$bridge' >/dev/null || fail confirmation_identity_mismatch
+  retire_initialization_key
+  current_matches || fail confirmation_readback_mismatch
   record confirmed "$(boot)"; sync; unlock; status;;
  rollback)
   lock; load; test "${2:-}" = "$TOKEN" || fail token_mismatch

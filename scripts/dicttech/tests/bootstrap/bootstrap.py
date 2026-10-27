@@ -19,6 +19,12 @@ def case(name):
   shutil.copy(SHARE/'templates/guest-guard.nft',f/'etc/xr-guest-vlan192.nft');shutil.copy(SHARE/'templates/13-nf-bridge.conf',f/'etc/sysctl.d/13-nf-bridge.conf')
   (f/'etc/dicttech-ap/root-password-hash').write_text('$6$fixture$fixture\n')
   (f/'etc/shadow').write_text('root:!:1:0:99999:7:::\n');(f/'etc/dropbear/authorized_keys').write_text('fixture-key\n')
+  (f/'etc/dropbear/authorized_keys').chmod(0o600)
+  (f/'usr/share/dicttech-cli').mkdir()
+  shutil.copyfile(R/'package/dicttech/cli-profile/files/usr/share/dicttech-cli/authorized_keys',f/'usr/share/dicttech-cli/authorized_keys')
+  helper=(R/'package/dicttech/ap-profile/files/usr/libexec/dicttech-ap/bootstrap-key').read_text()
+  helper=helper.replace('SYSROOT=', 'SYSROOT='+shlex.quote(str(f)),1).replace('BOOT=/proc/sys/kernel/random/boot_id','BOOT='+str(f/'proc/sys/kernel/random/boot_id')).replace('JQ=/usr/bin/jq','JQ='+shlex.quote(shutil.which('jq')))
+  (f/'usr/libexec/dicttech-ap/bootstrap-key').write_text(helper);(f/'usr/libexec/dicttech-ap/bootstrap-key').chmod(0o700)
   ssids=[{'key':'main','section':'ssid_main','iface':'ap-mld0','mlo':True,'bands':['2g','5g','6g']},{'key':'guest','section':'ssid_guest','iface':'ap-mld1','mlo':True,'bands':['2g','5g']}]
   if name in ['dynamic-extra','missing-extra-section','duplicate-ssid-section']:
    ssids.append({'key':'custom','section':'ssid_extra_custom','iface':'ap-mld2','mlo':True,'bands':['5g','6g']})

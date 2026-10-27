@@ -443,6 +443,12 @@ class Configuration(unittest.TestCase):
         secret['authorized_keys'] = ['ssh-ed25519 ' + base64.b64encode(b'x' * 60).decode()]
         self.reject(lambda: self.state(value))
 
+    def test_initialization_key_cannot_be_promoted_to_explicit_permanent_access(self):
+        value = document()
+        key = m.BOOTSTRAP_KEY.read_text().strip()
+        value['secrets']['devices']['ap_0']['authorized_keys'] = [key]
+        self.reject(lambda: self.state(value))
+
     def test_utf8_limits_and_shell_metacharacter_roundtrip(self):
         value = document()
         value['common'] = {'ssids': {'main': {'name': "A' $(touch marker) \\"}}}

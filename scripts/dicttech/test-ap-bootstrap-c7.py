@@ -32,6 +32,7 @@ class Runtime:
         profile = source / 'package/dicttech/ap-profile/files'
         for rel in ['usr/lib/dicttech-ap', 'usr/libexec/dicttech-ap']:
             shutil.copytree(profile / rel, self.root / rel, dirs_exist_ok=True, symlinks=True)
+        shutil.copytree(profile / 'usr/share/dicttech-ap', self.root / 'usr/share/dicttech-ap', dirs_exist_ok=True)
         # early_mounts() creates /tmp/run and /tmp/lock before procd/rcS. Leaving
         # them out falsely makes actual procd.sh fail at its load-time lock.
         for rel in ['tmp/lock', 'tmp/run', 'proc/sys/kernel/random', 'sys', 'root', 'tmp/sysinfo']:
@@ -203,6 +204,15 @@ for row in rows:print('    inet '+row['address']+'/'+str(row['mask'])+' scope gl
         for rel in ['etc/config/network', 'etc/config/wireless', 'etc/config/system']:
             (self.root / rel).unlink(missing_ok=True)
         self.shell('S04 fresh prepare', bootstrap, 'prepare-boot')
+        key_helper = 'usr/libexec/dicttech-ap/bootstrap-key'
+        if not (self.root / key_helper).is_file():
+            raise RuntimeError('C7 initialization-key helper was not installed')
+        owner = (self.root / 'usr/share/dicttech-cli/authorized_keys').read_bytes()
+        key = (self.root / 'usr/share/dicttech-ap/bootstrap-authorized-key.pub').read_bytes()
+        auth = self.root / 'etc/dropbear/authorized_keys'
+        key_state = self.root / 'etc/dicttech-ap-bootstrap-key/state'
+        if auth.read_bytes() != owner + key or key_state.read_bytes() != b'fresh\n':
+            raise RuntimeError('C7 actual initialization helper did not grant exactly once')
         shell = next(row.split(':')[6] for row in (self.root / 'etc/passwd').read_text().splitlines()
                      if row.startswith('root:'))
         if shell != str(self.root / 'usr/bin/zsh'):
@@ -250,9 +260,32 @@ for row in rows:print('    inet '+row['address']+'/'+str(row['mask'])+' scope gl
         self.shell('C7 rejects nonhex identity', bootstrap, 'check-setup', good=False)
         self.put('etc/dicttech-ap/bootstrap-identity.json', json.dumps(identity, separators=(',', ':')).encode() + b'\n')
         self.shell('C7 proof restored', bootstrap, 'check-setup')
+        self.put('root/.dicttech-ap-transaction/manifest.json', json.dumps({
+            'boot_id': '11111111-1111-4111-8111-111111111111',
+            'approved_target': {'initialize': True}}).encode())
+        self.put('root/.dicttech-ap-transaction/applied', b'fixture\n')
+        self.shell('C7 pending initialization keeps default grant', key_helper, 'managed')
+        if auth.read_bytes() != owner + key:
+            raise RuntimeError('C7 pending initialization lost its temporary credential')
+        self.put('etc/dropbear/authorized_keys', b'')
+        self.shell('C7 explicit empty remains empty during pending initialization', key_helper, 'managed')
+        if auth.read_bytes(): raise RuntimeError('C7 helper supplemented explicit empty authorization')
+        self.put('etc/dropbear/authorized_keys', owner + key)
+        self.shell('C7 actual awk retirement and tombstone', key_helper, 'retire')
+        if auth.read_bytes() != owner or key_state.read_bytes() != b'retired\n':
+            raise RuntimeError('C7 retirement did not restore exact owner authorization')
+        self.shell('C7 retired state never regrants', key_helper, 'fresh')
+        if auth.read_bytes() != owner: raise RuntimeError('C7 retired state reopened temporary access')
+        other = next(row for row in owner.splitlines() if row.startswith(b'ssh-ed25519 '))
+        identity_pair = b' '.join(key.split()[:2])
+        preserved = other + b' comment mentions ' + identity_pair + b' "arbitrary comment\n'
+        self.put('etc/dropbear/authorized_keys', preserved + b'command="echo words",no-pty ' + identity_pair + b' renamed\n')
+        self.shell('C7 key identity filter preserves unrelated comments', key_helper, 'retire')
+        if auth.read_bytes() != preserved: raise RuntimeError('C7 key classifier confused comments with active identities')
         return {'passed': True, 'steps': self.steps, 'dhcp_and_offline_pending_proven': True,
                 'actual_init_enable_exercised': True, 'slim_jq_without_regex': True,
                 'bounded_cli_success_and_missing_helper_proven': True,
+                'initialization_key_fresh_pending_explicit_empty_retired_with_actual_c7_tools': True,
                 'ash_sha256': hashlib.sha256(self.bb.read_bytes()).hexdigest(),
                 'jq_sha256': hashlib.sha256((self.rom / 'usr/bin/jq').read_bytes()).hexdigest()}
 

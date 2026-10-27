@@ -14,6 +14,11 @@ BOOT_VALIDATED=/tmp/dicttech-ap-firstboot-validated.json
 MANIFEST=/etc/dicttech-ap/managed-files.json
 BOOT_SNAPSHOT=/tmp/dicttech-ap-firstboot-snapshot
 BOOT_DEFER=/tmp/dicttech-ap-bootstrap-defer
+KEYLIFE=/usr/libexec/dicttech-ap/bootstrap-key
+
+key_lifecycle() {
+ [ ! -x "$KEYLIFE" ] || "$KEYLIFE" "$1"
+}
 
 note() { printf '%s\n' "dicttech-ap: $*" >&2; }
 
@@ -417,6 +422,7 @@ isolate() {
  setup_state "$reason" "$mode" > "$tmp" || { emergency_lock; return 1; }
  chmod 600 "$tmp" || { emergency_lock; return 1; }
  mv "$tmp" "$STATE" || { emergency_lock; return 1; }
+ if [ "$reason" = no_marker ]; then key_lifecycle fresh; else key_lifecycle retire; fi
  : > /tmp/dicttech-ap-bootstrap-isolated
  note "$mode setup: LAN4 192.168.250.1/24, SSH 12022; Wi-Fi disabled"
 }
@@ -425,6 +431,7 @@ prepare() {
  activate_root_shell
  [ ! -f /tmp/dicttech-ap-bootstrap-isolated ] || return 0
  if [ -e "$MARKER" ] || [ -L "$MARKER" ]; then
+  key_lifecycle managed
   if valid_marker; then
    # Save the exact intended bytes before stock migrations normalize ULA/DUID.
    if ! binding_matches "$ACCEPTED" && ! save_boot_snapshot; then
@@ -452,6 +459,7 @@ finalize() {
   fi
  fi
  if valid_marker; then
+  key_lifecycle managed
   rm -f /tmp/dicttech-ap-bootstrap-isolated
   if ! binding_matches "$ACCEPTED"; then
    /usr/libexec/dicttech-ap/transaction sync-root-password
@@ -462,6 +470,9 @@ finalize() {
   [ ! -d "$BOOT_SNAPSHOT" ] || rm -rf "$BOOT_SNAPSHOT"
   return
  fi
+ # A corrupt managed candidate must not inherit the original no-marker grant,
+ # even when the setup stamp still exists from before apply.
+ if [ -e "$MARKER" ] || [ -L "$MARKER" ]; then key_lifecycle retire; fi
  if [ -f /tmp/dicttech-ap-bootstrap-isolated ]; then
   # S10 uci-defaults may normalize setup network bytes after S08. Restore the
   # selected setup contract at S13, before any networking/management consumer.

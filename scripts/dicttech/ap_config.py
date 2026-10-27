@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import stat
 import sys
 import tempfile
@@ -30,6 +31,32 @@ IFACES = {"main": "ap-mld0", "guest": "ap-mld1", "iot": "ap-iot"}
 BANDS = ("2g", "5g", "6g")
 REPO = Path(__file__).resolve().parents[2]
 DEFAULTS = REPO / "package/dicttech/ap-profile/files/usr/share/dicttech-ap/defaults.json"
+BOOTSTRAP_KEY = DEFAULTS.parent / "bootstrap-authorized-key.pub"
+
+
+def without_bootstrap_key(data: bytes) -> bytes:
+    """Do not promote the initialization credential into a permanent export."""
+    kind, blob = BOOTSTRAP_KEY.read_bytes().split()[:2]
+    result = []
+    for line in data.splitlines(keepends=True):
+        if line.lstrip().startswith(b'#'):
+            result.append(line)
+            continue
+        try:
+            lexer = shlex.shlex(line.decode('utf-8'), posix=True)
+            lexer.whitespace_split = True
+            lexer.commenters = ''
+            fields = [next(lexer, ''), next(lexer, '')]
+            if not re.match(r'^(ssh-|ecdsa-|sk-)', fields[0]):
+                fields.append(next(lexer, ''))
+        except (UnicodeDecodeError, ValueError):
+            result.append(line)
+            continue
+        identity = [kind.decode(), blob.decode()]
+        if fields[:2] == identity or fields[1:3] == identity:
+            continue
+        result.append(line)
+    return b"".join(result)
 TOKEN = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,47}$")
 EXTRA_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,31}$")
 HOSTNAME = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
@@ -374,6 +401,8 @@ def _authorized_keys(values: Any, path: str) -> list[str]:
         parts = value.split()
         if len(parts) < 2 or parts[0] not in kinds:
             fail(path, "expected a public key without authorized_keys options")
+        if parts[:2] == BOOTSTRAP_KEY.read_text().split()[:2]:
+            fail(path, "the firmware initialization key cannot be a permanent authorization")
         try:
             raw = base64.b64decode(parts[1], validate=True)
         except (ValueError, TypeError):

@@ -57,6 +57,24 @@ class IdentityExport(unittest.TestCase):
         self.assertFalse(any(name.startswith('etc/uci-defaults/') for name in archive))
         self.assertFalse(any(name in archive for name in deploy.HOST_IDENTITY_FILES))
         self.assertEqual(report['preserved_identity_paths'], [])
+        self.assertEqual(archive['etc/dicttech-ap-bootstrap-key/state'], b'retired\n')
+
+    def test_initialization_key_identity_is_never_preserved_as_permanent_auth(self):
+        key = (REPO / 'package/dicttech/ap-profile/files/usr/share/dicttech-ap/bootstrap-authorized-key.pub').read_bytes()
+        owner = (REPO / 'package/dicttech/cli-profile/files/usr/share/dicttech-cli/authorized_keys').read_bytes()
+        identity = b' '.join(key.split()[:2])
+        unrelated = next(row for row in owner.splitlines() if row.startswith(b'ssh-ed25519 '))
+        kept = unrelated + b' comment mentions ' + identity + b' "arbitrary comment\n'
+        captured = {**self.identity, 'etc/dropbear/authorized_keys': kept + key + b'restrict ' + identity + b' renamed\n'}
+        archive, _, _ = self.run_export(True, responses=[self.probe, deploy.tar_bytes(captured)])
+        self.assertEqual(archive['etc/dropbear/authorized_keys'], kept)
+        self.assertEqual(archive['etc/dicttech-ap-bootstrap-key/state'], b'retired\n')
+
+    def test_initialization_only_key_capture_becomes_empty_without_backfill(self):
+        key = (REPO / 'package/dicttech/ap-profile/files/usr/share/dicttech-ap/bootstrap-authorized-key.pub').read_bytes()
+        captured = {**self.identity, 'etc/dropbear/authorized_keys': key}
+        archive, _, _ = self.run_export(True, responses=[self.probe, deploy.tar_bytes(captured)])
+        self.assertEqual(archive['etc/dropbear/authorized_keys'], b'')
 
     def test_existing_device_identity_preserved_in_private_archive(self):
         archive, read, report = self.run_export(True, responses=[self.probe, deploy.tar_bytes(self.identity)])

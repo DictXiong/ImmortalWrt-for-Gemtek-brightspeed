@@ -72,8 +72,12 @@ secrets
 Wi-Fi passwords are 8–63 UTF-8 bytes. Control characters, duplicate JSON fields,
 unknown configuration fields and unsupported versions are rejected. Secrets
 must not be passed as shell arguments or printed by validation/plan commands.
-Absent `authorized_keys` preserves the device's current keys; an explicit `[]`
-requests an empty authorized-key file. Device SSH host keys are not part of
+Absent `authorized_keys` preserves current permanent keys; during first
+initialization it leaves the extra bootstrap credential in place until confirm
+retires it. Same-device exports remove that temporary identity. An explicit `[]`
+requests an empty authorized-key file immediately, and a nonempty explicit list
+replaces it exactly. The shipped initialization key cannot be listed as a
+permanent credential. Device SSH host keys are not part of
 this document or model rendering. Updating root's password hash must preserve
 all other shadow rows.
 

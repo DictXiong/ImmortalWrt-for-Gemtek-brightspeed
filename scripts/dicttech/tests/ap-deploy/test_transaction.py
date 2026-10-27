@@ -97,6 +97,7 @@ class Transaction(unittest.TestCase):
             'ARCHIVES': str(self.root / 'root/dicttech-ap-backups'),
             'SELF': str(self.script), 'INIT': str(self.init),
             'SERVICES': str(self.services), 'UBUS': str(self.ubus), 'BOOTSTRAP': str(self.base / 'no-bootstrap'),
+            'KEYLIFE': str(self.root / 'usr/libexec/dicttech-ap/bootstrap-key'),
             'JQ': shutil.which('jq'), 'UCI': str(self.uci),
             'TIMEOUT': shutil.which('timeout'), 'BOOT': str(self.boot), 'UPTIME': str(self.clock),
         }
@@ -379,6 +380,7 @@ class Transaction(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('bootstrap_setup_fixture', fixture_source)
         module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
         setup = module.SetupFixture(self.base, self.root)
+        setup.write('proc/sys/kernel/random/boot_id', self.boot.read_bytes())
         if mode == 'isolated': setup.shell_tool('hexdump', 'exit 1\n')
         shutil.rmtree(self.root / 'sys/class/net/br-lan')
         setup.call('prepare'); setup.activate(); setup.call('check-setup')
@@ -388,6 +390,79 @@ class Transaction(unittest.TestCase):
         self.before = {str(p.relative_to(self.root)): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
         self.original_network_mode = 0o600
         return setup
+
+    def initialize_with_real_key_helper(self, explicit_auth=None):
+        setup = self.fresh_bootstrap()
+        # Keep the real read-only setup proof for check/stage/apply identity.
+        # Only mock the full-config finalize consumer of this minimal payload.
+        setup.script.write_text(setup.script.read_text().replace('set -eu\n',
+            'set -eu\n[ "${1:-}" != finalize ] || exit 0\n', 1))
+        contract = self.call('check')
+        approved = {'device_id': 'fixture_ap', 'bridge_mac': '02:00:00:00:99:00',
+                    'allowed_boards': ['gemtek,xr1710g'], 'initialize': True,
+                    'expect_boot_id': contract['boot_id']}
+        files = dict(self.files)
+        if explicit_auth is not None:
+            files['etc/dropbear/authorized_keys'] = explicit_auth
+        manifest, payload = deploy.bundle(files, contract, 'fixture_ap', 120, approved)
+        self.token = manifest['token']; self.call('stage', data=payload)
+        self.call('apply', self.token)
+        self.put('sys/class/net/br-lan/address', approved['bridge_mac'].encode() + b'\n')
+        wait(lambda: (self.state / 'reload-complete').exists())
+        return setup
+
+    def call_key_helper(self, action):
+        subprocess.run(self.shell + [str(self.root / 'usr/libexec/dicttech-ap/bootstrap-key'), action],
+                       check=True, env=self.env, capture_output=True, timeout=15)
+
+    def test_initialize_omitted_key_pending_confirm_and_retired_reboot(self):
+        self.initialize_with_real_key_helper()
+        auth = self.root / 'etc/dropbear/authorized_keys'
+        state = self.root / 'etc/dicttech-ap-bootstrap-key/state'
+        owner = (self.root / 'usr/share/dicttech-cli/authorized_keys').read_bytes()
+        key = (self.root / 'usr/share/dicttech-ap/bootstrap-authorized-key.pub').read_bytes()
+        self.call_key_helper('managed')
+        self.assertEqual(auth.read_bytes(), owner + key)
+        self.assertEqual(state.read_bytes(), b'fresh\n')
+        self.assertEqual(self.call('confirm', self.token)['state'], 'confirmed')
+        self.assertEqual(auth.read_bytes(), owner)
+        self.assertEqual(state.read_bytes(), b'retired\n')
+        (self.root / 'etc/dicttech-ap/device.json').unlink()
+        self.call_key_helper('fresh')
+        self.assertEqual(auth.read_bytes(), owner)
+
+    def test_initialize_explicit_empty_is_immediate_and_confirm_never_backfills(self):
+        self.initialize_with_real_key_helper(b'')
+        auth = self.root / 'etc/dropbear/authorized_keys'
+        self.call_key_helper('managed')
+        self.assertEqual(auth.read_bytes(), b'')
+        self.assertEqual(self.call('confirm', self.token)['state'], 'confirmed')
+        self.assertEqual(auth.read_bytes(), b'')
+
+    def test_failed_retirement_confirmation_rolls_back_key_and_lifecycle_together(self):
+        self.initialize_with_real_key_helper()
+        auth = self.root / 'etc/dropbear/authorized_keys'
+        state = self.root / 'etc/dicttech-ap-bootstrap-key/state'
+        original_auth, original_state = auth.read_bytes(), state.read_bytes()
+        helper = self.root / 'usr/libexec/dicttech-ap/bootstrap-key'
+        real = helper.with_name('bootstrap-key.real'); helper.rename(real)
+        helper.write_text('#!/bin/sh\n' + shlex.quote(str(real)) + ' "$@"\n[ "$1" != retire ]\n'); helper.chmod(0o700)
+        self.call('confirm', self.token, good=False)
+        self.assertFalse((self.state / 'confirmed').exists())
+        self.assertNotEqual(auth.read_bytes(), original_auth)
+        helper.unlink(); real.rename(helper)
+        self.call('rollback', self.token)
+        self.assertEqual(auth.read_bytes(), original_auth)
+        self.assertEqual(state.read_bytes(), original_state)
+
+    def test_unconfirmed_initialize_reboot_restores_original_key_grant(self):
+        self.initialize_with_real_key_helper()
+        original_auth = self.before['etc/dropbear/authorized_keys']
+        self.boot.write_text('22222222-2222-4222-8222-222222222222\n')
+        self.call('early')
+        self.assertEqual((self.root / 'etc/dropbear/authorized_keys').read_bytes(), original_auth)
+        self.assertEqual((self.root / 'etc/dicttech-ap-bootstrap-key/state').read_bytes(), b'fresh\n')
+        self.assertFalse((self.root / 'etc/dicttech-ap/device.json').exists())
 
     def test_isolated_initialization_requires_exact_setup_and_pinned_boot(self):
         self.fresh_bootstrap('isolated')

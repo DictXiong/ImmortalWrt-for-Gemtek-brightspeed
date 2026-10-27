@@ -24,6 +24,7 @@ endef
 
 define Package/ap-profile/conffiles
 /etc/dicttech-ap/
+/etc/dicttech-ap-bootstrap-key/
 endef
 
 define Build/Compile
@@ -32,6 +33,8 @@ endef
 define Package/ap-profile/install
 	$(INSTALL_DIR) $(1)/usr/share/dicttech-ap $(1)/usr/libexec/dicttech-ap $(1)/usr/lib/dicttech-ap $(1)/etc/dicttech-ap
 	chmod 0700 $(1)/etc/dicttech-ap
+	$(INSTALL_DIR) $(1)/etc/dicttech-ap-bootstrap-key
+	chmod 0700 $(1)/etc/dicttech-ap-bootstrap-key
 	$(INSTALL_DIR) $(1)/etc/init.d $(1)/etc/dropbear $(1)/etc/sysctl.d
 	$(CP) ./files/usr/share/dicttech-ap/. $(1)/usr/share/dicttech-ap/
 	$(CP) ./files/usr/libexec/dicttech-ap/. $(1)/usr/libexec/dicttech-ap/
@@ -39,6 +42,8 @@ define Package/ap-profile/install
 	$(INSTALL_BIN) ./files/etc/init.d/* $(1)/etc/init.d/
 	$(INSTALL_CONF) $(TOPDIR)/package/dicttech/cli-profile/files/usr/share/dicttech-cli/authorized_keys $(1)/etc/dropbear/authorized_keys
 	$(INSTALL_DATA) ./files/etc/sysctl.d/12-dicttech-ap-arp.conf $(1)/etc/sysctl.d/
+	$(INSTALL_DIR) $(1)/lib/upgrade/keep.d
+	$(INSTALL_DATA) ./files/lib/upgrade/keep.d/dicttech-ap-bootstrap-key $(1)/lib/upgrade/keep.d/
 endef
 
 $(eval $(call BuildPackage,ap-profile))

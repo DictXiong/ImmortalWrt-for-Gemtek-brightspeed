@@ -104,7 +104,31 @@ temporary native-VLAN-1 bridge and obtain a DHCP address. A private, persistent
 random locally administered MAC and `xr1710g-setup-<MAC>` hostname distinguish
 fresh APs in the upstream lease list, even if factory MACs were duplicated.
 That DHCP entry permits **public-key SSH only**, port `12022`, using the owner's
-pinned key set. It has no HTTP listener or password/blank-password SSH access.
+pinned key set. On its first fresh setup it also grants the separately shipped
+initialization public key, fingerprint
+`SHA256:so78iUvPVq4rK5TJl8Acd6rIHBMVN2XSm/CirMhjfUw`. Only the public key is
+in firmware; its private key is never copied. ROM `authorized_keys` remains the
+unchanged curated eleven-key set. The DHCP entry has no HTTP listener or
+password/blank-password SSH access.
+
+The extra credential lasts until initialization is **confirmed**. With omitted
+`authorized_keys`, apply keeps it for the controller's reconnect; confirm removes
+it without restarting Dropbear, so the existing authenticated master can receive
+the result. A new connection using only that key must then be rejected. Explicit
+authorization lists, including `[]`, take effect exactly and immediately; they
+are never supplemented to preserve the initialization connection. Callers who
+replace access must reconnect using their selected permanent identity.
+
+The private lifecycle stamp under `/etc/dicttech-ap-bootstrap-key/` is separate
+from the managed profile, retained by package upgrades and sysupgrade, and
+backed up/restored with initialization transactions. Configured exports carry a
+retired stamp and filter out the initialization identity. Ordinary reboot,
+missing/quarantined profile, and manual removal of the temporary key never
+grant it again. A full factory reset erases this stamp and intentionally begins
+a new initialization. The first stamp is durable before granting: interruption
+in that small window fails closed rather than retrying the grant; use the owner
+keys or the physical LAN4 entry to recover. Failed/unconfirmed initialization
+restores the original authorization and lifecycle state through rollback.
 
 **lan4** remains isolated at `192.168.250.1/24`, with HTTP and SSH `12022`.
 Connect directly and assign, for example, `192.168.250.100/24` without a gateway
@@ -207,7 +231,9 @@ python3 scripts/dicttech/ap-deploy.py export \
 
 The preservation flag performs a read-only same-device identity check before
 capturing existing SSH host keys, HTTPS identity and any authorized keys not
-explicitly set in the desired configuration. Use it for existing-device
+explicitly set in the desired configuration, excluding the one-time
+initialization identity even if its comment/options changed. Exports also carry
+a retired initialization-key stamp. Use it for existing-device
 upgrades, so SSH identity and access survive the custom configuration archive.
 Its read-only identity probe also supports the old v1/other installed firmware;
 it does not require the source to already implement the v2 transaction contract.

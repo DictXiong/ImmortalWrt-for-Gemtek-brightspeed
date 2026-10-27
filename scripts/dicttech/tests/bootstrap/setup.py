@@ -94,6 +94,15 @@ print(stat.filemode(value.st_mode)+' 1 0 0 '+str(value.st_size)+' Jan 1 00:00 '+
         self.shell_tool('nft', 'case "$*" in "list table"*) exit 1;; esac\ncat >/dev/null\n')
         self.write('usr/lib/dicttech-ap/services.sh', b'#!/bin/sh\nexit 0\n', 0o700)
         self.write('usr/libexec/dicttech-ap/transaction', b'#!/bin/sh\nexit 0\n', 0o700)
+        owner = ROOT / 'package/dicttech/cli-profile/files/usr/share/dicttech-cli/authorized_keys'
+        self.write('usr/share/dicttech-cli/authorized_keys', owner.read_bytes(), 0o644)
+        if not (self.root / 'etc/dropbear/authorized_keys').exists():
+            self.write('etc/dropbear/authorized_keys', owner.read_bytes())
+        helper = (ROOT / 'package/dicttech/ap-profile/files/usr/libexec/dicttech-ap/bootstrap-key').read_text()
+        helper = helper.replace('SYSROOT=', 'SYSROOT=' + shlex.quote(str(self.root)), 1)
+        helper = helper.replace('BOOT=/proc/sys/kernel/random/boot_id', 'BOOT=' + shlex.quote(str(self.root / 'proc/sys/kernel/random/boot_id')))
+        helper = helper.replace('JQ=/usr/bin/jq', 'JQ=' + shlex.quote(shutil.which('jq')))
+        self.write('usr/libexec/dicttech-ap/bootstrap-key', helper.encode(), 0o700)
         script = (SOURCE / 'bootstrap.sh').read_text()
         script = re.sub(r'(?<!/proc)/(?:usr/share|usr/libexec|usr/lib|etc|root|tmp|sys)/',
                         lambda m: str(self.root / m[0].strip('/')) + '/', script)

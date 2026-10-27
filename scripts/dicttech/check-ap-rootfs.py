@@ -2,6 +2,7 @@
 """Verify a virgin AP rootfs against the authoritative public package sources."""
 from __future__ import annotations
 import argparse
+import base64
 import hashlib
 import importlib.util
 import json
@@ -170,6 +171,19 @@ def check_unprovisioned(rootfs, source_root):
     require(directory.stat().st_mode & 0o777 == 0o700, 'private deployment directory must have mode 0700')
     entries = [p for p in directory.rglob('*') if p.is_file() or p.is_symlink()]
     require(not entries, 'virgin rootfs contains device deployment state or secrets under etc/dicttech-ap')
+    lifecycle = rootfs / 'etc/dicttech-ap-bootstrap-key'
+    require(lifecycle.is_dir() and not lifecycle.is_symlink() and lifecycle.stat().st_mode & 0o7777 == 0o700,
+            'initialization-key lifecycle directory must be private 0700')
+    require(not list(lifecycle.iterdir()), 'virgin rootfs contains initialization-key lifecycle state')
+    bootstrap_key = rootfs / 'usr/share/dicttech-ap/bootstrap-authorized-key.pub'
+    helper = rootfs / 'usr/libexec/dicttech-ap/bootstrap-key'
+    require(regular(bootstrap_key) and bootstrap_key.stat().st_mode & 0o7777 == 0o644,
+            'initialization public key must be an immutable regular 0644 asset')
+    fields = bootstrap_key.read_bytes().split()
+    require(len(bootstrap_key.read_bytes().splitlines()) == 1 and len(fields) >= 2 and fields[0] == b'ssh-ed25519' and
+            base64.b64encode(hashlib.sha256(base64.b64decode(fields[1], validate=True)).digest()).decode().rstrip('=') ==
+            'so78iUvPVq4rK5TJl8Acd6rIHBMVN2XSm/CirMhjfUw', 'wrong initialization public-key identity')
+    require(regular(helper) and helper.stat().st_mode & 0o7777 == 0o755, 'initialization-key helper must be executable 0755')
     paths = []
     for pattern in ('etc/dropbear/dropbear_*_host_key', 'etc/ssh/ssh_host_*_key', 'etc/uhttpd.key'):
         paths.extend(rootfs.glob(pattern))
@@ -177,6 +191,8 @@ def check_unprovisioned(rootfs, source_root):
     authorized = rootfs / 'etc/dropbear/authorized_keys'
     keys_source = source_root / 'package/dicttech/cli-profile/files/usr/share/dicttech-cli/authorized_keys'
     require(regular(keys_source) and bool(keys_source.read_bytes().strip()), 'authoritative public SSH key set missing or empty')
+    require(digest(keys_source.read_bytes()) == '8d85e9b6f0bded08886380539156ad668d63db8063a326d89c0cffdc85c0c684',
+            'curated owner key collection changed')
     require(regular(authorized) and authorized.read_bytes() == keys_source.read_bytes(),
             'virgin rootfs must contain exactly the reviewed public authorized SSH keys')
     require(authorized.stat().st_mode & 0o7777 == 0o600, 'virgin rootfs authorized SSH keys must have mode 0600')

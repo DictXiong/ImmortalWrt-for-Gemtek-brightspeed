@@ -1,0 +1,100 @@
+#!/bin/sh
+# Initialization-only public credential. Never changes the curated owner set.
+set -eu
+umask 077
+SYSROOT=
+BOOT=/proc/sys/kernel/random/boot_id
+JQ=/usr/bin/jq
+p() { printf '%s%s' "$SYSROOT" "$1"; }
+LIFE=$(p /etc/dicttech-ap-bootstrap-key)
+STATE=$LIFE/state
+AUTH=$(p /etc/dropbear/authorized_keys)
+KEY=$(p /usr/share/dicttech-ap/bootstrap-authorized-key.pub)
+OWNER=$(p /usr/share/dicttech-cli/authorized_keys)
+TX=$(p /root/.dicttech-ap-transaction)
+plain() { test -f "$1" && test ! -L "$1"; }
+private() { plain "$1" && test "$(ls -nd "$1" | awk '{print $1 ":" $3}')" = '-rw-------:0'; }
+state() {
+ private "$STATE" || return 1
+ test "$(wc -l < "$STATE" | tr -d ' ')" = 1 || return 1
+ IFS= read -r value < "$STATE"
+ case "$value" in fresh|retired) printf '%s\n' "$value";; *) return 1;; esac
+}
+write_state() {
+ test ! -L "$LIFE" && test ! -L "$STATE" || return 1
+ if test "$(state 2>/dev/null || true)" = "$1"; then return 0; fi
+ mkdir -p "$LIFE"; chmod 700 "$LIFE"
+ test ! -e "$STATE.new.$$" && test ! -L "$STATE.new.$$" || return 1
+ (set -C; printf '%s\n' "$1" > "$STATE.new.$$"); chmod 600 "$STATE.new.$$"
+ mv "$STATE.new.$$" "$STATE"
+}
+filter() {
+ # Classify only the actual key fields, never a pair in another key's comment.
+ # One optional options field may contain quoted spaces; no shell evaluation.
+ test "$(wc -l < "$KEY" | tr -d ' ')" = 1 || return 1
+ awk 'NR==FNR {if(FNR==1){kind=$1;blob=$2}next}
+ /^[[:space:]]*#/ {print;next}
+ {
+  n=0;word="";quoted=0;escape=0;delete fields
+  for(i=1;i<=length($0);i++) {
+   c=substr($0,i,1)
+   if(escape){word=word c;escape=0;continue}
+   if(c=="\\"){escape=1;continue}
+   if(c=="\""){quoted=!quoted;continue}
+   if(c~/[[:space:]]/ && !quoted){if(length(word)){fields[++n]=word;word="";if(n==3 || (n==2 && fields[1]~/^(ssh-|ecdsa-|sk-)/))break}}else word=word c
+  }
+  if(length(word) && n<3)fields[++n]=word
+  if(!quoted && !escape && ((fields[1]==kind && fields[2]==blob) || (fields[2]==kind && fields[3]==blob)))next
+  print
+ }' "$KEY" "$1"
+}
+strip() {
+ plain "$KEY" || return 1
+ if test ! -e "$AUTH" && test ! -L "$AUTH"; then return 0; fi
+ if test -L "$AUTH"; then rm "$AUTH"; return 0; fi
+ plain "$AUTH" && test ! -L "${AUTH%/*}" && test "$(ls -nd "$AUTH" | awk '{print $3}')" = 0 || return 1
+ test ! -e "$AUTH.new.$$" && test ! -L "$AUTH.new.$$" || return 1
+ (set -C; filter "$AUTH" > "$AUTH.new.$$"); chmod 600 "$AUTH.new.$$"
+ if cmp -s "$AUTH" "$AUTH.new.$$"; then rm "$AUTH.new.$$"; else mv "$AUTH.new.$$" "$AUTH"; fi
+}
+retire() {
+ # This tombstone is outside the removable/quarantined managed profile.
+ strip
+ write_state retired
+ sync
+}
+pending() {
+ test "$(state 2>/dev/null || true)" = fresh || return 1
+ test -d "$TX" && test ! -L "$TX" && private "$TX/manifest.json" || return 1
+ test ! -e "$TX/confirmed" && test ! -e "$TX/rolled-back" || return 1
+ plain "$TX/applying" || plain "$TX/applied" || return 1
+ "$JQ" -e --arg boot "$(cat "$BOOT")" '.approved_target.initialize==true and .boot_id==$boot' "$TX/manifest.json" >/dev/null
+}
+case "${1:-}" in
+ fresh)
+  # Only bootstrap's fully installed no-marker setup calls this operation.
+  test ! -e "$(p /etc/dicttech-ap/device.json)" && test ! -L "$(p /etc/dicttech-ap/device.json)" || exit 1
+  if test -L "$LIFE"; then strip; exit 1; fi
+  if test -e "$STATE" || test -L "$STATE"; then
+   # A prior grant is not permission to undo manual removal or explicit [].
+   if test "$(state 2>/dev/null || true)" = fresh; then exit 0; fi
+   retire; exit
+  elif test -e "$(p /root/dicttech-ap-quarantine)" || test -L "$(p /root/dicttech-ap-quarantine)"; then
+   retire; exit
+  else write_state fresh; sync; fi
+ private "$AUTH" && plain "$KEY" && plain "$OWNER" || exit 1
+ # A caller-supplied authorization file (including []) is an explicit policy.
+ # Only the untouched image default is eligible for an initialization grant.
+ if ! cmp -s "$AUTH" "$OWNER"; then retire; exit; fi
+  test ! -e "$AUTH.new.$$" && test ! -L "$AUTH.new.$$" || exit 1
+  (set -C; filter "$AUTH" > "$AUTH.new.$$")
+  cat "$KEY" >> "$AUTH.new.$$"; chmod 600 "$AUTH.new.$$"
+  if cmp -s "$AUTH" "$AUTH.new.$$"; then rm "$AUTH.new.$$"; else mv "$AUTH.new.$$" "$AUTH"; fi
+  ;;
+ managed)
+  # Pending initialization may retain an existing grant, never grant it anew.
+  if pending; then exit 0; fi
+  retire;;
+ retire) retire;;
+ *) printf 'usage: bootstrap-key fresh|managed|retire\n' >&2; exit 2;;
+esac

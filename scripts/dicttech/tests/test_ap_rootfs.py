@@ -25,6 +25,7 @@ class RootfsChecks(unittest.TestCase):
             target = self.root / relative; target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(check.REPO / source, target)
         (self.root / 'etc/dicttech-ap').mkdir(mode=0o700)
+        (self.root / 'etc/dicttech-ap-bootstrap-key').mkdir(mode=0o700)
         shadow = self.root / 'etc/shadow'; shadow.write_text('root:::0:99999:7:::\nservice:*:0:0:99999:7:::\n'); shadow.chmod(0o600)
         (self.root / 'www').mkdir(); (self.root / 'www/xr-roaming').symlink_to('/tmp/xr-roaming-public')
         (self.root / 'etc/resolv.conf').symlink_to('/tmp/resolv.conf.d/resolv.conf.auto')
@@ -51,6 +52,19 @@ class RootfsChecks(unittest.TestCase):
         self.assertGreaterEqual(len(report['files_checked']), 20)
         self.assertFalse(report['clean_image']['preset_root_password'])
         self.assertEqual(report['clean_image']['preset_authorized_keys'], 'reviewed public DictTech set')
+
+    def test_initialization_credential_asset_and_empty_private_lifecycle_are_required(self):
+        asset = self.root / 'usr/share/dicttech-ap/bootstrap-authorized-key.pub'
+        original = asset.read_bytes()
+        asset.chmod(0o600)
+        with self.assertRaisesRegex(check.RootfsError, 'initialization public key'):
+            check.check_rootfs(self.root)
+        asset.chmod(0o644)
+        state = self.root / 'etc/dicttech-ap-bootstrap-key/state'; state.write_text('fresh\n')
+        with self.assertRaisesRegex(check.RootfsError, 'lifecycle state'):
+            check.check_rootfs(self.root)
+        state.unlink()
+        self.assertEqual(asset.read_bytes(), original)
 
     def test_stale_runtime_and_changed_default_config_fail(self):
         for relative in ('usr/libexec/dicttech-ap/transaction', 'usr/lib/xr-roaming/helper.sh', 'etc/config/xr_roaming'):

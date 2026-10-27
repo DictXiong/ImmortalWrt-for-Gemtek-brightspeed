@@ -31,6 +31,8 @@ def main():
               package / 'usr/share/dicttech-ap/defaults.json',
               package / 'etc/init.d/dicttech-ap-prepare',
               package / 'etc/init.d/dicttech-ap-finalize']
+    inputs += [package / 'usr/libexec/dicttech-ap/bootstrap-key',
+               package / 'usr/share/dicttech-ap/bootstrap-authorized-key.pub']
     inputs.extend(sorted((package / 'usr/lib/dicttech-ap/setup').iterdir()))
     inputs.append(source / 'package/network/services/dropbear/files/dropbear.init')
     for item in inputs:
@@ -44,7 +46,7 @@ def main():
     report = {'schema_version': 1, 'offline_only': True, 'router_access': False,
               'host_services_modified': False, 'sourceSHA': pins,
               'passed': True, 'suites': {}}
-    for name in ['bootstrap', 'setup', 'services']:
+    for name in ['bootstrap', 'setup', 'services', 'initialization_key']:
         try:
             result = subprocess.run([sys.executable, str(fixtures / (name + '.py'))],
                                     env=environment, capture_output=True, text=True,

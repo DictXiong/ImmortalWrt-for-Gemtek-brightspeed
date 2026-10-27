@@ -20,7 +20,7 @@ import time
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 TARGET = '/usr/libexec/dicttech-ap/transaction'
-from ap_config import PROFILE, SCHEMA_VERSION
+from ap_config import PROFILE, SCHEMA_VERSION, without_bootstrap_key
 DEFAULTS = HERE.parents[1] / 'package/dicttech/ap-profile/files/usr/share/dicttech-ap/defaults.json'
 
 
@@ -154,6 +154,8 @@ def preserve_host_identity(args, resolved, files):
         raise RuntimeError('invalid same-device host identity archive') from None
     if not any(name.startswith('etc/dropbear/dropbear_') for name in preserved):
         raise RuntimeError('source has no supported Dropbear host identity')
+    if 'etc/dropbear/authorized_keys' in preserved:
+        preserved['etc/dropbear/authorized_keys'] = without_bootstrap_key(preserved['etc/dropbear/authorized_keys'])
     return {**files, **preserved}, sorted(preserved)
 
 
@@ -286,6 +288,10 @@ def main():
             preserved_paths = []
             if args.preserve_host_identity:
                 files, preserved_paths = preserve_host_identity(args, resolved, files)
+            # An offline configured preseed is already past initialization.
+            # Keep this outside the managed directory so marker loss cannot
+            # reopen the one-time credential on a later boot.
+            files['etc/dicttech-ap-bootstrap-key/state'] = b'retired\n'
             payload = gzip.compress(tar_bytes(files), mtime=0)
             fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, 'wb') as f:
