@@ -38,6 +38,26 @@
       "source_sha256": "0a1596fe36395ac2316f23e80db2753e86783e6bd62c911afe96aed278d1d50a",
       "patched_sha256": "6e3fb952a53ec1a506aacbce1941557307ffce8f1abe8aeb48c40243faa6d7b0",
       "patch": "patches/feeds/luci/applications/luci-app-wifihistory/120-dicttech-bounded-mld-history.patch"
+    },
+    "factory-status": {
+      "target": "luci-app-airoha-factory/root/usr/libexec/rpcd/luci.airoha_factory",
+      "source_sha256": "1cccfc7ab3ff6d5b36a554dff8f6d16307e7cf90dedc2939a3770480cd539d4f",
+      "patched_sha256": "72e09cef2886ce61e92951cd687ce2d198ca502036a91cc73d6514661e6990ce",
+      "patch": "patches/feeds/app_airoha/luci-app-airoha-factory/120-dicttech-readonly-split-dsd.patch"
+    },
+    "factory-info-view": {
+      "target": "luci-app-airoha-factory/htdocs/luci-static/resources/view/airoha_factory/factory.js",
+      "source_sha256": "5e79d596d0165e312dfc436fe6af7427654b7b09debf47610237620f7f4386d0",
+      "patched_sha256": "7c9ed813585e5ae2cd134d0009cb0e122f50ed7da457895f13999cfcff7a2ae0",
+      "minified_sha256": "670b6a2da34c8818b6bb919e6b629cf4a700f17d64971cf642960fa5164b803c",
+      "patch": "patches/feeds/app_airoha/luci-app-airoha-factory/120-dicttech-readonly-split-dsd.patch"
+    },
+    "factory-translation": {
+      "target": "luci-app-airoha-factory/po/zh_Hans/luci-app-airoha-factory.po",
+      "source_sha256": "21dddeae3ad97b8db6d160570e6fea2708c2872a3287625fbf99e4dc8a89abce",
+      "patched_sha256": "d922bd509604a84a0a09c2ebdd0dfdd36f6b40f193df3bbc415a39acec65c9f8",
+      "patch": "patches/feeds/app_airoha/luci-app-airoha-factory/120-dicttech-readonly-split-dsd.patch"
     }
-  }
+  },
+  "feed_app_airoha_revision": "d496614002cf21f83e96e4741716eab1e5333ede"
 }

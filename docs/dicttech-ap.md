@@ -294,9 +294,13 @@ BusyBox ash. Local overrides live in `.zshrc.local`, `.vimrc.local` and
 `.tmux.conf.local`. Shell/editor transient state uses private RAM storage.
 
 System / Device serial number and System / Software remain available. The
-serial tool is informational unless the installed factory layout supports
-its write operation; this profile does not rewrite factory data. Package
-exploration remains possible, with matching release kmods required.
+serial tool reads the split legacy `dsd` partition from offset zero and shows
+its original serial/MAC fields separately from the active managed bridge MAC.
+This split layout is read-only in both the page and RPC backend; factory data,
+EEPROM and U-Boot environment are not rewritten. If original data is missing,
+independent firmware/device information still remains visible. Existing vendor
+and UBI layouts retain their supported behavior. Package exploration remains
+possible, with matching release kmods required.
 
 Status / WiFi client history is enabled on provisioned APs. It samples every
 30 seconds, deduplicates shared MLO interfaces and retains at most 512 devices

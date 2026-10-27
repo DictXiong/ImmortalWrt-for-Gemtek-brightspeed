@@ -59,6 +59,8 @@ python3 scripts/dicttech/check-build.py --layout "$layout" --output "bin/dicttec
 if [[ $prepare_only == 1 ]]; then exit 0; fi
 make download -j"$jobs"
 make world -j"$jobs"
+python3 scripts/dicttech/check-ui-source.py --jsmin staging_dir/hostpkg/bin/jsmin \
+ --output bin/targets/airoha/an7581/dicttech-ui-source.json
 python3 scripts/dicttech/check-build.py --layout "$layout" --output "bin/targets/airoha/an7581/dicttech-$layout-build.json"
 profile=gemtek_xr1710g
 [[ $layout != ubi ]] || profile+=-ubi

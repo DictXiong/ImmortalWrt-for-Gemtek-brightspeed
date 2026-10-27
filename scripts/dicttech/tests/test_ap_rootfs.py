@@ -39,6 +39,9 @@ class RootfsChecks(unittest.TestCase):
         for relative, content in check.history_sources(check.REPO).items():
             target = self.root / relative; target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content); target.chmod(0o755 if relative in ('usr/sbin/wifihistory', 'etc/init.d/wifihistory') else 0o644)
+        for relative, content in check.factory_sources(check.REPO).items():
+            target = self.root / relative; target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content); target.chmod(0o755 if relative.startswith('usr/libexec/') else 0o644)
         keys = self.root / 'etc/dropbear/authorized_keys'; keys.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(check.REPO / 'package/dicttech/cli-profile/files/usr/share/dicttech-cli/authorized_keys', keys)
         keys.chmod(0o600)
@@ -79,6 +82,11 @@ class RootfsChecks(unittest.TestCase):
             shutil.copytree(check.REPO / 'package/dicttech', source / 'package/dicttech')
             patch = source / check.HISTORY_PATCH; patch.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(check.REPO / check.HISTORY_PATCH, patch)
+            patch = source / check.FACTORY_PATCH; patch.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(check.REPO / check.FACTORY_PATCH, patch)
+            (source / 'configs').mkdir()
+            for name in ('dicttech-feeds.conf', 'dicttech-ui-manifest.json'):
+                shutil.copyfile(check.REPO / 'configs' / name, source / 'configs' / name)
             for relative, original in check.GENERATOR_FILES.items():
                 dest = source / original; dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(check.REPO / original, dest)
@@ -168,6 +176,54 @@ class RootfsChecks(unittest.TestCase):
                            if "E('p'," in line and "'wifi_history_status'" in line)
         self.assertIn("'role': 'status'", status_node)
         self.assertNotIn('cbi-map-descr', status_node)
+
+    def test_factory_backend_and_view_require_complete_reviewed_byte_identity(self):
+        for relative in check.FACTORY_FILES:
+            with self.subTest(path=relative):
+                path = self.root / relative; original = path.read_bytes()
+                path.write_bytes(original + b'\n/* unreviewed fixture drift */\n')
+                with self.assertRaises(check.RootfsError):
+                    check.check_rootfs(self.root)
+                path.write_bytes(original)
+        self.assertTrue(check.check_rootfs(self.root)['passed'])
+
+    def test_factory_assets_missing_symlinked_or_wrong_mode_fail(self):
+        for relative in check.FACTORY_FILES:
+            with self.subTest(path=relative):
+                path = self.root / relative; original = path.read_bytes(); mode = path.stat().st_mode & 0o777
+                path.unlink()
+                with self.assertRaises(check.RootfsError):
+                    check.check_rootfs(self.root)
+                path.symlink_to('/not-an-owned-factory-fixture')
+                with self.assertRaises(check.RootfsError):
+                    check.check_rootfs(self.root)
+                path.unlink(); path.write_bytes(original); path.chmod(mode | 0o002)
+                with self.assertRaisesRegex(check.RootfsError, 'factory asset has unexpected mode'):
+                    check.check_rootfs(self.root)
+                path.chmod(mode)
+
+    def test_factory_official_minified_hash_is_an_independent_complete_identity(self):
+        # Exercise the compact-byte branch without depending on a host compiler
+        # before CI builds the real official jsmin. Actual builds recheck jsmin.
+        from unittest.mock import patch
+        relative = 'www/luci-static/resources/view/airoha_factory/factory.js'
+        path = self.root / relative; original = path.read_bytes()
+        fixture = b'synthetic official-minifier output\n'; path.write_bytes(fixture)
+        manifest = check.factory_policy(check.REPO)
+        manifest['patches']['factory-info-view']['minified_sha256'] = check.digest(fixture)
+        with patch.object(check, 'factory_policy', return_value=manifest):
+            rows = check.check_factory(self.root, check.REPO, check.factory_sources(check.REPO))
+            self.assertEqual(rows[-1]['format'], 'official-jsmin')
+            path.write_bytes(fixture + b'changed')
+            with self.assertRaisesRegex(check.RootfsError, 'official minified bytes'):
+                check.check_factory(self.root, check.REPO, check.factory_sources(check.REPO))
+        path.write_bytes(original)
+
+    def test_factory_view_parent_must_not_be_group_writable(self):
+        parent = self.root / 'www/luci-static/resources/view/airoha_factory'
+        parent.chmod(0o775)
+        with self.assertRaisesRegex(check.RootfsError, 'factory asset parent is group/other writable'):
+            check.check_rootfs(self.root)
 
     def test_history_gate_rejects_unpatched_prepared_feed(self):
         with tempfile.TemporaryDirectory(prefix='dicttech-history-source-fixture-') as temp:

@@ -41,6 +41,7 @@ jobs:
           sudo python3 scripts/dicttech/test-ap-verify.py
           sudo python3 scripts/dicttech/tests/test_ap_image.py
           sudo python3 scripts/dicttech/tests/test_ap_rootfs.py
+          python3 scripts/dicttech/tests/test_ui_source.py
           sudo python3 scripts/dicttech/tests/test_ap_packages.py
           sudo python3 scripts/dicttech/tests/test_source_permissions.py
           sudo python3 scripts/dicttech/check-xr-roaming-package.py
@@ -49,7 +50,7 @@ jobs:
         env:
           AP_LAYOUT: ${{ inputs.layout || 'legacy' }}
         run: bash scripts/dicttech/build-ap.sh --layout "$AP_LAYOUT" --jobs 2 2>&1 | tee "$RUNNER_TEMP/dicttech-build.log"
-      - name: Exercise bootstrap and history with the built ARM64 tools
+      - name: Exercise bootstrap, history and factory with the built ARM64 tools
         run: |
           rootfs=$(find build_dir/target-*/root-airoha -maxdepth 0 -type d -print -quit)
           test -n "$rootfs"
@@ -57,6 +58,10 @@ jobs:
             --c7-rootfs "$rootfs" | tee bin/targets/airoha/an7581/dicttech-bootstrap-c7-tests.json
           python3 scripts/dicttech/tests/wifihistory/test_history.py \
             --ucode "qemu-aarch64 -L $rootfs $rootfs/usr/bin/ucode -L $rootfs/usr/lib/ucode"
+          python3 scripts/dicttech/tests/factory/test_factory.py --rootfs "$rootfs"
+          python3 scripts/dicttech/check-ui-source.py \
+            --jsmin staging_dir/hostpkg/bin/jsmin \
+            --output bin/targets/airoha/an7581/dicttech-factory-source-tests.json
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -67,6 +72,10 @@ jobs:
           node scripts/dicttech/test-ap-ui.cjs --require-browser \
             --playwright-module "$RUNNER_TEMP/dicttech-ui/node_modules/playwright" \
             --output bin/targets/airoha/an7581/dicttech-ui-tests.json
+          PLAYWRIGHT_MODULE="$RUNNER_TEMP/dicttech-ui/node_modules/playwright" \
+          BROWSER_EXECUTABLE="$(node -e 'process.stdout.write(require(process.argv[1]).chromium.executablePath())' "$RUNNER_TEMP/dicttech-ui/node_modules/playwright")" \
+            node scripts/dicttech/tests/factory/frontend.cjs \
+            | tee bin/targets/airoha/an7581/dicttech-factory-ui-tests.json
       - name: Upload unsigned candidate for local acceptance
         uses: actions/upload-artifact@v7
         with:

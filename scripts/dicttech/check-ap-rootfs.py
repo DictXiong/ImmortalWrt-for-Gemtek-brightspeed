@@ -80,6 +80,13 @@ HISTORY_FILES = {
     'usr/share/rpcd/ucode/wifihistory.uc': 'root/usr/share/rpcd/ucode/wifihistory.uc',
     'usr/share/rpcd/acl.d/luci-app-wifihistory.json': 'root/usr/share/rpcd/acl.d/luci-app-wifihistory.json',
 }
+FACTORY_PATCH = 'patches/feeds/app_airoha/luci-app-airoha-factory/120-dicttech-readonly-split-dsd.patch'
+FACTORY_FILES = {
+    'usr/libexec/rpcd/luci.airoha_factory': ('factory-status', 'luci-app-airoha-factory/root/usr/libexec/rpcd/luci.airoha_factory'),
+    'www/luci-static/resources/view/airoha_factory/factory.js': ('factory-info-view', 'luci-app-airoha-factory/htdocs/luci-static/resources/view/airoha_factory/factory.js'),
+}
+FACTORY_TARGETS = {name: target for name, target in FACTORY_FILES.values()}
+FACTORY_TARGETS['factory-translation'] = 'luci-app-airoha-factory/po/zh_Hans/luci-app-airoha-factory.po'
 
 
 def patch_postimage(patch, target):
@@ -117,6 +124,70 @@ def history_sources(source_root):
             require(regular(current) and current.read_bytes() == expected[relative],
                     'prepared feed differs from reviewed history patch: ' + target)
     return expected
+
+
+def factory_policy(source_root):
+    manifest = json.loads((source_root / 'configs/dicttech-ui-manifest.json').read_text())
+    revision = manifest.get('feed_app_airoha_revision', '')
+    require(re.fullmatch(r'[0-9a-f]{40}', revision) is not None, 'factory feed revision missing or malformed')
+    config = (source_root / 'configs/dicttech-feeds.conf').read_text()
+    pins = re.findall(r'^src-git app_airoha \S+\^([0-9a-f]{40})$', config, re.M)
+    require(pins == [revision], 'factory UI manifest differs from locked app_airoha feed')
+    rows = manifest.get('patches', {})
+    for name, target in FACTORY_TARGETS.items():
+        row = rows.get(name, {})
+        require(row.get('patch') == FACTORY_PATCH and row.get('target') == target,
+                'factory UI manifest target differs from reviewed patch: ' + name)
+        for key in ('source_sha256', 'patched_sha256'):
+            require(re.fullmatch(r'[0-9a-f]{64}', row.get(key, '')) is not None, 'factory UI manifest hash missing: ' + name)
+    require(re.fullmatch(r'[0-9a-f]{64}', rows['factory-info-view'].get('minified_sha256', '')) is not None,
+            'factory official minified hash missing')
+    return manifest
+
+
+def factory_sources(source_root):
+    manifest = factory_policy(source_root)
+    expected = {}
+    postimages = {}
+    for name, target in FACTORY_TARGETS.items():
+        postimages[name] = patch_postimage(source_root / FACTORY_PATCH, target)
+        require(digest(postimages[name]) == manifest['patches'][name]['patched_sha256'],
+                'factory reviewed postimage differs from UI manifest: ' + name)
+        feed = source_root / 'feeds/app_airoha'
+        if feed.exists() or feed.is_symlink():
+            current = feed / target
+            require(regular(current) and current.read_bytes() == postimages[name],
+                    'prepared feed differs from reviewed factory patch: ' + target)
+    for relative, (name, _) in FACTORY_FILES.items():
+        expected[relative] = postimages[name]
+    return expected
+
+
+def check_factory(rootfs, source_root, expected):
+    manifest = factory_policy(source_root)
+    rows = []
+    for relative, data in expected.items():
+        target = rootfs / relative
+        safe_ancestors(rootfs, relative)
+        if relative.startswith('usr/libexec/'):
+            rows.append(compare_bytes(data, target, relative))
+            mode = 0o755
+        else:
+            require(regular(target), 'factory view missing or symlinked: ' + relative)
+            actual = digest(target.read_bytes())
+            official = manifest['patches']['factory-info-view']['minified_sha256']
+            # Both are complete byte identities. The normal AP build also
+            # recomputes the compact form with the locked LuCI host jsmin.
+            require(actual in {digest(data), official}, 'factory view differs from reviewed source or official minified bytes')
+            rows.append({'path': relative, 'sha256': actual,
+                         'format': 'official-jsmin' if actual == official else 'reviewed-source'})
+            mode = 0o644
+        require(target.stat().st_mode & 0o7777 == mode, 'factory asset has unexpected mode: ' + relative)
+        for parent in target.parents:
+            if parent == rootfs:
+                break
+            require(not parent.stat().st_mode & 0o022, 'factory asset parent is group/other writable: ' + relative)
+    return rows
 
 
 def roaming_map(source_root):
@@ -293,11 +364,13 @@ def check_rootfs(rootfs, source_root=REPO, manifest=None):
     cli = cli_map(source_root)
     mapping.update(cli)
     history = history_sources(source_root)
-    for relative in {**mapping, **GENERATOR_FILES, **history}:
+    factory = factory_sources(source_root)
+    for relative in {**mapping, **GENERATOR_FILES, **history, **factory}:
         safe_ancestors(rootfs, relative)
     rows = [compare(path, rootfs / relative, relative) for relative, path in sorted(mapping.items())]
     rows += check_generators(source_root, rootfs)
     rows += [compare_bytes(expected, rootfs / relative, relative) for relative, expected in sorted(history.items())]
+    rows += check_factory(rootfs, source_root, factory)
     check_cli_modes(rootfs, cli)
     result = {'schema_version': 1, 'passed': True, 'files_checked': rows,
               'clean_image': check_unprovisioned(rootfs, source_root), 'luci_rpc': check_luci_rpc(rootfs),
