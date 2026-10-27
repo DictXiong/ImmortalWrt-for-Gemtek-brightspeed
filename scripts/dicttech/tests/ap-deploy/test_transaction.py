@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Inert transaction tests: every path, command, clock and service is private."""
 from __future__ import annotations
+import errno
 import hashlib
 import importlib.util
 import io
@@ -41,6 +42,11 @@ class Transaction(unittest.TestCase):
         self.shell = shlex.split(os.environ.get('DICTTECH_TEST_ASH', '/bin/sh'))
         self.tmp = tempfile.TemporaryDirectory(prefix='dicttech-transaction-')
         self.base = Path(self.tmp.name)
+        # Detached watch/reload workers and their timeout/service descendants
+        # inherit this unique marker. Their ready files may disappear or be
+        # replaced before teardown, so a ready PID is not a process inventory.
+        self.env = {**os.environ, 'DICTTECH_TRANSACTION_FIXTURE': str(self.base)}
+        self.process_marker = ('DICTTECH_TRANSACTION_FIXTURE=' + str(self.base)).encode()
         self.root = self.base / 'root'; self.root.mkdir()
         self.state = self.root / 'root/.dicttech-ap-transaction'
         self.clock = self.base / 'uptime'; self.clock.write_text('100.00 0\n')
@@ -113,7 +119,8 @@ class Transaction(unittest.TestCase):
 
     def call(self, command, token=None, data=None, good=True):
         result = subprocess.run(self.shell + [str(self.script), command] + ([token] if token else []), input=data,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20,
+                                env=self.env, start_new_session=True)
         self.assertEqual(result.returncode == 0, good, (result.returncode, result.stderr.decode()))
         return json.loads(result.stdout) if good and result.stdout else result
 
@@ -128,13 +135,89 @@ class Transaction(unittest.TestCase):
         self.token = manifest['token']
         return manifest
 
+    @staticmethod
+    def process_state(pid):
+        try:
+            fields = Path(f'/proc/{pid}/stat').read_text().rsplit(') ', 1)[1].split()
+            return fields[0], int(fields[19])  # state and Linux starttime ticks
+        except (OSError, ValueError, IndexError):
+            return None
+
+    def owns_process(self, pid, ticks):
+        before = self.process_state(pid)
+        if before is None or before[0] == 'Z' or before[1] != ticks:
+            return False
+        try:
+            owned = self.process_marker in Path(f'/proc/{pid}/environ').read_bytes().split(b'\0')
+        except (FileNotFoundError, ProcessLookupError, PermissionError):
+            return False
+        after = self.process_state(pid)
+        return owned and after is not None and after[0] != 'Z' and after[1] == ticks
+
+    def fixture_processes(self):
+        result = set()
+        for path in Path('/proc').iterdir():
+            if not path.name.isdecimal():
+                continue
+            pid = int(path.name)
+            info = self.process_state(pid)
+            if info is not None and self.owns_process(pid, info[1]):
+                result.add((pid, info[1]))
+        return result
+
+    def signal_fixture_process(self, pid, ticks, sig):
+        descriptor = None
+        try:
+            # A pidfd pins the selected process across the final ownership
+            # check and signal. Older local Python/kernel combinations retain
+            # the PID/starttime+marker check as a fallback.
+            if hasattr(os, 'pidfd_open') and hasattr(signal, 'pidfd_send_signal'):
+                try:
+                    descriptor = os.pidfd_open(pid)
+                except OSError as error:
+                    if error.errno != errno.ENOSYS:
+                        raise
+            if not self.owns_process(pid, ticks):
+                return
+            if descriptor is not None:
+                signal.pidfd_send_signal(descriptor, sig)
+            else:
+                os.kill(pid, sig)
+        except ProcessLookupError:
+            pass
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+
+    def stop_fixture_processes(self):
+        # Stop all writers, including delayed reload launches and grandchildren.
+        # Rescan because a worker may fork while handling TERM. Zombies cannot
+        # write files; PID 1 owns reaping the fixture's detached descendants.
+        for sig, seconds in ((signal.SIGTERM, 2), (signal.SIGKILL, 3)):
+            signaled = set()
+            deadline = time.monotonic() + seconds
+            empty = 0
+            while True:
+                remaining = self.fixture_processes()
+                if not remaining:
+                    # A /proc directory snapshot can miss a just-forked child
+                    # whose parent exited during iteration. Require a second
+                    # empty scan before removing this fixture's directory.
+                    empty += 1
+                    if empty == 2:
+                        return
+                else:
+                    empty = 0
+                for process in remaining - signaled:
+                    self.signal_fixture_process(*process, sig)
+                signaled.update(remaining)
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(.04)
+        self.assertFalse(self.fixture_processes(), 'owned fixture workers did not exit')
+
     def tearDown(self):
-        ready = self.state / 'watch.ready'
-        if ready.exists():
-            try:
-                os.kill(int(ready.read_text().split()[0]), signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+        self.stop_fixture_processes()
         self.tmp.cleanup()
 
     def assertOriginal(self, services=True):
