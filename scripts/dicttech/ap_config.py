@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Strict, local-only DictTech AP v1 configuration resolution and rendering.
+"""Strict, local-only DictTech AP v2 configuration resolution and rendering.
 
 JSON is the interchange format: temporary files and future Nix+sops producers
 use exactly the same document. This module does not log secrets or contact APs.
@@ -20,16 +20,18 @@ import sys
 import tempfile
 from typing import Any
 
-PROFILE = "dicttech-ap-v1"
-SCHEMA_VERSION = 1
+PROFILE = "dicttech-ap-v2"
+SCHEMA_VERSION = 2
 MAX_JSON_BYTES = 512 * 1024
-ROLES = ("main", "legacy", "guest", "iot")
-ROAM_ROLES = {"main": "main", "legacy": "battalion", "guest": "guest", "iot": "iot"}
-SECTIONS = {"main": "dicttech_mlo", "legacy": "default_radio1", "guest": "guest_mlo", "iot": "wifinet1"}
-IFACES = {"main": "ap-mld1", "legacy": "ap-mld0", "guest": "ap-mld2", "iot": "phy0.0-ap1"}
+ROLES = ("main", "guest", "iot")
+ROAM_ROLES = {role: role for role in ROLES}
+SECTIONS = {role: "ssid_" + role for role in ROLES}
+IFACES = {"main": "ap-mld0", "guest": "ap-mld1", "iot": "ap-iot"}
+BANDS = ("2g", "5g", "6g")
 REPO = Path(__file__).resolve().parents[2]
 DEFAULTS = REPO / "package/dicttech/ap-profile/files/usr/share/dicttech-ap/defaults.json"
 TOKEN = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,47}$")
+EXTRA_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,31}$")
 HOSTNAME = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
 MAC = re.compile(r"^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$")
 HASH = re.compile(r"^\$(5|6)\$(?:rounds=([0-9]{4,9})\$)?([./A-Za-z0-9]{1,16})\$([./A-Za-z0-9]+)$")
@@ -124,7 +126,7 @@ def deep_merge(default: dict, override: dict) -> dict:
 
 
 def validate_delta(delta: Any, path: str = "common") -> None:
-    obj(delta, path, {"country", "ssh_port", "timezone", "zonename", "ntp_servers", "radios", "ssids", "roaming"})
+    obj(delta, path, {"country", "ssh_port", "timezone", "zonename", "ntp_servers", "radios", "ssids", "extra_ssids", "roaming"})
     if "country" in delta:
         if delta["country"] not in ("US", "CN"):
             fail(path + ".country", "supported profile country codes are US and CN")
@@ -178,9 +180,91 @@ def validate_delta(delta: Any, path: str = "common") -> None:
             integer(values["interval"], path + ".roaming.interval", 30, 300)
         if "ttl" in values:
             integer(values["ttl"], path + ".roaming.ttl", 180, 1800)
+    if "extra_ssids" in delta:
+        extras = delta["extra_ssids"]
+        if not isinstance(extras, list) or len(extras) > 14:
+            fail(path + ".extra_ssids", "must be an ordered array of at most 14 custom SSIDs")
+        ids = set()
+        for index, values in enumerate(extras):
+            where = path + ".extra_ssids[" + str(index) + "]"
+            obj(values, where, {"id", "name", "bands", "mlo", "encryption", "network", "hidden", "password_ref", "roaming"}, {"id", "name"})
+            ident = values["id"]
+            if not isinstance(ident, str) or not EXTRA_ID.fullmatch(ident) or ident in ROLES:
+                fail(where + ".id", "must be a non-reserved UCI-safe ID of 1–32 characters")
+            if ident in ids:
+                fail(path + ".extra_ssids", "duplicate custom SSID ID")
+            ids.add(ident)
+            text(values["name"], where + ".name", 1, 32)
+            if "bands" in values:
+                bands = values["bands"]
+                if not isinstance(bands, list) or not 1 <= len(bands) <= 3 or any(not isinstance(b, str) or b not in BANDS for b in bands) or len(set(bands)) != len(bands):
+                    fail(where + ".bands", "must contain distinct supported bands")
+            for field in ("mlo", "hidden", "roaming"):
+                if field in values:
+                    boolean(values[field], where + "." + field)
+            if "encryption" in values and values["encryption"] not in ("sae", "sae-mixed", "psk2"):
+                fail(where + ".encryption", "unsupported security policy")
+            if "network" in values and values["network"] not in ("lan", "guest"):
+                fail(where + ".network", "must select the trusted or guest network")
+            if "password_ref" in values and (not isinstance(values["password_ref"], str) or not TOKEN.fullmatch(values["password_ref"])):
+                fail(where + ".password_ref", "must name a Wi-Fi secret")
 
 
-def _identity(device: dict, path: str) -> dict:
+def _ssid_specs(common: dict, defaults: dict, path: str) -> list[dict]:
+    """Resolve public per-ESS policy before assigning MAC identities."""
+    def preset(role, bands):
+        security = defaults["security"][role]
+        return {"key": role, "section": SECTIONS[role], "iface": IFACES[role],
+                "name": common["ssids"][role]["name"], "bands": bands,
+                "mlo": role != "iot", "network": "guest" if role == "guest" else "lan",
+                "encryption": security["encryption"], "pmf": security["pmf"],
+                "hidden": common["ssids"][role].get("hidden", False),
+                "roaming": common["roaming"]["enabled"], "password_ref": role}
+    main = preset("main", list(BANDS if common["ssids"]["main"]["six_ghz"] else BANDS[:2]))
+    guest = preset("guest", list(BANDS[:2]))
+    profiles, extras, next_mld = [main, guest], [], 2
+    for entry in common.get("extra_ssids", []):
+        value = deep_merge(defaults["extra_defaults"], entry)
+        bands = [band for band in BANDS if band in value["bands"]]
+        value["bands"] = bands
+        value["mlo"] = entry.get("mlo", len(bands) > 1)
+        where = path + ".extra_ssids"
+        if (value["mlo"] and len(bands) < 2) or (not value["mlo"] and len(bands) != 1):
+            fail(where, "MLO requires multiple bands; single-link SSIDs require one band")
+        if (value["mlo"] or "6g" in bands) and value["encryption"] != "sae":
+            fail(where, "MLO and 6GHz require WPA3 SAE with required PMF")
+        extras.append(copy.deepcopy(value))
+        key = value["id"]
+        iface = "ap-mld" + str(next_mld) if value["mlo"] else "ap-x" + hashlib.sha256(value["id"].encode()).hexdigest()[:8]
+        next_mld += int(value["mlo"])
+        profiles.append({"key": key, "section": "ssid_extra_" + key, "iface": iface,
+                         "name": value["name"], "bands": bands, "mlo": value["mlo"],
+                         "network": value["network"], "encryption": value["encryption"],
+                         "pmf": 2 if value["encryption"] == "sae" else 1,
+                         "hidden": value["hidden"], "roaming": common["roaming"]["enabled"] and value["roaming"],
+                         "password_ref": value["password_ref"]})
+    common["extra_ssids"] = extras
+    profiles.append(preset("iot", ["2g"]))
+    if len({profile["name"] for profile in profiles}) != len(profiles):
+        fail(path, "all SSIDs on an AP must have distinct names")
+    if len({profile["iface"] for profile in profiles}) != len(profiles):
+        fail(path, "derived interface names collide; choose another custom ID")
+    if common["country"] == "CN" and any("6g" in profile["bands"] for profile in profiles):
+        fail(path, "CN profile does not permit any 6GHz SSID")
+    if len(extras) > defaults["platform"].get("max_extra_ssids", 14):
+        fail(path, "custom SSID count exceeds the profile limit")
+    if sum(profile["mlo"] for profile in profiles) > defaults["platform"].get("max_mlds", 16):
+        fail(path, "MLD count exceeds the hardware limit")
+    for band in BANDS:
+        if sum(band in profile["bands"] for profile in profiles) > defaults["platform"].get("max_ap_per_radio", 16):
+            fail(path, "AP count exceeds a radio's hardware limit")
+    for profile in profiles:
+        profile["radios"] = ["radio" + str(BANDS.index(b)) for b in profile["bands"]]
+        profile["link_ids"] = [BANDS.index(b) for b in profile["bands"]]
+    return profiles
+
+
+def _identity(device: dict, path: str, profiles: list[dict]) -> dict:
     base = mac(device["mac_base"], path + ".mac_base")
     number = int(base.replace(":", ""), 16)
     def derived(offset):
@@ -190,38 +274,74 @@ def _identity(device: dict, path: str) -> dict:
         data = bytearray(n.to_bytes(6, "big"))
         data[0] = (data[0] | 2) & 254
         return ":".join(f"{v:02x}" for v in data)
+    def custom(key, band):
+        # Stable across inventory/list ordering and other custom SSID changes.
+        data = bytearray(hashlib.sha256(("dicttech-ap-v2\0" + base + "\0" + key + "\0" + band).encode()).digest()[:6])
+        data[0] = (data[0] | 2) & 254
+        return ":".join(f"{v:02x}" for v in data)
     result = {"bridge": base,
               "ethernet": {"wan": derived(1), "lan2": base, "lan3": base, "lan4": base, "cpu": derived(4)},
               "radios": {"radio0": derived(0x10), "radio1": derived(0x20), "radio2": derived(0x30)},
-              "mlds": {"legacy": derived(0x40), "main": derived(0x50), "guest": derived(0x60)},
-              "bssids": {"legacy": [derived(0x41), derived(0x42)], "main": [derived(0x50), derived(0x52), derived(0x53)],
+              "mlds": {"main": derived(0x50), "guest": derived(0x60)},
+              "bssids": {"main": [derived(0x50), derived(0x52), derived(0x53)],
                           "guest": [derived(0x60), derived(0x62)], "iot": [derived(0x70)]},
               "duid": "00030001" + base.replace(":", "")}
+    counts = {"main": 3, "guest": 2, "iot": 1}
     override = obj(device.get("identity", {}), path + ".identity", set(result))
-    for key in ("ethernet", "radios", "mlds", "bssids"):
-        if key in override:
-            obj(override[key], path + ".identity." + key, set(result[key]))
-    result = deep_merge(result, override)
-    for key in ("bridge",):
-        result[key] = mac(result[key], path + ".identity." + key)
+    custom_ids = {profile["key"] for profile in profiles if profile["key"] not in ROLES}
+    for group in ("mlds", "bssids"):
+        values = override.get(group, {})
+        if not isinstance(values, dict):
+            fail(path + ".identity." + group, "must be an object")
+        for key in values:
+            if key in result[group]:
+                continue
+            if not isinstance(key, str) or not EXTRA_ID.fullmatch(key) or key in ROLES:
+                fail(path + ".identity." + group, "invalid custom identity ID")
+            custom_ids.add(key)
+    if len(custom_ids) > 64:
+        fail(path + ".identity", "at most 64 custom identity slots may be reserved")
+    for key in sorted(custom_ids):
+        # Keep all bands and the MLD identity even while a custom SSID is absent
+        # or single-link. Its private inventory need not track active topology.
+        result["bssids"][key] = [custom(key, band) for band in BANDS]
+        result["mlds"][key] = custom(key, "mld")
+        counts[key] = 3
+    normalized_override = copy.deepcopy(override)
+    for group in ("ethernet", "radios"):
+        if group in normalized_override:
+            obj(normalized_override[group], path + ".identity." + group, set(result[group]))
+    for key, values in normalized_override.get("bssids", {}).items():
+        if key in ROLES or not isinstance(values, dict):
+            continue
+        obj(values, path + ".identity.bssids." + key, set(BANDS))
+        if not values:
+            fail(path + ".identity.bssids." + key, "a band map must contain at least one band")
+        slots = result["bssids"][key][:]
+        for band, address in values.items():
+            slots[BANDS.index(band)] = address
+        normalized_override["bssids"][key] = slots
+    result = deep_merge(result, normalized_override)
+    result["bridge"] = mac(result["bridge"], path + ".identity.bridge")
     for group in ("ethernet", "radios", "mlds"):
         result[group] = {key: mac(value, path + ".identity." + group + "." + key) for key, value in result[group].items()}
     all_bssids = []
-    for role, count in (("main", 3), ("legacy", 2), ("guest", 2), ("iot", 1)):
-        values = result["bssids"][role]
+    for key, count in counts.items():
+        values = result["bssids"][key]
         if not isinstance(values, list) or len(values) != count:
-            fail(path + ".identity.bssids." + role, f"must contain exactly {count} MAC address(es)")
-        result["bssids"][role] = [mac(value, path + ".identity.bssids." + role) for value in values]
-        all_bssids.extend(result["bssids"][role])
+            fail(path + ".identity.bssids." + key, f"must contain exactly {count} MAC address(es)")
+        result["bssids"][key] = [mac(value, path + ".identity.bssids." + key) for value in values]
+        all_bssids.extend(result["bssids"][key])
     if len(set(all_bssids)) != len(all_bssids):
         fail(path + ".identity.bssids", "different BSSes must have different addresses")
     if result["bridge"] in all_bssids:
         fail(path + ".identity", "bridge address collides with a BSS")
     if len(set(result["mlds"].values())) != len(result["mlds"]) or result["bridge"] in result["mlds"].values():
         fail(path + ".identity.mlds", "MLD addresses must be distinct and separate from the bridge")
-    for role, address in result["mlds"].items():
-        if address in all_bssids and address != result["bssids"][role][0]:
-            fail(path + ".identity.mlds", "an MLD may share only its own first-link BSSID")
+    for key, address in result["mlds"].items():
+        aliases = result["bssids"][key] if key not in ROLES else result["bssids"][key][:1]
+        if address in all_bssids and address not in aliases:
+            fail(path + ".identity.mlds", "an MLD may share only its own reserved BSSID")
     duid = result["duid"]
     if not isinstance(duid, str) or not re.fullmatch(r"[0-9a-fA-F]{8,128}", duid) or len(duid) % 2:
         fail(path + ".identity.duid", "must be an even-length hexadecimal DHCP DUID")
@@ -278,19 +398,23 @@ def _validate(document: Any) -> None:
     validate_delta(document.get("common", {}))
     devices = document["devices"]
     if not isinstance(devices, dict) or not 1 <= len(devices) <= 16:
-        fail("devices", "a v1 fleet must contain between 1 and 16 devices")
+        fail("devices", "a fleet must contain between 1 and 16 devices")
     secrets = obj(document["secrets"], "secrets", {"wifi", "devices"}, {"wifi", "devices"})
-    wifi = obj(secrets["wifi"], "secrets.wifi", set(ROLES), set(ROLES))
+    if not isinstance(secrets["wifi"], dict):
+        fail("secrets.wifi", "must be an object")
+    wifi = obj(secrets["wifi"], "secrets.wifi", set(secrets["wifi"]), set(ROLES))
     for role, password in wifi.items():
+        if not isinstance(role, str) or not TOKEN.fullmatch(role):
+            fail("secrets.wifi", "secret names must be UCI-safe tokens")
         text(password, "secrets.wifi." + role, 8, 63)
     credentials = obj(secrets["devices"], "secrets.devices", set(devices), set(devices))
     for node, device in devices.items():
         if not isinstance(node, str) or not TOKEN.fullmatch(node):
             fail("devices", "device IDs must be UCI-safe tokens, start with a letter, and contain only letters, digits or underscore")
-        if node in {"main", "battalion", "guest", "iot"}:
+        if node in ROLES:
             fail("devices", "device ID collides with a reserved roaming section name")
         path = "devices." + node
-        obj(device, path, {"hostname", "maintenance_ipv4", "mac_base", "identity", "legacy_ssid", "overrides"}, {"hostname", "maintenance_ipv4", "mac_base"})
+        obj(device, path, {"hostname", "maintenance_ipv4", "mac_base", "identity", "overrides"}, {"hostname", "maintenance_ipv4", "mac_base"})
         if not isinstance(device["hostname"], str) or not HOSTNAME.fullmatch(device["hostname"]):
             fail(path + ".hostname", "invalid hostname")
         try:
@@ -299,10 +423,7 @@ def _validate(document: Any) -> None:
             fail(path + ".maintenance_ipv4", "must be a plain IPv4 address")
         if address not in ipaddress.IPv4Network("192.168.250.0/24") or not 1 <= int(str(address).rsplit(".", 1)[1]) <= 99:
             fail(path + ".maintenance_ipv4", "must be a registered address from 192.168.250.1 through .99")
-        if "legacy_ssid" in device:
-            text(device["legacy_ssid"], path + ".legacy_ssid", 1, 32)
         validate_delta(device.get("overrides", {}), path + ".overrides")
-        _identity(device, path)
         secret = obj(credentials[node], "secrets.devices." + node, {"root_password_hash", "authorized_keys"}, {"root_password_hash"})
         _password_hash(secret["root_password_hash"], "secrets.devices." + node + ".root_password_hash")
         if "authorized_keys" in secret:
@@ -327,26 +448,23 @@ def _defaults(path: str | Path | None) -> tuple[dict, str]:
 def _resolved_nodes(document: dict, defaults: dict) -> dict:
     nodes = {}
     seen_hostnames, seen_addresses, seen_macs, seen_duids = {}, {}, {}, {}
-    for node, device in document["devices"].items():
+    for node, device in sorted(document["devices"].items()):
         common = deep_merge(defaults["common"], document.get("common", {}))
         common = deep_merge(common, device.get("overrides", {}))
-        if "legacy_ssid" in device:
-            common["ssids"]["legacy"]["name"] = device["legacy_ssid"]
-        names = [common["ssids"][role]["name"] for role in ROLES]
-        if len(set(names)) != len(names):
-            fail("devices." + node, "the four SSIDs must have distinct names")
-        if common["country"] == "CN" and common["ssids"]["main"]["six_ghz"]:
-            fail("devices." + node, "CN profile requires main.six_ghz=false")
+        profiles = _ssid_specs(common, defaults, "devices." + node)
         if common["roaming"]["ttl"] < 3 * common["roaming"]["interval"]:
             fail("devices." + node + ".roaming", "TTL must cover at least three check intervals")
         if common["radios"]["radio0"]["force_40"] and common["radios"]["radio0"]["htmode"] != "EHT40":
             fail("devices." + node + ".radios.radio0", "force_40 requires EHT40")
+        for profile in profiles:
+            if profile["password_ref"] not in document["secrets"]["wifi"]:
+                fail("devices." + node, "an SSID references a missing Wi-Fi secret")
         for key, table in (("hostname", seen_hostnames), ("maintenance_ipv4", seen_addresses)):
             value = device[key].lower() if key == "hostname" else device[key]
             if value in table:
                 fail("devices", "duplicate " + key)
             table[value] = node
-        identity = _identity(device, "devices." + node)
+        identity = _identity(device, "devices." + node, profiles)
         if identity["duid"] in seen_duids:
             fail("devices", "DHCP DUID is shared by different devices")
         seen_duids[identity["duid"]] = node
@@ -357,22 +475,36 @@ def _resolved_nodes(document: dict, defaults: dict) -> dict:
             if address in seen_macs:
                 fail("devices", "MAC identity is shared by different devices")
             seen_macs[address] = node
+        for profile in profiles:
+            key = profile["key"]
+            # Inventory slots are canonical 2g/5g/6g; active MLO link IDs use
+            # those same physical-radio indexes, even for a 5+6GHz profile.
+            profile["bssids"] = [identity["bssids"][key][index] for index in profile["link_ids"]]
+            if profile["mlo"]:
+                profile["mld_mac"] = identity["mlds"][key]
         normalized = copy.deepcopy(device)
         normalized["mac_base"] = mac(device["mac_base"], "devices." + node + ".mac_base")
         normalized["identity"] = identity
-        normalized["legacy_ssid"] = common["ssids"]["legacy"]["name"]
         normalized.pop("overrides", None)
-        nodes[node] = {"device": normalized, "common": common}
-    # Same names must describe the same ESS, including security and credentials.
+        nodes[node] = {"device": normalized, "common": common, "ssids": profiles}
+    reserved = {profile["key"] for value in nodes.values() for profile in value["ssids"]}
+    if set(document["devices"]) & reserved:
+        fail("devices", "a device ID collides with a roaming profile ID")
+    # Same names must describe the same ESS and profile, including VLAN/security.
     ess = {}
-    for node, resolved in nodes.items():
-        for role in ROLES:
-            name = resolved["common"]["ssids"][role]["name"]
-            signature = (role, defaults["security"][role]["encryption"], defaults["security"][role]["pmf"], document["secrets"]["wifi"][role])
+    for resolved in nodes.values():
+        for profile in resolved["ssids"]:
+            name = profile["name"]
+            signature = (profile["key"], profile["network"], profile["encryption"], profile["pmf"], document["secrets"]["wifi"][profile["password_ref"]])
             if name in ess and ess[name] != signature:
-                fail("devices", "a shared SSID has inconsistent security or password")
+                fail("devices", "a shared SSID has inconsistent profile, network, security or password")
             ess[name] = signature
     return nodes
+
+
+def ssid_profiles(state: dict) -> list[dict]:
+    """The resolved ordered SSID contract shared by rendering and acceptance."""
+    return state["ssids"]
 
 
 def resolve(document: dict, device_id: str, defaults_path: str | Path | None = None) -> dict:
@@ -383,19 +515,23 @@ def resolve(document: dict, device_id: str, defaults_path: str | Path | None = N
         fail("device", "unknown device ID")
     current = nodes[device_id]
     peers = {}
-    for role in ROLES:
-        peers[ROAM_ROLES[role]] = []
+    for profile in current["ssids"]:
+        key = profile["key"]
+        peers[key] = []
+        if not profile["roaming"]:
+            continue
         for node, resolved in nodes.items():
-            if node == device_id or resolved["common"]["ssids"][role]["name"] != current["common"]["ssids"][role]["name"]:
+            if node == device_id:
                 continue
-            values = resolved["device"]["identity"]["bssids"][role]
-            if role == "main" and not resolved["common"]["ssids"]["main"]["six_ghz"]:
-                values = values[:2]
-            peers[ROAM_ROLES[role]].append({"id": node, "address": resolved["device"]["maintenance_ipv4"],
-                                         "bridge_mac": resolved["device"]["identity"]["bridge"], "bssids": values})
+            other = next((value for value in resolved["ssids"] if value["key"] == key), None)
+            if other is None or other["name"] != profile["name"] or not other["roaming"]:
+                continue
+            peers[key].append({"id": node, "address": resolved["device"]["maintenance_ipv4"],
+                               "bridge_mac": resolved["device"]["identity"]["bridge"], "bssids": other["bssids"]})
     return {"schema_version": SCHEMA_VERSION, "profile": PROFILE, "defaults_sha256": digest,
-            "device_id": device_id, "device": current["device"], "common": current["common"],
-            "platform": copy.deepcopy(defaults["platform"]), "security": copy.deepcopy(defaults["security"]),
+            "device_id": device_id, "device": current["device"], "common": current["common"], "ssids": current["ssids"],
+            "platform": copy.deepcopy(defaults["platform"]),
+            "security": {value["key"]: {key: value[key] for key in ("encryption", "pmf")} for value in current["ssids"]},
             "services": copy.deepcopy(defaults["services"]), "peers": peers,
             "credentials": {"wifi": copy.deepcopy(document["secrets"]["wifi"]), **copy.deepcopy(document["secrets"]["devices"][device_id])}}
 
@@ -443,34 +579,32 @@ def render(resolved: dict, defaults_path: str | Path | None = None) -> dict[str,
         name = "radio" + str(index)
         options = {"type": "mac80211", "path": platform["radio_path"], "radio": str(index), "band": band,
                    "channel": str(common["radios"][name]["channel"]), "htmode": common["radios"][name]["htmode"],
-                   "country": common["country"], "disabled": "0" if index != 2 or common["ssids"]["main"]["six_ghz"] else "1",
+                   "country": common["country"], "disabled": "0" if any(band in profile["bands"] for profile in ssid_profiles(resolved)) else "1",
                    "macaddr_base": identity["radios"][name]}
         lists = {"channels": [str(value) for value in range(36, 65, 4)]} if index == 1 else {}
         if index == 0:
             options["noscan"] = "1" if common["radios"][name]["force_40"] else "0"
         radios[name] = section("wifi-device", name, options, lists)
     wireless = radios["radio0"] + radios["radio1"] + radios["radio2"]
-    for role in ("legacy", "iot", "main", "guest"):
-        security = resolved["security"][role]
-        devices = ["radio0"] if role == "iot" else ["radio0", "radio1"]
-        if role == "main" and common["ssids"]["main"]["six_ghz"]:
-            devices.append("radio2")
-        options = {"mode": "ap", "ssid": common["ssids"][role]["name"], "encryption": security["encryption"],
-                   "key": resolved["credentials"]["wifi"][role], "disabled": "0", "ieee80211w": str(security["pmf"]),
-                   "wmm": "1", "ieee80211k": "1", "rrm_neighbor_report": "1", "rrm_beacon_report": "1",
-                   "bss_transition": "1", "ieee80211r": "0"}
-        lists = {"network": ["guest" if role == "guest" else "lan"]}
-        if role == "iot":
-            options.update(device="radio0", hidden="1" if common["ssids"][role]["hidden"] else "0", macaddr=identity["bssids"][role][0])
+    for profile in ssid_profiles(resolved):
+        enabled = "1" if profile["roaming"] else "0"
+        options = {"mode": "ap", "ifname": profile["iface"], "ssid": profile["name"], "encryption": profile["encryption"],
+                   "key": resolved["credentials"]["wifi"][profile["password_ref"]], "disabled": "0", "ieee80211w": str(profile["pmf"]),
+                   "hidden": "1" if profile["hidden"] else "0", "wmm": "1", "ieee80211k": enabled,
+                   "rrm_neighbor_report": enabled, "rrm_beacon_report": enabled,
+                   "bss_transition": enabled, "ieee80211r": "0"}
+        lists = {"network": [profile["network"]]}
+        if profile["mlo"]:
+            options.update(mlo="1", macaddr=profile["mld_mac"])
+            lists["device"] = profile["radios"]
+            lists["radio_macaddr"] = profile["bssids"]
         else:
-            options.update(mlo="1", macaddr=identity["mlds"][role])
-            lists["device"] = devices
-            lists["radio_macaddr"] = identity["bssids"][role][:len(devices)]
-        if role == "guest":
+            options.update(device=profile["radios"][0], macaddr=profile["bssids"][0])
+        if profile["network"] == "guest":
             options["isolate"] = "0"
-        if role == "main":
+        if "6g" in profile["bands"]:
             options["rnr"] = "1"
-        wireless += section("wifi-iface", SECTIONS[role], options, lists)
+        wireless += section("wifi-iface", profile["section"], options, lists)
     put("etc/config/wireless", wireless)
     firewall = section("defaults", "defaults", {"syn_flood": "1", "input": "REJECT", "output": "ACCEPT", "forward": "REJECT", "flow_offloading": "1", "flow_offloading_hw": "1", "fullcone": "0", "fullcone6": "0"})
     firewall += section("zone", "lan", {"name": "lan", "input": "ACCEPT", "output": "ACCEPT", "forward": "ACCEPT"}, {"network": ["lan", "lan6", "ap_maintenance"]})
@@ -496,9 +630,13 @@ def render(resolved: dict, defaults_path: str | Path | None = None) -> dict[str,
     put("etc/config/cpufreq", section("settings", "cpufreq", {"governor0": "ondemand", "minfreq0": "500000", "maxfreq0": "1200000"}) + section("settings", "global", {"set": "1"}))
     put("etc/config/airoha_npu", section("cpu", None, {"governor": "ondemand", "max_freq": "1200000"}))
     roaming = ""
-    for role in ROLES:
-        profile = ROAM_ROLES[role]
-        roaming += section("roaming", profile, {"enabled": "1" if common["roaming"]["enabled"] else "0", "peer_mode": "fleet", "section": SECTIONS[role], "iface": IFACES[role], "interval": str(common["roaming"]["interval"]), "ttl": str(common["roaming"]["ttl"])}, {"peers": [value["id"] for value in resolved["peers"][profile]]})
+    for profile in ssid_profiles(resolved):
+        key = profile["key"]
+        roaming += section("roaming", key, {"enabled": "1" if profile["roaming"] else "0", "peer_mode": "fleet",
+                            "section": profile["section"], "iface": profile["iface"], "mlo": "1" if profile["mlo"] else "0",
+                            "max_links": str(len(profile["bands"])), "interval": str(common["roaming"]["interval"]),
+                            "ttl": str(common["roaming"]["ttl"])},
+                           {"peers": [value["id"] for value in resolved["peers"][key]]})
     all_peers = {}
     for profile, values in resolved["peers"].items():
         for peer in values:

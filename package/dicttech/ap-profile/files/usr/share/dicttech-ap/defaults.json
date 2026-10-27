@@ -1,44 +1,135 @@
 {
-  "schema_version": 1,
-  "profile": "dicttech-ap-v1",
+  "schema_version": 2,
+  "profile": "dicttech-ap-v2",
   "platform": {
-    "board_names": ["gemtek,xr1710g", "gemtek,xr1710g-ubi"],
-    "ports": ["wan", "lan2", "lan3", "lan4"],
+    "board_names": [
+      "gemtek,xr1710g",
+      "gemtek,xr1710g-ubi"
+    ],
+    "ports": [
+      "wan",
+      "lan2",
+      "lan3",
+      "lan4"
+    ],
     "bridge": "br-lan",
     "native_vlan": 1,
     "guest_vlan": 192,
     "maintenance_network": "192.168.250.0/24",
     "maintenance_first": 1,
     "maintenance_last": 99,
-    "radio_path": "soc/1fc00000.pcie/pci0000:00/0000:00:00.0/0000:01:00.0"
+    "radio_path": "soc/1fc00000.pcie/pci0000:00/0000:00:00.0/0000:01:00.0",
+    "max_extra_ssids": 14,
+    "max_ap_per_radio": 16,
+    "max_mlds": 16
   },
   "common": {
     "country": "US",
     "ssh_port": 12022,
     "timezone": "CST-8",
     "zonename": "Asia/Shanghai",
-    "ntp_servers": ["ntp.tencent.com", "ntp1.aliyun.com", "ntp.ntsc.ac.cn", "cn.ntp.org.cn"],
+    "ntp_servers": [
+      "ntp.tencent.com",
+      "ntp1.aliyun.com",
+      "ntp.ntsc.ac.cn",
+      "cn.ntp.org.cn"
+    ],
     "radios": {
-      "radio0": {"channel": 6, "htmode": "EHT40", "force_40": false},
-      "radio1": {"channel": 44, "htmode": "EHT160"},
-      "radio2": {"channel": 37, "htmode": "EHT320"}
+      "radio0": {
+        "channel": 6,
+        "htmode": "EHT40",
+        "force_40": false
+      },
+      "radio1": {
+        "channel": 44,
+        "htmode": "EHT160"
+      },
+      "radio2": {
+        "channel": 37,
+        "htmode": "EHT320"
+      }
     },
     "ssids": {
-      "main": {"name": "DictTech", "enabled": true, "six_ghz": true},
-      "legacy": {"name": "327Battalion", "enabled": true},
-      "guest": {"name": "DictTech-Guest", "enabled": true},
-      "iot": {"name": "DictTech-IoT", "enabled": true, "hidden": true}
+      "main": {
+        "name": "DictTech",
+        "six_ghz": true
+      },
+      "guest": {
+        "name": "DictTech-Guest"
+      },
+      "iot": {
+        "name": "DictTech-IoT",
+        "hidden": true
+      }
     },
-    "roaming": {"enabled": true, "interval": 30, "ttl": 180}
+    "roaming": {
+      "enabled": true,
+      "interval": 30,
+      "ttl": 180
+    },
+    "extra_ssids": []
   },
   "security": {
-    "main": {"encryption": "sae", "pmf": 2},
-    "legacy": {"encryption": "sae", "pmf": 2},
-    "guest": {"encryption": "sae", "pmf": 2},
-    "iot": {"encryption": "sae-mixed", "pmf": 1}
+    "main": {
+      "encryption": "sae",
+      "pmf": 2
+    },
+    "guest": {
+      "encryption": "sae",
+      "pmf": 2
+    },
+    "iot": {
+      "encryption": "sae-mixed",
+      "pmf": 1
+    }
   },
   "services": {
-    "enabled": ["network", "sysntpd", "firewall", "dropbear", "uhttpd", "xr_roaming"],
-    "disabled": ["dnsmasq", "odhcpd", "dawn", "usteer", "ttyd", "watchcat", "umdns", "npu-jitter", "wifihistory", "zerotier", "miniupnpd", "ddns", "microsocks", "adguardhome", "AdGuardHome", "openclash", "passwall", "passwall2", "shadowsocksr", "lucky", "autoreboot", "nlbwmon", "bandix", "pushbot", "radius", "3proxy"]
+    "enabled": [
+      "network",
+      "sysntpd",
+      "firewall",
+      "dropbear",
+      "uhttpd",
+      "xr_roaming"
+    ],
+    "disabled": [
+      "dnsmasq",
+      "odhcpd",
+      "dawn",
+      "usteer",
+      "ttyd",
+      "watchcat",
+      "umdns",
+      "npu-jitter",
+      "wifihistory",
+      "zerotier",
+      "miniupnpd",
+      "ddns",
+      "microsocks",
+      "adguardhome",
+      "AdGuardHome",
+      "openclash",
+      "passwall",
+      "passwall2",
+      "shadowsocksr",
+      "lucky",
+      "autoreboot",
+      "nlbwmon",
+      "bandix",
+      "pushbot",
+      "radius",
+      "3proxy"
+    ]
+  },
+  "extra_defaults": {
+    "bands": [
+      "2g",
+      "5g"
+    ],
+    "encryption": "sae",
+    "network": "lan",
+    "hidden": false,
+    "password_ref": "main",
+    "roaming": true
   }
 }

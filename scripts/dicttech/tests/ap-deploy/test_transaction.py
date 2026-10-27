@@ -96,7 +96,7 @@ class Transaction(unittest.TestCase):
         self.script.write_text(text); self.script.chmod(0o700)
         self.put('tmp/sysinfo/board_name', b'gemtek,xr1710g\n')
         self.put('sys/class/net/br-lan/address', b'02:00:00:00:01:00\n')
-        self.put('usr/share/dicttech-ap/defaults.json', b'{"profile":"dicttech-ap-v1","schema_version":1,"platform":{"board_names":["gemtek,xr1710g"]}}\n')
+        self.put('usr/share/dicttech-ap/defaults.json', b'{"profile":"dicttech-ap-v2","schema_version":2,"platform":{"board_names":["gemtek,xr1710g"]}}\n')
         self.put('etc/config/network', b'original network\n', 0o644)
         self.put('etc/shadow', b'root:oldhash:20000:0:99999:7:::\nservice:locked:20000:0:99999:7:::\n')
         self.put('etc/dropbear/dropbear_ed25519_host_key', b'fixture-host-key\n')
@@ -105,7 +105,7 @@ class Transaction(unittest.TestCase):
             'etc/config/network': b'candidate network\n',
             'etc/config/wireless': b'candidate wireless with confidential fixture key\n',
             'etc/dicttech-ap/root-password-hash': b'$6$fixture$newhash\n',
-            'etc/dicttech-ap/device.json': b'{"profile":"dicttech-ap-v1","schema_version":1,"device_id":"fixture_ap"}\n',
+            'etc/dicttech-ap/device.json': b'{"profile":"dicttech-ap-v2","schema_version":2,"device_id":"fixture_ap"}\n',
         }
 
     def put(self, path, value, mode=0o600):

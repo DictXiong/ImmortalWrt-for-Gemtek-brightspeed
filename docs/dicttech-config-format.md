@@ -1,7 +1,7 @@
-# DictTech AP configuration v1
+# DictTech AP configuration v2
 
-The interchange format is UTF-8 JSON with `schema_version: 1` and
-`profile: "dicttech-ap-v1"`. The local merge command and a future Nix+sops
+The interchange format is UTF-8 JSON with `schema_version: 2` and
+`profile: "dicttech-ap-v2"`. The local merge command and a future Nix+sops
 producer must emit the same document. No Nix, Python, SOPS or decryption runtime
 is required on the AP: resolution and secret handling run on the deployment
 computer; the AP receives validated rendered configuration.
@@ -26,8 +26,8 @@ intentionally invalid until its root hash is replaced.
 
 ```json
 {
-  "schema_version": 1,
-  "profile": "dicttech-ap-v1",
+  "schema_version": 2,
+  "profile": "dicttech-ap-v2",
   "common": {}
 }
 ```
@@ -47,8 +47,9 @@ intentionally invalid until its root hash is replaced.
 ```
 
 Device IDs start with a letter and contain at most 48 letters, digits or
-underscores; `main`, `battalion`, `guest` and `iot` are reserved section names.
-A v1 fleet contains 1–16 APs, limiting each profile to at most 15 peers and
+underscores. They must not collide with any resolved SSID/profile ID in the
+fleet; `main`, `guest` and `iot` are always reserved. A fleet contains 1–16 APs,
+limiting each profile to at most 15 peers and
 keeping synchronization work bounded for the intended home deployment.
 Hostnames, maintenance addresses, DHCP DUIDs and emitted MAC
 identities must be unique across the inventory. Explicit allocation is needed;
@@ -60,7 +61,8 @@ hash. Its shape is:
 ```text
 secrets
   wifi
-    main / legacy / guest / iot: password strings
+    main / guest / iot: required password strings
+    <optional password_ref>: additional password strings
   devices
     <registered device ID>
       root_password_hash: supported SHA-512 or SHA-256 crypt hash
@@ -71,54 +73,124 @@ Wi-Fi passwords are 8–63 UTF-8 bytes. Control characters, duplicate JSON field
 unknown configuration fields and unsupported versions are rejected. Secrets
 must not be passed as shell arguments or printed by validation/plan commands.
 Absent `authorized_keys` preserves the device's current keys; an explicit `[]`
-requests an empty authorized-key file. Device SSH host keys are never copied or
-rendered. Updating root's password hash must preserve all other shadow rows.
+requests an empty authorized-key file. Device SSH host keys are not part of
+this document or model rendering. Updating root's password hash must preserve
+all other shadow rows.
 
 ## Supported differences
 
-`common` and optional per-device `overrides` accept this small curated surface:
+`common` and optional per-device `overrides` accept this curated surface:
 
-- `country`: `US` or `CN`; a CN profile requires `ssids.main.six_ghz: false`.
+- `country`: `US` or `CN`; a CN profile must have no 6 GHz SSID.
 - `ssh_port`, `timezone`, `zonename`, `ntp_servers`.
 - `radios.radio0`: `channel` (1–11), `htmode` (`EHT20` or `EHT40`), `force_40`.
 - `radios.radio1`: `channel` (36–64 in steps of four), `htmode` through `EHT160`.
 - `radios.radio2`: a valid 6 GHz primary `channel`, `htmode` through `EHT320`.
-- `ssids.main.name` and `ssids.main.six_ghz`; `ssids.legacy.name`;
-  `ssids.guest.name`; `ssids.iot.name` and `ssids.iot.hidden`.
+- `ssids.main.name` and `ssids.main.six_ghz`; `ssids.guest.name`;
+  `ssids.iot.name` and `ssids.iot.hidden`.
+- `extra_ssids`: an ordered array of zero or more ordinary custom SSIDs.
 - `roaming.enabled`, `roaming.interval` (30–300), `roaming.ttl` (180–1800), with
   TTL at least three check intervals.
 
-A device's `legacy_ssid` is a shorthand override for its legacy ESS name.
-Resolution order is firmware defaults, common differences, device overrides,
-then that shorthand. The four SSIDs remain enabled in v1 to retain the tested
-C7 MLD interface numbering. Disabling an arbitrary MLD or changing encryption,
-VLAN IDs, interface names, physical ports or raw UCI fields is outside this
-profile. Such changes need a reviewed profile/version change, not an unchecked
-configuration escape hatch. Radio width support does not guarantee that a
-particular client or regulatory state will use that width; actual operation
-belongs in the live acceptance report.
+Resolution order is firmware defaults, common differences, then device
+`overrides`. Objects merge recursively; arrays **replace the entire array**.
+Thus a device override `"extra_ssids": []` removes all its custom SSIDs, while
+an override containing several entries must repeat the full desired ordered
+list. The three presets remain present; there is no special legacy/compatibility
+role or mandatory fourth SSID. VLAN IDs, physical ports and raw UCI fields are
+not a configuration escape hatch and still require a reviewed profile change.
 
-Main is WPA3/PMF-required with 2.4+5 GHz and optional 6 GHz. Legacy and Guest are
-2.4+5 GHz WPA3/PMF-required MLO. IoT is a hidden-by-default 2.4 GHz single-link
-WPA2/WPA3 mixed BSS with optional PMF. All have k/v enabled and FT disabled.
-Guest clients may communicate; guest traffic stays on VLAN 192. Same-name ESSes
-must use the same role, security and password. Different channels are valid for
-wired-backhaul peers; different legacy names are excluded from each other's
-candidate lists.
+### Presets and custom defaults
+
+Main (`DictTech`) is 2.4+5 GHz MLO with optional 6 GHz, WPA3 SAE and required PMF.
+Guest (`DictTech-Guest`) is 2.4+5 GHz MLO with the same security and VLAN 192.
+IoT (`DictTech-IoT`) is hidden by default, 2.4 GHz single-link, WPA2/WPA3 mixed
+with optional PMF. Guest clients may communicate. FT remains disabled.
+
+A custom SSID needs only a stable ID and a name:
+
+```json
+{
+  "common": {
+    "extra_ssids": [
+      {"id": "studio", "name": "Studio"}
+    ]
+  }
+}
+```
+
+This is a `common` fragment, not the complete deployment document. Each custom
+ID starts with a letter and has at most 32 letters, digits or underscores;
+`main`, `guest` and `iot` are reserved. IDs identify profiles for MAC derivation
+and roaming and should stay stable when a display name changes.
+
+The public defaults file's top-level `extra_defaults` supplies omitted values:
+
+| Field | Default and supported values |
+| --- | --- |
+| `bands` | `["2g", "5g"]`; any distinct subset of `2g`, `5g`, `6g` |
+| `mlo` | Inferred: multiple bands enable MLO; one band selects single-link |
+| `encryption` | `sae`; also `sae-mixed` or `psk2` for eligible single-link SSIDs |
+| `network` | `lan`; `guest` selects the existing VLAN 192 network |
+| `hidden` | `false` |
+| `password_ref` | `main`; another key in private `secrets.wifi` may be selected |
+| `roaming` | `true`, additionally gated by global `roaming.enabled` |
+
+Explicit `mlo: true` requires multiple bands; `mlo: false` requires exactly one.
+MLO and every 6 GHz SSID require `sae`/PMF-required; WPA2 or mixed encryption is
+rejected for them. Other allowed encryption uses optional PMF. A custom SSID
+with no password reference inherits the private Main password; adding a separate
+password only requires adding that private secret and selecting its key.
+`roaming: false` disables both that profile's synchronization worker and its
+802.11k/v capabilities. All SSIDs on a physical radio share its channel/width.
+Radio width support does not guarantee a client's actual negotiated width.
+
+For example, a single-link WPA2 SSID can use:
+
+```json
+{"id": "printer", "name": "Printer", "bands": ["5g"],
+ "encryption": "psk2", "hidden": true, "password_ref": "iot"}
+```
+
+There are at most 14 custom entries, at most 16 AP interfaces on each radio and
+at most 16 MLDs. These are source/model capacity checks, **not evidence that all
+maximum-size combinations have been tested on hardware**. The model checks the
+actual bands: fourteen extra 5+6 GHz MLDs can fit, while fourteen extra 2.4+5 GHz
+MLDs exceed the 2.4 GHz AP limit because IoT also uses that radio.
+
+### Interface order and roaming identity
+
+Main is always `ap-mld0`, Guest `ap-mld1`, and custom MLO entries receive
+`ap-mld2`, `ap-mld3`, … in their list order. Single-link custom entries do not
+consume an MLD number. They use stable short names derived from their IDs;
+IoT uses `ap-iot`. Reordering custom MLOs changes their interface numbers but
+not their derived MAC identities. Changing numbering recreates wireless
+interfaces and can briefly disconnect clients, so test the migration first.
+
+A shared SSID across APs must have the same profile ID, network, encryption,
+PMF and password. Its bands may differ between wired-backhaul APs. Matching
+profiles advertise only explicitly registered peers; a missing, renamed or
+roaming-disabled profile is excluded. There is no automatic trust/discovery.
 
 ## Device MAC identity
 
 `mac_base` is a stable nonzero unicast address. New devices derive a locally
-administered wireless range from it. The offset allocation is part of v1:
+administered wireless identities from it. The preset offset allocation is:
 
 | Identity | Offset from base, local/unicast bits applied |
 | --- | --- |
 | WAN / CPU Ethernet | `0x01` / `0x04` |
 | Radio 0/1/2 base | `0x10` / `0x20` / `0x30` |
-| Legacy MLD, links | `0x40`, `0x41` / `0x42` |
 | Main MLD, links | `0x50`, `0x50` / `0x52` / `0x53` |
 | Guest MLD, links | `0x60`, `0x60` / `0x62` |
 | IoT BSSID | `0x70` |
+
+Custom identities are derived from the base, stable profile ID and band,
+independently of list position; changing a custom band set does not change the
+remaining bands' derived addresses. Main reserves all three BSSIDs even when
+its 6 GHz link is disabled. Each custom ID also reserves three canonical
+2g/5g/6g BSSID slots and an MLD address, even while absent or single-link.
+Only its active bands' BSSIDs and, for MLO, its MLD are rendered into Wi-Fi.
 
 The bridge and LAN ports use `mac_base`; default DUID is an Ethernet DUID-LL.
 For existing devices, optional `identity` overrides preserve already deployed
@@ -129,23 +201,73 @@ identity
   bridge: MAC
   ethernet: {wan, lan2, lan3, lan4, cpu}
   radios: {radio0, radio1, radio2}
-  mlds: {main, legacy, guest}
-  bssids: {main: [3 MACs], legacy: [2], guest: [2], iot: [1]}
+  mlds: {main, guest, <custom ID>: MAC}
+  bssids: {main: [3 MACs], guest: [2], iot: [1], <custom ID>: band-map or [3 MACs]}
   duid: hexadecimal string
 ```
 
-The override may be partial. Different BSSes must have distinct addresses; an
-MLD may equal its own first-link BSSID. A single device's bridge/port identities
-can repeat, matching the current AP layout. Any address shared across devices
-is rejected. Register a new base range before deployment; do not copy factory
-partitions, calibration or another device's host private keys.
+For custom pins, use a partial named band-map such as
+`{"2g": "02:aa:bb:10:00:41", "5g": "02:aa:bb:10:00:42"}`; the omitted 6 GHz
+slot is derived independently. A full three-element array in 2g/5g/6g order is
+also accepted. Preset BSSID arrays keep their fixed lengths of 3/2/1; custom
+arrays always have three slots, regardless of active `bands`.
+
+Custom identity entries may remain in the inventory after their SSID is
+removed from `extra_ssids`. Up to 64 custom identity slots may be reserved;
+inactive slots create no SSID, roaming worker or hardware interface and do not
+consume the active SSID/MLD limits. Reusing the same ID restores its original
+identity. A migrated hotspot can therefore be deleted, changed to single-band
+or extended to 6 GHz by editing only its ordinary SSID entry, without rewriting
+its identity pins. Unknown bands, malformed IDs and invalid MACs still fail.
+
+The override may be partial. Different BSSes must have distinct addresses. A
+preset MLD may equal its own first-link BSSID; a custom MLD may reuse one of its
+own reserved band addresses so band changes need not rewrite that pin. Sharing
+with another ESS or MLD is rejected. A single device's bridge/port identities
+can repeat, matching the current AP layout. All reserved addresses participate
+in cross-device collision checking, including inactive slots. Register a new
+base range before deployment; do not copy factory partitions, calibration or
+another device's host private keys. These model checks do not replace actual
+wireless/hardware acceptance.
 
 The larger explicit `identity` objects for existing APs are migration pins,
 not required boilerplate for every new AP. A newly registered device normally
 needs only `hostname`, `maintenance_ipv4` and its assigned unique `mac_base`.
 The firmware supplies the shared policy and the renderer derives the remaining
-identity range. Per-device root hashes and the four ESS passwords remain
+identities. Per-device root hashes and the three preset passwords remain
 explicit private inputs because they cannot have public firmware defaults.
+Custom SSIDs can reference those secrets or additional Wi-Fi password entries.
+
+## Explicit v1 migration
+
+Version 1's fixed `legacy` role is not accepted by the v2 model. Back up the
+old combined JSON, then convert it to a different private output file:
+
+```sh
+python3 scripts/dicttech/ap-migrate-v1.py \
+  --config ../ap-deployment-v1.private.json \
+  --output ../ap-deployment-v2.private.json
+```
+
+The local-only tool preserves effective preset settings and credentials and
+turns the old legacy ESS into an ordinary custom entry with ID `battalion`.
+It preserves the effective name, including per-device override/shorthand
+precedence, moves the private password reference and pins its existing MLD/BSS
+MACs (including old derived defaults) using a 2g/5g band-map. A later 6 GHz link
+gets a separately derived identity. It changes no input file or router and
+validates/render-checks every device before writing mode `0600` output. The
+migration API is `migrate(document) -> document`.
+
+The resulting `battalion` item has no reserved meaning: remove it, rename it or
+add other entries as desired. A newly configured v2 AP has no custom SSIDs
+unless listed. Update any separately maintained common/devices/secrets
+components from the converted result before the next merge.
+
+V1 and v2 profile/default fingerprints are incompatible. Use a v2 image and an
+archive exported by its matching v2 tool; carrying an unchanged v1 preseed or
+whole old `/etc` into that image is not a supported upgrade. Validate on a test
+AP with backups and rollback/recovery ready before changing production. See
+[image upgrades](dicttech-ap.md#existing-devices-and-image-upgrades).
 
 ## Local commands and Nix migration
 

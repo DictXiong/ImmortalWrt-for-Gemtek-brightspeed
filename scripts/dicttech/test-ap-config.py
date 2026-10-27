@@ -22,7 +22,7 @@ HASH = '$6$fixturesalt$' + 'a' * 86
 def document(count=2):
     nodes = {f'ap_{i}': {'hostname': f'ap-{i}', 'maintenance_ipv4': f'192.168.250.{i + 1}',
                          'mac_base': f'02:aa:bb:10:{i:02x}:00'} for i in range(count)}
-    return {'schema_version': 1, 'profile': 'dicttech-ap-v1', 'common': {}, 'devices': nodes,
+    return {'schema_version': 2, 'profile': 'dicttech-ap-v2', 'common': {}, 'devices': nodes,
             'secrets': {'wifi': {role: role + '-fixture-password' for role in m.ROLES},
                         'devices': {node: {'root_password_hash': HASH} for node in nodes}}}
 
@@ -62,6 +62,223 @@ class Configuration(unittest.TestCase):
         self.assertEqual(a['common']['country'], 'US')
         self.assertTrue(a['common']['ssids']['main']['six_ghz'])
         self.assertEqual(m.render(a), m.render(self.state()))
+        self.assertEqual([p['key'] for p in m.ssid_profiles(a)], ['main', 'guest', 'iot'])
+        self.assertEqual(a['common']['extra_ssids'], [])
+        self.assertNotIn('legacy', a['security'])
+
+    def test_custom_minimal_defaults_and_explicit_mld_order(self):
+        value = document()
+        value['common']['extra_ssids'] = [
+            {'id': 'battalion', 'name': '327Battalion'},
+            {'id': 'printer', 'name': 'Printer', 'bands': ['5g'], 'encryption': 'psk2'},
+            {'id': 'lab', 'name': 'Lab', 'bands': ['6g', '5g']},
+        ]
+        state = self.state(value)
+        profiles = m.ssid_profiles(state)
+        self.assertEqual([p['key'] for p in profiles], ['main', 'guest', 'battalion', 'printer', 'lab', 'iot'])
+        by_key = {p['key']: p for p in profiles}
+        self.assertEqual([p['iface'] for p in profiles if p['mlo']], ['ap-mld0', 'ap-mld1', 'ap-mld2', 'ap-mld3'])
+        self.assertEqual(by_key['lab']['bands'], ['5g', '6g'])
+        self.assertEqual(by_key['lab']['radios'], ['radio1', 'radio2'])
+        self.assertEqual(by_key['lab']['link_ids'], [1, 2])
+        self.assertEqual(by_key['battalion']['password_ref'], 'main')
+        self.assertEqual(by_key['battalion']['encryption'], 'sae')
+        self.assertEqual(by_key['battalion']['pmf'], 2)
+        self.assertFalse(by_key['battalion']['hidden'])
+        self.assertFalse(by_key['printer']['mlo'])
+        self.assertTrue(by_key['printer']['iface'].startswith('ap-x'))
+        rows = {r['name']: r for r in parse_uci(m.render(state)['etc/config/wireless'])}
+        self.assertEqual(rows['ssid_extra_lab']['lists']['device'], ['radio1', 'radio2'])
+        self.assertEqual(rows['ssid_extra_lab']['lists']['radio_macaddr'], by_key['lab']['bssids'])
+        self.assertEqual(rows['ssid_extra_printer']['options']['device'], 'radio1')
+        self.assertNotIn('mlo', rows['ssid_extra_printer']['options'])
+        self.assertEqual(rows['ssid_extra_battalion']['options']['key'], value['secrets']['wifi']['main'])
+        for profile in profiles:
+            self.assertEqual(rows[profile['section']]['options']['ifname'], profile['iface'])
+        roaming = {r['name']: r for r in parse_uci(m.render(state)['etc/config/xr_roaming'])}
+        self.assertEqual(roaming['lab']['options']['mlo'], '1')
+        self.assertEqual(roaming['lab']['options']['max_links'], '2')
+        self.assertEqual(roaming['printer']['options']['mlo'], '0')
+
+    def test_custom_identity_and_slo_names_survive_reorder_and_band_reduction(self):
+        value = document()
+        value['common']['extra_ssids'] = [
+            {'id': 'first', 'name': 'First'},
+            {'id': 'single', 'name': 'Single', 'bands': ['5g']},
+            {'id': 'second', 'name': 'Second', 'bands': ['2g', '5g', '6g']},
+        ]
+        before = self.state(value)
+        value['common']['extra_ssids'].reverse()
+        after = self.state(value)
+        for group in ['mlds', 'bssids']:
+            self.assertEqual(before['device']['identity'][group], after['device']['identity'][group])
+        old = {p['key']: p for p in before['ssids']}
+        new = {p['key']: p for p in after['ssids']}
+        self.assertEqual(old['single']['iface'], new['single']['iface'])
+        self.assertNotEqual(old['first']['iface'], new['first']['iface'])
+        value['common']['extra_ssids'][0]['bands'] = ['5g', '6g']
+        reduced = next(p for p in self.state(value)['ssids'] if p['key'] == 'second')
+        self.assertEqual(reduced['bssids'], old['second']['bssids'][1:])
+
+    def test_custom_secret_network_hidden_and_disabled_roaming(self):
+        value = document()
+        value['common']['extra_ssids'] = [{'id': 'private', 'name': 'Private', 'bands': ['5g'],
+            'encryption': 'sae-mixed', 'network': 'guest', 'hidden': True,
+            'password_ref': 'private_key', 'roaming': False}]
+        value['secrets']['wifi']['private_key'] = 'private-fixture-password'
+        state = self.state(value)
+        profile = next(p for p in state['ssids'] if p['key'] == 'private')
+        self.assertEqual(profile['pmf'], 1)
+        self.assertFalse(profile['roaming'])
+        self.assertEqual(state['peers']['private'], [])
+        rows = {r['name']: r for r in parse_uci(m.render(state)['etc/config/wireless'])}
+        row = rows['ssid_extra_private']
+        self.assertEqual(row['lists']['network'], ['guest'])
+        self.assertEqual(row['options']['hidden'], '1')
+        self.assertEqual(row['options']['isolate'], '0')
+        self.assertEqual(row['options']['key'], value['secrets']['wifi']['private_key'])
+        for field in ['ieee80211k', 'rrm_neighbor_report', 'rrm_beacon_report', 'bss_transition']:
+            self.assertEqual(row['options'][field], '0')
+        marker = m.render(state)['etc/dicttech-ap/device.json']
+        self.assertNotIn(value['secrets']['wifi']['private_key'].encode(), marker)
+        self.assertIn(b'private_key', marker)  # A reference name is public policy.
+        value['common']['roaming'] = {'enabled': False}
+        self.assertTrue(all(not p['roaming'] for p in self.state(value)['ssids']))
+
+    def test_custom_six_ghz_enables_radio_without_main_link(self):
+        value = document()
+        value['common'] = {'ssids': {'main': {'six_ghz': False}},
+                           'extra_ssids': [{'id': 'six', 'name': 'Six', 'bands': ['6g']}]}
+        state = self.state(value)
+        rows = {r['name']: r for r in parse_uci(m.render(state)['etc/config/wireless'])}
+        self.assertEqual(rows['radio2']['options']['disabled'], '0')
+        self.assertEqual(rows['ssid_extra_six']['options']['device'], 'radio2')
+        self.assertEqual(next(p for p in state['ssids'] if p['key'] == 'six')['link_ids'], [2])
+        value['common']['country'] = 'CN'
+        self.reject(lambda: self.state(value))
+
+    def test_custom_hardware_limits_and_full_mld_budget(self):
+        value = document(1)
+        value['common']['extra_ssids'] = [{'id': f'custom{i}', 'name': f'Custom{i}', 'bands': ['5g', '6g']} for i in range(14)]
+        self.assertEqual(sum(p['mlo'] for p in self.state(value)['ssids']), 16)
+        self.assertEqual(len(self.state(value)['ssids']), 17)
+        value['common']['extra_ssids'].append({'id': 'too_many', 'name': 'TooMany'})
+        self.reject(lambda: self.state(value))
+        value['common']['extra_ssids'] = [{'id': f'custom{i}', 'name': f'Custom{i}'} for i in range(14)]
+        self.reject(lambda: self.state(value))  # 17 APs on 2GHz, including IoT.
+        value['common']['extra_ssids'].pop()
+        self.assertEqual(len(self.state(value)['ssids']), 16)
+
+    def test_custom_validation_and_shared_ess_constraints(self):
+        cases = [
+            {'id': 'main', 'name': 'Custom'}, {'id': 'x' * 33, 'name': 'Custom'},
+            {'id': 'bad-id', 'name': 'Custom'}, {'id': 'x', 'name': 'DictTech'},
+            {'id': 'x', 'name': 'X', 'bands': []}, {'id': 'x', 'name': 'X', 'bands': ['5g', '5g']},
+            {'id': 'x', 'name': 'X', 'bands': ['7g']}, {'id': 'x', 'name': 'X', 'bands': ['5g'], 'mlo': True},
+            {'id': 'x', 'name': 'X', 'mlo': False}, {'id': 'x', 'name': 'X', 'encryption': 'psk2'},
+            {'id': 'x', 'name': 'X', 'bands': ['6g'], 'encryption': 'sae-mixed'},
+            {'id': 'x', 'name': 'X', 'encryption': 'none'}, {'id': 'x', 'name': 'X', 'network': 'wan'},
+            {'id': 'x', 'name': 'X', 'hidden': 1}, {'id': 'x', 'name': 'X', 'password_ref': 'missing'},
+        ]
+        for entry in cases:
+            value = document(); value['common']['extra_ssids'] = [entry]
+            self.reject(lambda: self.state(value))
+        value = document(); value['common']['extra_ssids'] = [{'id': 'x', 'name': 'X'}, {'id': 'x', 'name': 'Y'}]
+        self.reject(lambda: self.state(value))
+        for delta in [{'network': 'guest'}, {'password_ref': 'guest'}, {'id': 'different_id'}]:
+            value = document(); value['common']['extra_ssids'] = [{'id': 'x', 'name': 'X'}]
+            value['devices']['ap_1']['overrides'] = {'extra_ssids': [{**value['common']['extra_ssids'][0], **delta}]}
+            self.reject(lambda: self.state(value))
+        value = document(); value['common']['extra_ssids'] = [{'id': 'ap_1', 'name': 'X'}]
+        self.reject(lambda: self.state(value))
+
+    def test_custom_mac_pins_and_collisions(self):
+        value = document()
+        value['common']['extra_ssids'] = [{'id': 'battalion', 'name': '327Battalion'}]
+        identity = self.state(value)['device']['identity']
+        value['devices']['ap_0']['identity'] = {'mlds': {'battalion': identity['bssids']['battalion'][0]},
+                                              'bssids': {'battalion': identity['bssids']['battalion']}}
+        self.assertEqual(self.state(value)['device']['identity']['mlds']['battalion'], identity['bssids']['battalion'][0])
+        value['devices']['ap_0']['identity']['bssids']['battalion'][0] = identity['bssids']['main'][0]
+        self.reject(lambda: self.state(value))
+        value = document(); value['common']['extra_ssids'] = [{'id': 'battalion', 'name': '327Battalion'}]
+        value['devices']['ap_1']['identity'] = {'bssids': {'battalion': identity['bssids']['battalion']}}
+        self.reject(lambda: self.state(value))
+
+    def test_custom_inventory_pins_survive_removal_band_changes_and_readdition(self):
+        value = document(1)
+        item = {'id': 'battalion', 'name': '327Battalion'}
+        value['common']['extra_ssids'] = [item]
+        pins = {'2g': '02:cc:aa:10:00:41', '5g': '02:cc:aa:10:00:42'}
+        value['devices']['ap_0']['identity'] = {'mlds': {'battalion': '02:cc:aa:10:00:40'},
+                                              'bssids': {'battalion': pins}}
+        original = self.state(value)
+        original_profile = next(p for p in original['ssids'] if p['key'] == 'battalion')
+        self.assertEqual(original_profile['bssids'], [pins['2g'], pins['5g']])
+        inventory = original['device']['identity']
+        self.assertEqual(len(inventory['bssids']['battalion']), 3)
+        value['common']['extra_ssids'] = [{**item, 'bands': ['5g']}]
+        single = self.state(value)
+        profile = next(p for p in single['ssids'] if p['key'] == 'battalion')
+        self.assertFalse(profile['mlo'])
+        self.assertEqual(profile['bssids'], [pins['5g']])
+        self.assertEqual(single['device']['identity'], inventory)
+        value['common']['extra_ssids'] = [{**item, 'bands': ['2g', '5g', '6g']}]
+        profile = next(p for p in self.state(value)['ssids'] if p['key'] == 'battalion')
+        self.assertEqual(profile['bssids'], inventory['bssids']['battalion'])
+        value['common']['extra_ssids'] = []
+        removed = self.state(value)
+        self.assertEqual([p['key'] for p in removed['ssids']], ['main', 'guest', 'iot'])
+        self.assertEqual(removed['device']['identity'], inventory)
+        wireless = parse_uci(m.render(removed)['etc/config/wireless'])
+        self.assertFalse(any(row['name'] == 'ssid_extra_battalion' for row in wireless))
+        self.assertNotIn('battalion', removed['peers'])
+        value['common']['extra_ssids'] = [item]
+        restored = self.state(value)
+        self.assertEqual(restored['device']['identity'], inventory)
+        self.assertEqual(next(p for p in restored['ssids'] if p['key'] == 'battalion')['bssids'], original_profile['bssids'])
+
+    def test_inactive_custom_slots_validate_shape_limits_and_fleet_collisions(self):
+        value = document()
+        other_mac = self.state(value, 'ap_1')['device']['identity']['bssids']['main'][0]
+        value['devices']['ap_0']['identity'] = {'bssids': {'unused': {'6g': other_mac}}}
+        self.reject(lambda: self.state(value))
+        bad = [
+            {'bssids': {'unused': {}}}, {'bssids': {'unused': {'7g': other_mac}}},
+            {'bssids': {'unused': [other_mac, other_mac]}}, {'bssids': {'main': {'2g': other_mac}}},
+            {'mlds': {'iot': other_mac}}, {'bssids': {'bad-id': {'5g': other_mac}}},
+            {'radios': {'unknown': other_mac}},
+        ]
+        for identity in bad:
+            value = document(1); value['devices']['ap_0']['identity'] = identity
+            self.reject(lambda: self.state(value))
+        value = document(1)
+        value['devices']['ap_0']['identity'] = {'mlds': {f'reserved{i}': f'02:cc:aa:00:01:{i:02x}' for i in range(64)}}
+        state = self.state(value)
+        self.assertEqual(len(state['device']['identity']['bssids']), 67)
+        self.assertEqual(len(state['ssids']), 3)
+        value['devices']['ap_0']['identity']['mlds']['one_more'] = '02:cc:aa:00:02:00'
+        self.reject(lambda: self.state(value))
+
+    def test_custom_mld_alias_can_keep_its_own_reserved_band_address(self):
+        value = document(1)
+        item = {'id': 'custom', 'name': 'Custom', 'bands': ['5g', '6g']}
+        value['common']['extra_ssids'] = [item]
+        pin = '02:cc:aa:10:00:42'
+        value['devices']['ap_0']['identity'] = {'mlds': {'custom': pin}, 'bssids': {'custom': {'5g': pin}}}
+        original = self.state(value)['device']['identity']
+        value['common']['extra_ssids'][0]['bands'] = ['2g', '5g', '6g']
+        self.assertEqual(self.state(value)['device']['identity'], original)
+        value['common']['extra_ssids'] = []
+        self.assertEqual(self.state(value)['device']['identity'], original)
+        value['devices']['ap_0']['identity']['mlds']['custom'] = original['bssids']['main'][0]
+        self.reject(lambda: self.state(value))
+
+    def test_v1_and_legacy_input_require_explicit_migration(self):
+        value = document(); value['schema_version'] = 1; value['profile'] = 'dicttech-ap-v1'
+        self.reject(lambda: self.state(value))
+        value = document(); value['devices']['ap_0']['legacy_ssid'] = 'Old'
+        self.reject(lambda: self.state(value))
 
     def test_four_port_vlan_dhcp_and_maintenance(self):
         state = self.state(); files = m.render(state)
@@ -81,14 +298,14 @@ class Configuration(unittest.TestCase):
     def test_security_bands_order_and_client_interoperation(self):
         rows = parse_uci(m.render(self.state())['etc/config/wireless'])
         vifs = [r for r in rows if r['type'] == 'wifi-iface']
-        self.assertEqual([r['name'] for r in vifs], ['default_radio1', 'wifinet1', 'dicttech_mlo', 'guest_mlo'])
+        self.assertEqual([r['name'] for r in vifs], ['ssid_main', 'ssid_guest', 'ssid_iot'])
         by_name = {r['name']: r for r in vifs}
-        self.assertEqual(by_name['dicttech_mlo']['lists']['device'], ['radio0', 'radio1', 'radio2'])
-        self.assertEqual(by_name['guest_mlo']['lists']['device'], ['radio0', 'radio1'])
-        self.assertEqual(by_name['guest_mlo']['options']['isolate'], '0')
-        self.assertEqual(by_name['wifinet1']['options']['device'], 'radio0')
-        self.assertEqual(by_name['wifinet1']['options']['encryption'], 'sae-mixed')
-        self.assertEqual(by_name['wifinet1']['options']['ieee80211w'], '1')
+        self.assertEqual(by_name['ssid_main']['lists']['device'], ['radio0', 'radio1', 'radio2'])
+        self.assertEqual(by_name['ssid_guest']['lists']['device'], ['radio0', 'radio1'])
+        self.assertEqual(by_name['ssid_guest']['options']['isolate'], '0')
+        self.assertEqual(by_name['ssid_iot']['options']['device'], 'radio0')
+        self.assertEqual(by_name['ssid_iot']['options']['encryption'], 'sae-mixed')
+        self.assertEqual(by_name['ssid_iot']['options']['ieee80211w'], '1')
         for vif in vifs:
             self.assertEqual(vif['options']['ieee80211r'], '0')
             self.assertEqual(vif['options']['ieee80211k'], '1')
@@ -125,12 +342,15 @@ class Configuration(unittest.TestCase):
         self.assertEqual(main['options']['peer_mode'], 'fleet')
         self.assertEqual(main['lists']['peers'], ['ap_1', 'ap_2', 'ap_3'])
 
-    def test_different_legacy_names_excluded(self):
+    def test_different_custom_names_and_absent_profiles_excluded(self):
         value = document()
-        value['devices']['ap_1']['legacy_ssid'] = 'DifferentLegacy'
+        value['common']['extra_ssids'] = [{'id': 'battalion', 'name': '327Battalion'}]
+        value['devices']['ap_1']['overrides'] = {'extra_ssids': [{'id': 'battalion', 'name': 'DifferentName'}]}
         state = self.state(value)
         self.assertEqual(state['peers']['battalion'], [])
         self.assertEqual(len(state['peers']['main']), 1)
+        value['devices']['ap_1']['overrides']['extra_ssids'] = []
+        self.assertEqual(self.state(value)['peers']['battalion'], [])
 
     def test_main_dual_band_peer_and_cn(self):
         value = document()
@@ -140,7 +360,7 @@ class Configuration(unittest.TestCase):
         other = self.state(value, 'ap_1')
         rows = {r['name']: r for r in parse_uci(m.render(other)['etc/config/wireless'])}
         self.assertEqual(rows['radio2']['options']['disabled'], '1')
-        self.assertEqual(rows['dicttech_mlo']['lists']['device'], ['radio0', 'radio1'])
+        self.assertEqual(rows['ssid_main']['lists']['device'], ['radio0', 'radio1'])
         value['devices']['ap_1']['overrides']['ssids']['main']['six_ghz'] = True
         self.reject(lambda: self.state(value))
 
@@ -203,7 +423,7 @@ class Configuration(unittest.TestCase):
         value['common'] = {'ssids': {'main': {'name': "A' $(touch marker) \\"}}}
         state = self.state(value)
         rows = {r['name']: r for r in parse_uci(m.render(state)['etc/config/wireless'])}
-        self.assertEqual(rows['dicttech_mlo']['options']['ssid'], value['common']['ssids']['main']['name'])
+        self.assertEqual(rows['ssid_main']['options']['ssid'], value['common']['ssids']['main']['name'])
         value['common']['ssids']['main']['name'] = '界' * 11
         self.reject(lambda: self.state(value))
         value['common']['ssids']['main']['name'] = '\ud800'

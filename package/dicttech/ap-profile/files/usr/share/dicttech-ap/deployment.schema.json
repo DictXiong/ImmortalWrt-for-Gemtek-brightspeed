@@ -1,16 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:dicttech:ap:deployment:v1",
-  "title": "DictTech AP deployment v1",
+  "$id": "urn:dicttech:ap:deployment:v2",
+  "title": "DictTech AP deployment v2",
   "description": "Delta-only interchange produced by temporary local merge or future Nix+sops. Runtime renderer additionally validates byte lengths and fleet-wide consistency.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
     "schema_version": {
-      "const": 1
+      "const": 2
     },
     "profile": {
-      "const": "dicttech-ap-v1"
+      "const": "dicttech-ap-v2"
     },
     "common": {
       "$ref": "#/$defs/common"
@@ -29,7 +29,6 @@
         "not": {
           "enum": [
             "main",
-            "battalion",
             "guest",
             "iot"
           ]
@@ -42,36 +41,37 @@
       "properties": {
         "wifi": {
           "type": "object",
-          "additionalProperties": false,
+          "propertyNames": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_]{0,47}$"
+          },
           "properties": {
             "main": {
               "type": "string",
-              "minLength": 8,
+              "minLength": 2,
               "maxLength": 63,
-              "description": "8–63 UTF-8 bytes; no control characters."
-            },
-            "legacy": {
-              "type": "string",
-              "minLength": 8,
-              "maxLength": 63,
-              "description": "8–63 UTF-8 bytes; no control characters."
+              "description": "Renderer enforces 8\u201363 UTF-8 bytes and no control characters. JSON Schema lengths count Unicode characters, so byte bounds require the deployment validator."
             },
             "guest": {
               "type": "string",
-              "minLength": 8,
+              "minLength": 2,
               "maxLength": 63,
-              "description": "8–63 UTF-8 bytes; no control characters."
+              "description": "Renderer enforces 8\u201363 UTF-8 bytes and no control characters. JSON Schema lengths count Unicode characters, so byte bounds require the deployment validator."
             },
             "iot": {
               "type": "string",
-              "minLength": 8,
+              "minLength": 2,
               "maxLength": 63,
-              "description": "8–63 UTF-8 bytes; no control characters."
+              "description": "Renderer enforces 8\u201363 UTF-8 bytes and no control characters. JSON Schema lengths count Unicode characters, so byte bounds require the deployment validator."
             }
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 63,
+            "description": "Renderer enforces 8\u201363 UTF-8 bytes and no control characters. JSON Schema lengths count Unicode characters, so byte bounds require the deployment validator."
           },
           "required": [
             "main",
-            "legacy",
             "guest",
             "iot"
           ]
@@ -88,7 +88,6 @@
             "not": {
               "enum": [
                 "main",
-                "battalion",
                 "guest",
                 "iot"
               ]
@@ -202,7 +201,7 @@
                   "minimum": 1,
                   "maximum": 233,
                   "multipleOf": 1,
-                  "description": "Renderer requires channels1,5,9,…,233."
+                  "description": "Renderer requires channels1,5,9,\u2026,233."
                 },
                 "htmode": {
                   "enum": [
@@ -229,22 +228,10 @@
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 32,
-                  "description": "Renderer enforces1–32 UTF-8 bytes and rejects control characters."
+                  "description": "Renderer enforces1\u201332 UTF-8 bytes and rejects control characters."
                 },
                 "six_ghz": {
                   "type": "boolean"
-                }
-              }
-            },
-            "legacy": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "name": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 32,
-                  "description": "Renderer enforces1–32 UTF-8 bytes and rejects control characters."
                 }
               }
             },
@@ -256,7 +243,7 @@
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 32,
-                  "description": "Renderer enforces1–32 UTF-8 bytes and rejects control characters."
+                  "description": "Renderer enforces1\u201332 UTF-8 bytes and rejects control characters."
                 }
               }
             },
@@ -268,7 +255,7 @@
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 32,
-                  "description": "Renderer enforces1–32 UTF-8 bytes and rejects control characters."
+                  "description": "Renderer enforces1\u201332 UTF-8 bytes and rejects control characters."
                 },
                 "hidden": {
                   "type": "boolean"
@@ -295,6 +282,14 @@
               "maximum": 1800
             }
           }
+        },
+        "extra_ssids": {
+          "type": "array",
+          "maxItems": 14,
+          "items": {
+            "$ref": "#/$defs/extraSSID"
+          },
+          "description": "Ordered optional SSIDs. Per-device overrides replace the whole array. MLD/AP hardware limits are checked after resolution."
         }
       }
     },
@@ -361,14 +356,13 @@
         },
         "mlds": {
           "type": "object",
-          "additionalProperties": false,
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+            "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+          },
           "properties": {
             "main": {
-              "type": "string",
-              "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
-              "description": "Renderer also requires nonzero unicast and checks fleet collisions."
-            },
-            "legacy": {
               "type": "string",
               "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
               "description": "Renderer also requires nonzero unicast and checks fleet collisions."
@@ -378,11 +372,55 @@
               "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
               "description": "Renderer also requires nonzero unicast and checks fleet collisions."
             }
-          }
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$",
+            "not": {
+              "const": "iot"
+            }
+          },
+          "maxProperties": 66
         },
         "bssids": {
           "type": "object",
-          "additionalProperties": false,
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 3,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                  "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                },
+                "uniqueItems": true
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "minProperties": 1,
+                "properties": {
+                  "2g": {
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                    "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                  },
+                  "5g": {
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                    "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                  },
+                  "6g": {
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                    "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                  }
+                }
+              }
+            ],
+            "description": "Custom identities reserve per-band MACs independent of enabled bands. A partial band map is preferred; arrays use fixed 2g/5g/6g slots. Inactive custom IDs may remain reserved."
+          },
           "properties": {
             "main": {
               "type": "array",
@@ -393,17 +431,6 @@
               },
               "minItems": 3,
               "maxItems": 3,
-              "uniqueItems": true
-            },
-            "legacy": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
-                "description": "Renderer also requires nonzero unicast and checks fleet collisions."
-              },
-              "minItems": 2,
-              "maxItems": 2,
               "uniqueItems": true
             },
             "guest": {
@@ -428,7 +455,11 @@
               "maxItems": 1,
               "uniqueItems": true
             }
-          }
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$"
+          },
+          "maxProperties": 67
         },
         "duid": {
           "type": "string",
@@ -455,12 +486,6 @@
         },
         "identity": {
           "$ref": "#/$defs/identity"
-        },
-        "legacy_ssid": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 32,
-          "description": "Renderer enforces1–32 UTF-8 bytes and rejects control characters."
         },
         "overrides": {
           "$ref": "#/$defs/common"
@@ -494,6 +519,73 @@
       "required": [
         "root_password_hash"
       ]
+    },
+    "extraSSID": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$",
+          "not": {
+            "enum": [
+              "main",
+              "guest",
+              "iot"
+            ]
+          }
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "description": "Renderer enforces1\u201332 UTF-8 bytes and rejects control characters."
+        },
+        "bands": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "2g",
+              "5g",
+              "6g"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 3,
+          "uniqueItems": true
+        },
+        "mlo": {
+          "type": "boolean",
+          "description": "Defaults to true for multiple bands, false for one band."
+        },
+        "encryption": {
+          "enum": [
+            "sae",
+            "sae-mixed",
+            "psk2"
+          ]
+        },
+        "network": {
+          "enum": [
+            "lan",
+            "guest"
+          ]
+        },
+        "hidden": {
+          "type": "boolean"
+        },
+        "password_ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,47}$"
+        },
+        "roaming": {
+          "type": "boolean"
+        }
+      }
     }
   }
 }

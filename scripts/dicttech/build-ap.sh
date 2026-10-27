@@ -50,7 +50,7 @@ if [[ $layout == ubi ]]; then
  printf '%s\n' 'CONFIG_TARGET_airoha_an7581_DEVICE_gemtek_xr1710g-ubi=y' >>.config
 fi
 revision="$(git rev-parse --short=12 HEAD)"
-version="1.0.0-$revision"
+version="2.0.0-$revision"
 [[ -z $(git status --porcelain) ]] || version+="-dirty"
 printf 'CONFIG_VERSION_NUMBER="%s"\nCONFIG_VERSION_CODE="%s"\n' "$version" "$revision" >>.config
 make defconfig
@@ -69,8 +69,10 @@ trap 'rm -rf -- "$audit"' EXIT
 python3 scripts/dicttech/check-ap-image.py --layout "$layout" --image "$image" \
  --rootfs-image-output "$audit/rootfs.squashfs" \
  --output "${image%.itb}.audit.json"
-staging_dir/host/bin/unsquashfs4 -no-progress -no-xattrs \
- -d "$audit/rootfs" "$audit/rootfs.squashfs" >"$audit/unsquashfs.log"
+# /dev is mounted at runtime; audit the code/data without requiring mknod on
+# the build host. The FIT/rootfs bytes (including /dev) were verified above.
+staging_dir/host/bin/unsquashfs4 -no-progress -no-xattrs -excludes \
+ -d "$audit/rootfs" "$audit/rootfs.squashfs" dev >"$audit/unsquashfs.log"
 python3 scripts/dicttech/check-ap-rootfs.py --rootfs "$audit/rootfs" \
  --manifest "bin/targets/airoha/an7581/$prefix.manifest" \
  --output "${image%.itb}.rootfs.audit.json"

@@ -44,14 +44,29 @@ finalize_boot() {
 }
 
 valid_marker() {
- local hash name section material
+ local hash name section material ssid_rows iface
  [ -f "$MARKER" ] && [ ! -L "$MARKER" ] && [ -f "$DEFAULTS" ] || return 1
  hash=$(sha256sum "$DEFAULTS"); hash=${hash%% *}
  jq -e --arg hash "$hash" '
-   type=="object" and .schema_version==1 and .profile=="dicttech-ap-v1" and
+   type=="object" and .schema_version==2 and .profile=="dicttech-ap-v2" and
    .defaults_sha256==$hash and
    (.device_id|type=="string" and length>=1 and length<=64) and
-   (.config_fingerprint|type=="string" and length==64)
+   (.config_fingerprint|type=="string" and length==64) and
+   (.ssids|type=="array" and length>=3 and length<=17) and
+   .ssids[0].key=="main" and .ssids[1].key=="guest" and .ssids[-1].key=="iot" and
+   ([.ssids[].key]|length==(unique|length)) and
+   ([.ssids[].section]|length==(unique|length)) and
+   ([.ssids[].iface]|length==(unique|length)) and
+   (.ssids|all(.[];
+      (.key|type=="string" and length>=1 and length<=48) and
+      (.section|type=="string" and length>=1 and length<=48 and
+        (explode|all(.[]; (.>=48 and .<=57) or (.>=65 and .<=90) or (.>=97 and .<=122) or .==95))) and
+      (.iface|type=="string" and length>=1 and length<=15 and
+        (explode|all(.[]; (.>=48 and .<=57) or (.>=65 and .<=90) or (.>=97 and .<=122) or .==95 or .==45))) and
+      (.mlo|type=="boolean") and
+      (.bands|type=="array" and length>=1 and length<=3 and length==(unique|length) and
+        all(.[]; .=="2g" or .=="5g" or .=="6g")) and
+      (if .mlo then (.bands|length)>=2 else (.bands|length)==1 end)))
  ' "$MARKER" >/dev/null 2>&1 || return 1
  # A marker alone is not a complete deployment. Missing/truncated config must
  # never fall through to upstream router defaults on the next boot.
@@ -74,9 +89,13 @@ valid_marker() {
  [ "$(uci -q get network.guest.proto)" = none ] || return 1
  [ "$(uci -q get network.ap_maintenance.proto)" = static ] || return 1
  [ "$(uci -q get firewall.guest.input)" = DROP ] || return 1
- for section in dicttech_mlo default_radio1 guest_mlo wifinet1; do
+ ssid_rows=$(jq -r '.ssids[]|[.section,.iface]|@tsv' "$MARKER") || return 1
+ while IFS="$(printf '\t')" read -r section iface; do
   [ "$(uci -q get "wireless.$section")" = wifi-iface ] || return 1
- done
+  [ "$(uci -q get "wireless.$section.ifname")" = "$iface" ] || return 1
+ done <<SSID_ROWS
+$ssid_rows
+SSID_ROWS
  binding_matches "$ACCEPTED" || binding_matches "$BOOT_VALIDATED" || validate_manifest
 }
 
@@ -88,7 +107,7 @@ binding_matches() {
  IFS= read -r boot < /proc/sys/kernel/random/boot_id
  [ "$1" != "$BOOT_VALIDATED" ] || require_boot=true
  jq -e --slurpfile marker "$MARKER" --arg manifest "$digest" --arg boot "$boot" --argjson require_boot "$require_boot" '
-   .schema_version==1 and .profile=="dicttech-ap-v1" and
+   .schema_version==2 and .profile=="dicttech-ap-v2" and
    .device_id==$marker[0].device_id and
    .defaults_sha256==$marker[0].defaults_sha256 and
    .config_fingerprint==$marker[0].config_fingerprint and
@@ -113,7 +132,7 @@ validate_manifest() {
  local manifest=${1:-$MANIFEST} base=${2:-} rows name expected actual
  [ -s "$manifest" ] && [ ! -L "$manifest" ] || return 1
  jq -e '
-   .schema_version==1 and .profile=="dicttech-ap-v1" and
+   .schema_version==2 and .profile=="dicttech-ap-v2" and
    (.files|type=="array" and length>=15 and length<=16) and
    (.files|all(.[]; (.path|type=="string") and (.sha256|type=="string" and length==64))) and
    ([.files[].path]|length==(unique|length)) and

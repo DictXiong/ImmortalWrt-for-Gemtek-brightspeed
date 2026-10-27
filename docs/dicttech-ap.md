@@ -2,9 +2,10 @@
 
 This personal branch supplies a no-secret image, a versioned configuration
 contract and deployment/verification tools. The three general datapath fixes
-remain separate from the personal AP policy. The device profile owns four
-SSIDs, a wired backhaul, native VLAN 1, guest VLAN 192, DHCP management and a
-unique static maintenance address. Read [the configuration format](dicttech-config-format.md),
+remain separate from the personal AP policy. The v2 device profile owns three
+preset SSIDs and an optional ordered custom-SSID list, a wired backhaul, native
+VLAN 1, guest VLAN 192, DHCP management and a unique static maintenance address.
+Read [the configuration format](dicttech-config-format.md),
 [maintenance allocation](dicttech-maintenance.md) and
 [acceptance limits](dicttech-acceptance.md) before deployment.
 
@@ -20,9 +21,10 @@ the following files in the parent working directory, all mode `0600`:
 * `ap-common.json`: schema/profile version and common overrides. An empty
   `common` object uses the complete firmware defaults.
 * `ap-devices.json`: stable device IDs, hostnames, maintenance addresses and MAC
-  identities; optional per-device overrides and legacy SSID names.
-* `ap-secrets.json`: the four Wi-Fi passwords and each device's root password
-  hash; optionally its intended authorized public keys.
+  identities and optional per-device overrides, including a complete custom list.
+* `ap-secrets.json`: the three preset Wi-Fi passwords, any additional referenced
+  Wi-Fi secrets and each device's root password hash; optionally its intended
+  authorized public keys.
 
 Combine them from this checkout:
 
@@ -32,6 +34,14 @@ python3 scripts/dicttech/ap_config.py merge \
   --secrets ../ap-secrets.json --output ../ap-deployment.json
 python3 scripts/dicttech/ap_config.py validate --config ../ap-deployment.json
 ```
+
+The document uses `schema_version: 2` and `profile: "dicttech-ap-v2"`. An empty
+`common` object enables only Main, Guest and IoT. Custom entries under
+`common.extra_ssids` need only `id` and `name`; the public `extra_defaults` fills
+in their other settings. The list may be empty or contain multiple ordinary
+SSIDs. Main/Guest remain `ap-mld0/1`; custom MLOs follow list order from 2,
+while single-link entries do not consume an MLD number. See the
+[custom SSID contract](dicttech-config-format.md#presets-and-custom-defaults).
 
 The resulting JSON is also private. Nix and sops may later generate that same
 document directly; the deployment tool does not depend on how JSON was
@@ -110,7 +120,7 @@ Add `--control-socket /tmp/dicttech-ap-setup` to commands targeting that session
 After provisioning changes the address, establish a new authenticated session
 at the assigned address rather than reusing the old socket as identity proof.
 
-First read the target identity and boot ID:
+On the running v2 image, first read the target identity and boot ID:
 
 ```sh
 python3 scripts/dicttech/ap-deploy.py check --host 192.168.250.1
@@ -151,11 +161,19 @@ Confirm only after actual readback and the applicable acceptance checks. A
 lost controller/SSH connection does not cancel rollback. Pending unrelated UCI
 edits, changed baseline files, a wrong device, incomplete reload or altered
 candidate files block the transaction/confirmation. Live SSH-port changes are
-refused in v1; choose a non-default port through offline provisioning instead.
+refused; choose a non-default port through offline provisioning instead.
 
 ## Existing devices and image upgrades
 
-An existing matching profile can use `plan` and `apply` with its current DHCP
+V2 uses a different schema/profile/default fingerprint from v1. Do not simply
+retain an old v1 configuration when flashing a v2 image: its boot policy cannot
+accept the old marker/default binding. First back up the old site configuration
+and firmware, [migrate the private JSON](dicttech-config-format.md#explicit-v1-migration),
+and export a new archive with the matching v2 tool/defaults. Prove this workflow
+on a test AP before changing production. Reordering MLD names recreates BSS
+interfaces and can temporarily disconnect wireless clients.
+
+An existing matching v2 profile can use `plan` and `apply` with its current DHCP
 or maintenance address, without `--initialize`. The tool sends secrets over
 SSH stdin and prints changed paths, not credential values. An identical
 configuration is a no-op. Preserve the receipt and private backups until the
@@ -179,6 +197,9 @@ The preservation flag performs a read-only same-device identity check before
 capturing existing SSH host keys, HTTPS identity and any authorized keys not
 explicitly set in the desired configuration. Use it for existing-device
 upgrades, so SSH identity and access survive the custom configuration archive.
+Its read-only identity probe also supports the old v1/other installed firmware;
+it does not require the source to already implement the v2 transaction contract.
+The supplied JSON and resulting archive must still be v2 and match the new image.
 Omit it for a fresh device: another AP's host identity must never be cloned.
 
 The gzip tar is a private `sysupgrade -f` input, not a public image. Check the
@@ -219,8 +240,9 @@ new firmware. The new profile does not contain the old test-only
 `192.168.50.1` fallback.
 
 When adding or renaming an AP, regenerate the document and deploy to every
-affected AP so their explicit peer lists remain consistent. Differently named
-legacy SSIDs do not receive each other's roaming candidates. The AP tool does
+affected AP so their explicit peer lists remain consistent. Only matching
+profile IDs and SSID names with roaming enabled exchange candidates; custom
+entries can be absent or differently named on another AP. The AP tool does
 not modify pi1 reservations or deploy NixOS; those are separate upstream
 network prerequisites.
 

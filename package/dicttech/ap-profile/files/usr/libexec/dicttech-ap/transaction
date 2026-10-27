@@ -88,13 +88,13 @@ check_contract() {
  local defaults
  defaults=$(p /usr/share/dicttech-ap/defaults.json)
  plain "$defaults" || fail missing_firmware_profile
- "$JQ" -e '(.profile == "dicttech-ap-v1") and (.schema_version == 1)' "$defaults" >/dev/null || fail incompatible_firmware_profile
- printf '{"profile":"dicttech-ap-v1","schema_version":1,"defaults_sha256":"%s","boot_id":"%s"}\n' "$(sha "$defaults")" "$(boot)"
+ "$JQ" -e '(.profile == "dicttech-ap-v2") and (.schema_version == 2)' "$defaults" >/dev/null || fail incompatible_firmware_profile
+ printf '{"profile":"dicttech-ap-v2","schema_version":2,"defaults_sha256":"%s","boot_id":"%s"}\n' "$(sha "$defaults")" "$(boot)"
 }
 validate_manifest() {
  "$JQ" -e '
  def hex: type=="string" and (explode|all(.[]; (.>=48 and .<=57) or (.>=97 and .<=102)));
- type=="object" and .schema_version==1 and .profile=="dicttech-ap-v1" and
+ type=="object" and .schema_version==2 and .profile=="dicttech-ap-v2" and
  (.device_id|type=="string" and length>=1 and length<=64) and
  (.token|hex and length==32) and (.boot_id|type=="string" and length==36) and
  (.defaults_sha256|hex and length==64) and
@@ -259,7 +259,7 @@ status() {
 target_identity() {
  local device_id= board= bridge= isolated=false ssh_port= section name
  if plain "$(p /etc/dicttech-ap/device.json)"; then
-  device_id=$("$JQ" -r 'if .profile=="dicttech-ap-v1" and .schema_version==1 and (.device_id|type)=="string" then .device_id else "" end' "$(p /etc/dicttech-ap/device.json)" 2>/dev/null || true)
+  device_id=$("$JQ" -r 'if .profile=="dicttech-ap-v2" and .schema_version==2 and (.device_id|type)=="string" then .device_id else "" end' "$(p /etc/dicttech-ap/device.json)" 2>/dev/null || true)
  fi
  test ! -f "$(p /tmp/sysinfo/board_name)" || board=$(cat "$(p /tmp/sysinfo/board_name)")
  if test -r "$(p /sys/class/net/br-lan/address)"; then bridge=$("$TIMEOUT" 3 cat "$(p /sys/class/net/br-lan/address)" 2>/dev/null || true); fi

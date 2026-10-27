@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
-  "profile": "dicttech-ap-v1",
+  "schema_version": 2,
+  "profile": "dicttech-ap-v2",
   "common": {}
 }

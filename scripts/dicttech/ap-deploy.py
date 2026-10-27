@@ -20,7 +20,7 @@ import time
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 TARGET = '/usr/libexec/dicttech-ap/transaction'
-PROFILE = 'dicttech-ap-v1'
+from ap_config import PROFILE, SCHEMA_VERSION
 DEFAULTS = HERE.parents[1] / 'package/dicttech/ap-profile/files/usr/share/dicttech-ap/defaults.json'
 
 
@@ -175,10 +175,10 @@ def tar_bytes(files: dict[str, bytes], manifest=None):
 
 
 def bundle(files, contract, device_id, ttl, approved_target=None):
-    if contract.get('profile') != PROFILE or contract.get('schema_version') != 1:
+    if contract.get('profile') != PROFILE or contract.get('schema_version') != SCHEMA_VERSION:
         raise ValueError('incompatible target firmware profile')
     manifest = {
-        'schema_version': 1, 'profile': PROFILE, 'device_id': device_id,
+        'schema_version': SCHEMA_VERSION, 'profile': PROFILE, 'device_id': device_id,
         'token': secrets.token_hex(16), 'boot_id': contract['boot_id'],
         'defaults_sha256': contract['defaults_sha256'], 'ttl_seconds': ttl,
         'approved_target': approved_target or {'device_id': device_id, 'bridge_mac': contract['identity'].get('bridge_mac', ''), 'allowed_boards': [contract['identity'].get('board_name', '')], 'initialize': False},

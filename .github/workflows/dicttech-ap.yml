@@ -33,6 +33,7 @@ jobs:
       - name: Validate configuration, deployment and roaming
         run: |
           sudo python3 scripts/dicttech/test-ap-config.py
+          sudo python3 scripts/dicttech/tests/test_ap_migrate.py
           sudo python3 scripts/dicttech/test-ap-bootstrap.py
           sudo python3 scripts/dicttech/tests/ap-deploy/test_transaction.py
           sudo python3 scripts/dicttech/tests/ap-deploy/test_export_identity.py
