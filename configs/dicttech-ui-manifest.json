@@ -36,7 +36,7 @@
     "wifi-history": {
       "target": "applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js",
       "source_sha256": "0a1596fe36395ac2316f23e80db2753e86783e6bd62c911afe96aed278d1d50a",
-      "patched_sha256": "cda88dab4a36742484299519a0e2cef160c8fdf1f28b3c151c499dad032796d5",
+      "patched_sha256": "6e3fb952a53ec1a506aacbce1941557307ffce8f1abe8aeb48c40243faa6d7b0",
       "patch": "patches/feeds/luci/applications/luci-app-wifihistory/120-dicttech-bounded-mld-history.patch"
     }
   }

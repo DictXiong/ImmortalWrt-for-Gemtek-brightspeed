@@ -1,5 +1,5 @@
 diff --git a/applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js b/applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js
-index 076c97a..8412439 100644
+index 076c97a..6991336 100644
 --- a/applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js
 +++ b/applications/luci-app-wifihistory/htdocs/luci-static/resources/view/status/wifihistory.js
 @@ -1,181 +1,210 @@
@@ -174,7 +174,7 @@ index 076c97a..8412439 100644
  				_('This page displays a history of all WiFi stations that have connected to this device, including currently connected and previously seen devices.')),
 +			E('p', { 'class': 'cbi-map-descr' },
 +				_('Stored in RAM: up to 512 stations, retained for seven days and cleared on reboot. Stations are sampled every 30 seconds.')),
-+			E('p', { 'id': 'wifi_history_status', 'class': 'cbi-map-descr' }),
++			E('p', { 'id': 'wifi_history_status', 'role': 'status' }),
  
  			E('div', { 'class': 'cbi-section' }, [
  				E('div', { 'class': 'right', 'style': 'margin-bottom:1em' }, [

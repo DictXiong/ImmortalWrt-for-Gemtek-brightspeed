@@ -148,6 +148,12 @@ class RootfsChecks(unittest.TestCase):
         self.assertEqual(entry['patch'], check.HISTORY_PATCH)
         expected = check.patch_postimage(check.REPO / entry['patch'], entry['target'])
         self.assertEqual(check.digest(expected), entry['patched_sha256'])
+        # Glass intentionally hides generic page descriptions. Sampling health
+        # is operational status and must remain a visible live region instead.
+        status_node = next(line for line in expected.decode().splitlines()
+                           if "E('p'," in line and "'wifi_history_status'" in line)
+        self.assertIn("'role': 'status'", status_node)
+        self.assertNotIn('cbi-map-descr', status_node)
 
     def test_history_gate_rejects_unpatched_prepared_feed(self):
         with tempfile.TemporaryDirectory(prefix='dicttech-history-source-fixture-') as temp:
