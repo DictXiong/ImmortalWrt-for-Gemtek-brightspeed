@@ -50,7 +50,7 @@ jobs:
       - name: Build locked no-secret AP image
         env:
           AP_LAYOUT: ${{ inputs.layout || 'legacy' }}
-        run: bash scripts/dicttech/build-ap.sh --layout "$AP_LAYOUT" --jobs 2 2>&1 | tee "$RUNNER_TEMP/dicttech-build.log"
+        run: bash scripts/dicttech/build-ap.sh --layout "$AP_LAYOUT" --jobs "$(nproc)" 2>&1 | tee "$RUNNER_TEMP/dicttech-build.log"
       - name: Exercise bootstrap, history and factory with the built ARM64 tools
         run: |
           rootfs=$(find build_dir/target-*/root-airoha -maxdepth 0 -type d -print -quit)
