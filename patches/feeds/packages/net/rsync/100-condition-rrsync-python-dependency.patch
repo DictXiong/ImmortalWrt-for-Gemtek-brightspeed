@@ -1,0 +1,12 @@
+--- a/net/rsync/Makefile
++++ b/net/rsync/Makefile
+@@ -78,7 +78,8 @@
+   CATEGORY:=Network
+   SUBMENU:=File Transfer
+   TITLE:=Restricted rsync script
+-  DEPENDS:=+rsync python3-light @(PACKAGE_openssh-server||PACKAGE_openssh-server-pam||(PACKAGE_dropbear&&DROPBEAR_SVR_PUBKEY_OPTIONS))
++  # Only the optional restricted wrapper needs the target interpreter.
++  DEPENDS:=+rsync +PACKAGE_rrsync:python3-light @(PACKAGE_openssh-server||PACKAGE_openssh-server-pam||(PACKAGE_dropbear&&DROPBEAR_SVR_PUBKEY_OPTIONS))
+   URL:=https://www.samba.org/ftp/unpacked/rsync/support/rrsync
+ endef
+ 
