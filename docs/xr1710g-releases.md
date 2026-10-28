@@ -70,6 +70,8 @@ python3 scripts/dicttech/release.py notes --pair /tmp/xr-release-pair/release-pa
 
 在定制分支运行 **Build XR1710G release pair**（`xr1710g-release.yml`）：
 
+定制分支推送修改发布工作流或 `configs/xr1710g-release.json` 的提交时，也会自动启动 `legacy` 布局的双版本候选构建。这使尚未进入默认分支的工作流也能首次运行；自动触发始终只生成候选 artifacts，不创建 tag 或 Release。其他源码提交可使用手动运行，显式选择布局；尚未在默认分支注册的 workflow 可能不支持 GitHub 的手动调度，可通过一次发布配置更新触发候选构建。
+
 1. 开始时固定并校验 full/fixes 两个 SHA，后续所有 job 使用这对快照。
 2. 两个隔离 matrix job 分别构建、审计 `full` 和 `fixes`；任一失败就不会汇总 Release。
 3. `release_tag` 留空时，只生成候选 artifacts，不需要额外发布凭据。
