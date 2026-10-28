@@ -1,0 +1,117 @@
+name: Build XR1710G release pair
+
+on:
+  workflow_dispatch:
+    inputs:
+      layout:
+        description: Partition layout (does not convert the bootloader)
+        required: true
+        default: legacy
+        type: choice
+        options: [legacy, ubi]
+      release_tag:
+        description: Optional NEW tag; empty uploads candidates only, otherwise creates one draft release
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: [full, fixes]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang flex bison gawk gettext git libncurses-dev libssl-dev python3 python3-setuptools rsync unzip wget xsltproc zlib1g-dev file swig jq
+      - name: Check source projection and artifact separation
+        run: python3 scripts/dicttech/tests/test_release.py
+      - name: Prepare an isolated edition from this release commit
+        env:
+          FLAVOR: ${{ matrix.flavor }}
+          LAYOUT: ${{ inputs.layout }}
+        run: |
+          python3 scripts/dicttech/release.py prepare --flavor "$FLAVOR" --layout "$LAYOUT" \
+            --directory "$RUNNER_TEMP/xr-release-$FLAVOR"
+      - name: Build and audit matched firmware and APKs
+        env:
+          FLAVOR: ${{ matrix.flavor }}
+        run: |
+          set -o pipefail
+          python3 scripts/dicttech/release.py build --directory "$RUNNER_TEMP/xr-release-$FLAVOR" --jobs 2 \
+            2>&1 | tee "$RUNNER_TEMP/xr-$FLAVOR-build.log"
+      - name: Upload only the audited public edition
+        uses: actions/upload-artifact@v7
+        with:
+          name: xr1710g-${{ matrix.flavor }}-${{ inputs.layout }}-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 30
+          path: ${{ runner.temp }}/xr-release-${{ matrix.flavor }}/public/*
+      - name: Save build diagnostics separately
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: xr1710g-${{ matrix.flavor }}-build-log-${{ github.sha }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: ${{ runner.temp }}/xr-${{ matrix.flavor }}-build.log
+  pair:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: xr1710g-*-${{ inputs.layout }}-${{ github.sha }}
+          path: ${{ runner.temp }}/edition-artifacts
+      - name: Verify both editions belong to this commit
+        run: |
+          python3 scripts/dicttech/release.py assemble --inputs "$RUNNER_TEMP/edition-artifacts" \
+            --output "$RUNNER_TEMP/release-pair"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: xr1710g-release-pair-${{ inputs.layout }}-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 30
+          path: ${{ runner.temp }}/release-pair/*
+  draft:
+    needs: pair
+    if: inputs.release_tag != ''
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: xr1710g-release-pair-${{ inputs.layout }}-${{ github.sha }}
+          path: release-pair
+      - name: Create one new draft containing both editions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_SHA: ${{ github.sha }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$ ]] || { echo 'Invalid tag'; exit 1; }
+          # Refuse an existing tag or release; never overwrite published assets.
+          existing=$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG")
+          [[ -z "$existing" ]] || { echo 'Use a new release tag'; exit 1; }
+          gh api --paginate "repos/$GH_REPO/releases" --jq '.[].tag_name' > "$RUNNER_TEMP/release-tags"
+          if grep -Fxq "$RELEASE_TAG" "$RUNNER_TEMP/release-tags"; then echo 'Release already exists'; exit 1; fi
+          cp docs/xr1710g-release-notes.md "$RUNNER_TEMP/release-notes.md"
+          gh release create "$RELEASE_TAG" --target "$RELEASE_SHA" --draft \
+            --title "XR1710G $RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md" release-pair/*

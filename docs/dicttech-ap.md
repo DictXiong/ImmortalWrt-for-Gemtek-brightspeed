@@ -53,6 +53,10 @@ is refused rather than silently deploying against another version's policy.
 
 ## Build
 
+For a release containing both the personal image and a generic fixes-only
+image from this same branch, use the [paired release workflow](xr1710g-releases.md).
+The single-edition command below remains useful for personal candidate builds.
+
 Use a normal OpenWrt build environment and select the layout matching the
 actual bootloader and partition table:
 

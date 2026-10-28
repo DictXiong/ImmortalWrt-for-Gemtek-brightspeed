@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "version": "2.1.0",
+  "upstream_base": "8f92c5427fd902eb5c32006d1bc1ed9954055378",
+  "fixes": [
+    "5a88f64e5e5b9d6415dc8e561810a464bd6f3dad",
+    "ec1877546ffb10899c60c46caeac9c8fc7b3b1b4",
+    "07c1845f0d1b8dbf8b61c3827c45d04f739d32fa"
+  ]
+}

@@ -50,7 +50,9 @@ if [[ $layout == ubi ]]; then
  printf '%s\n' 'CONFIG_TARGET_airoha_an7581_DEVICE_gemtek_xr1710g-ubi=y' >>.config
 fi
 revision="$(git rev-parse --short=12 HEAD)"
-version="2.1.0-$revision"
+profile_version=$(sed -n 's/^PKG_VERSION:=//p' package/dicttech/ap-profile/Makefile)
+[[ $profile_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Invalid AP profile version' >&2; exit 1; }
+version="$profile_version-$revision"
 [[ -z $(git status --porcelain) ]] || version+="-dirty"
 printf 'CONFIG_VERSION_NUMBER="%s"\nCONFIG_VERSION_CODE="%s"\n' "$version" "$revision" >>.config
 make defconfig

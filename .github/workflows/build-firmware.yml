@@ -39,6 +39,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Require paired releases for the personal source tree
+        run: |
+          if [ -f configs/xr1710g-release.json ]; then
+            echo 'Use Build XR1710G release pair: this workflow would mix stock configuration with personal source patches.' >&2
+            exit 1
+          fi
+
       - name: Generate build version
         id: version
         run: |
