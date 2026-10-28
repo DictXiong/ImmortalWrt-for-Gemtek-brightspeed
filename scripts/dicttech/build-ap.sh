@@ -55,12 +55,12 @@ profile_version=$(sed -n 's/^PKG_VERSION:=//p' package/dicttech/ap-profile/Makef
 version="$profile_version-$revision"
 [[ -z $(git status --porcelain) ]] || version+="-dirty"
 printf 'CONFIG_VERSION_NUMBER="%s"\nCONFIG_VERSION_CODE="%s"\n' "$version" "$revision" >>.config
-make defconfig
+make defconfig RECURSIVE_DEP_IS_ERROR=1
 python3 scripts/dicttech/test-cli-feed-metadata.py
 python3 scripts/dicttech/check-build.py --layout "$layout" --output "bin/dicttech-$layout-build.json"
 if [[ $prepare_only == 1 ]]; then exit 0; fi
 make download -j"$jobs"
-make world -j"$jobs"
+make world -j"$jobs" || make world -j1 V=s
 python3 scripts/dicttech/check-ui-source.py --jsmin staging_dir/hostpkg/bin/jsmin \
  --output bin/targets/airoha/an7581/dicttech-ui-source.json
 python3 scripts/dicttech/check-build.py --layout "$layout" --output "bin/targets/airoha/an7581/dicttech-$layout-build.json"

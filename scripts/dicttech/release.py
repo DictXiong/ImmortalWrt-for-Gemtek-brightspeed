@@ -218,9 +218,9 @@ def build(directory, jobs, prepare_only=False):
         for feed in d['fixed_feeds']:
             need(git(source/'feeds'/feed['directory'], 'rev-parse', 'HEAD') == feed['commit'], 'Wrong fixed feed')
         (source/'.config').write_text(stock_config((source/'1710.config').read_text(),d['layout'],d['build_version'],d['source_commit'][:12]))
-        shell('make defconfig\nbash scripts/check-gemtek-profile-isolation.sh --config .config')
+        shell('make defconfig RECURSIVE_DEP_IS_ERROR=1\nbash scripts/check-gemtek-profile-isolation.sh --config .config')
         if not prepare_only:
-            shell('make download -j'+str(jobs)+'\nmake world -j'+str(jobs))
+            shell('make download -j'+str(jobs)+'\nmake world -j'+str(jobs)+' || make world -j1 V=s')
     source_check(directory, d)
     if prepare_only: return
     target = source/'bin/targets/airoha/an7581'
