@@ -356,6 +356,17 @@ class Configuration(unittest.TestCase):
         self.assertIn(b'vlan id 192 vlan type != 0x888e', files['etc/xr-guest-vlan192.nft'])
         self.assertIn(b'bridge-nf-filter-vlan-tagged=0', files['etc/sysctl.d/13-nf-bridge.conf'])
 
+    def test_generated_external_guest_policies_survive_sysupgrade_backup(self):
+        files = m.render(self.state())
+        policies = {name for name in files
+                    if name.startswith('etc/sysctl.d/') or name.endswith('.nft')}
+        self.assertTrue(policies)
+        keep = SOURCE.parents[2] / 'package/dicttech/ap-profile/files/lib/upgrade/keep.d'
+        preserved = {line.strip().lstrip('/') for path in keep.iterdir()
+                     for line in path.read_text().splitlines()
+                     if line.strip() and not line.lstrip().startswith('#')}
+        self.assertTrue(policies <= preserved, sorted(policies - preserved))
+
     def test_one_node_and_many_peers(self):
         one = self.state(document(1))
         self.assertTrue(all(not peers for peers in one['peers'].values()))
