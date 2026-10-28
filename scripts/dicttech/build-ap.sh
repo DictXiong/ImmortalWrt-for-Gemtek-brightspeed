@@ -56,6 +56,7 @@ version="$profile_version-$revision"
 [[ -z $(git status --porcelain) ]] || version+="-dirty"
 printf 'CONFIG_VERSION_NUMBER="%s"\nCONFIG_VERSION_CODE="%s"\n' "$version" "$revision" >>.config
 make defconfig RECURSIVE_DEP_IS_ERROR=1
+python3 scripts/xr1710g/test-squeezelite-metadata.py --feed-revision "$(git -C feeds/packages rev-parse HEAD)"
 python3 scripts/dicttech/test-cli-feed-metadata.py
 python3 scripts/dicttech/check-build.py --layout "$layout" --output "bin/dicttech-$layout-build.json"
 if [[ $prepare_only == 1 ]]; then exit 0; fi
