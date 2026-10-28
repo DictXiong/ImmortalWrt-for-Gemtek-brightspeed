@@ -105,7 +105,9 @@ class ReleaseTests(unittest.TestCase):
                 out = self.destination()
                 receipt = r.prepare(self.repo, out, flavor, 'legacy')
                 source = out / 'source'
-                expected = self.head if flavor == 'full' else self.fixes_head
+                expected = self.head if flavor == 'custom' else self.fixes_head
+                self.assertEqual(receipt['schema_version'], r.ARTIFACT_SCHEMA)
+                self.assertEqual(r.plan(self.repo)['schema_version'], r.LOCK_SCHEMA)
                 self.assertEqual(receipt['release_commit'], self.head)
                 self.assertEqual(receipt['fixes_commit'], self.fixes_head)
                 self.assertEqual(receipt['source_commit'], expected)
@@ -113,13 +115,23 @@ class ReleaseTests(unittest.TestCase):
                 self.assertEqual(receipt['source_tree'],
                                  r.git(source, 'rev-parse', expected + '^{tree}'))
                 self.assertEqual((source / 'package/dicttech/owner').exists(),
-                                 flavor == 'full')
+                                 flavor == 'custom')
                 self.assertFalse(r.git(source, 'status', '--porcelain'))
                 for i in range(3):
                     self.assertEqual((source / ('fix-' + str(i) + '.patch')).read_text(),
                                      'reviewed ' + str(i) + '\n')
                 r.source_check(out, receipt)
         self.assertEqual(r.git(self.repo, 'show-ref'), before)
+
+    def test_legacy_full_build_input_is_rejected(self):
+        out = self.destination()
+        with self.assertRaisesRegex(ValueError, 'Invalid edition/layout'):
+            r.prepare(self.repo, out, 'full', 'legacy')
+        self.assertFalse(out.exists())
+        receipt = r.prepare(self.repo, out, 'custom', 'legacy')
+        receipt['schema_version'] = 2
+        with self.assertRaisesRegex(ValueError, 'Unsupported build receipt schema'):
+            r.source_check(out, receipt)
 
     def test_fourth_fix_is_merged_without_rebasing_personal_history(self):
         repo = self.clone()
@@ -128,9 +140,9 @@ class ReleaseTests(unittest.TestCase):
         r.git(repo, 'checkout', 'fixture-main')
         r.git(repo, 'merge', '--no-ff', '-m', 'Merge fourth generic fix', fourth)
         self.set_lock(repo, fixes_commit=fourth)
-        full = self.commit(repo, 'Pin merged fourth fix')
-        r.git(repo, 'merge-base', '--is-ancestor', self.head, full)
-        r.git(repo, 'merge-base', '--is-ancestor', fourth, full)
+        custom = self.commit(repo, 'Pin merged fourth fix')
+        r.git(repo, 'merge-base', '--is-ancestor', self.head, custom)
+        r.git(repo, 'merge-base', '--is-ancestor', fourth, custom)
         self.assertEqual(r.git(repo, 'rev-parse', 'origin/fixture-pr-frozen'),
                          self.fixes_head)
         for flavor in r.FLAVORS:
@@ -138,7 +150,7 @@ class ReleaseTests(unittest.TestCase):
             receipt = r.prepare(repo, out, flavor, 'legacy')
             self.assertEqual(receipt['fixes_commit'], fourth)
             self.assertEqual((out / 'source/fix-3.patch').read_text(), 'reviewed 3\n')
-            self.assertEqual(receipt['source_commit'], full if flavor == 'full' else fourth)
+            self.assertEqual(receipt['source_commit'], custom if flavor == 'custom' else fourth)
 
     def test_branch_head_movement_does_not_change_locked_snapshot(self):
         repo = self.clone()
@@ -277,15 +289,15 @@ class ReleaseTests(unittest.TestCase):
 
     def fake_bundle(self, folder, flavor, *, evil=False, revision=None,
                     fixes_commit=None, source_commit=None, source_tree=None,
-                    upstream_base=None):
+                    upstream_base=None, schema_version=r.ARTIFACT_SCHEMA):
         folder.mkdir(parents=True)
         revision = revision or self.head
         fixes_commit = fixes_commit or self.fixes_head
-        source_commit = source_commit or (revision if flavor == 'full' else fixes_commit)
+        source_commit = source_commit or (revision if flavor == 'custom' else fixes_commit)
         version = '2.1.0-' + revision[:12]
         prefix = 'xr1710g-' + flavor + '-legacy-' + version
         document = {
-            'schema_version': 2, 'flavor': flavor, 'layout': 'legacy',
+            'schema_version': schema_version, 'flavor': flavor, 'layout': 'legacy',
             'version': '2.1.0', 'build_version': version,
             'release_commit': revision, 'fixes_commit': fixes_commit,
             'source_commit': source_commit,
@@ -328,7 +340,7 @@ class ReleaseTests(unittest.TestCase):
 
     def test_complete_pair_and_hashes(self):
         inputs = self.destination()
-        self.fake_bundle(inputs / 'one', 'full')
+        self.fake_bundle(inputs / 'one', 'custom')
         self.fake_bundle(inputs / 'two', 'fixes')
         out = self.destination()
         r.assemble(inputs, out, self.head, self.fixes_head)
@@ -336,18 +348,40 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(len(list(out.glob('*-source.tar.gz'))), 2)
         self.assertEqual(len(list(out.glob('*.itb'))), 2)
         pair = json.loads((out / 'release-pair.json').read_text())
+        self.assertEqual(pair['schema_version'], r.ARTIFACT_SCHEMA)
+        self.assertEqual({d['flavor'] for d in pair['variants']}, {'custom', 'fixes'})
         self.assertEqual(pair['fixes_commit'], self.fixes_head)
         self.assertEqual({d['source_commit'] for d in pair['variants']},
                          {self.head, self.fixes_head})
+
+    def test_legacy_full_archive_cannot_be_relabelled_as_custom(self):
+        inputs = self.destination()
+        folder = inputs / 'one'
+        self.fake_bundle(folder, 'full', source_commit=self.head, schema_version=2)
+        self.fake_bundle(inputs / 'two', 'fixes')
+        with self.assertRaises(ValueError):
+            r.assemble(inputs, self.destination(), self.head, self.fixes_head)
+        # Renaming public files and their outer receipt must not rewrite the
+        # archived source.json or turn the old binary into a new edition.
+        for path in folder.iterdir():
+            path.rename(path.with_name(path.name.replace('xr1710g-full-', 'xr1710g-custom-')))
+        receipt = next(folder.glob('*.json'))
+        document = json.loads(receipt.read_text())
+        document.update(schema_version=r.ARTIFACT_SCHEMA, flavor='custom')
+        for key in ('bundle', 'source_archive'):
+            document[key] = document[key].replace('xr1710g-full-', 'xr1710g-custom-')
+        receipt.write_text(json.dumps(document))
+        with self.assertRaisesRegex(ValueError, 'Bundle source receipt differs'):
+            r.assemble(inputs, self.destination(), self.head, self.fixes_head)
 
     def test_missing_mixed_and_private_artifacts_are_rejected(self):
         for mode in ['missing', 'mixed', 'private', 'modified', 'wrong-fixes',
                      'wrong-source', 'duplicate-edition', 'source-archive-modified']:
             inputs = self.destination()
-            self.fake_bundle(inputs / 'one', 'full')
+            self.fake_bundle(inputs / 'one', 'custom')
             if mode != 'missing':
                 self.fake_bundle(
-                    inputs / 'two', 'full' if mode == 'duplicate-edition' else 'fixes',
+                    inputs / 'two', 'custom' if mode == 'duplicate-edition' else 'fixes',
                     evil=mode == 'private',
                     revision=self.base if mode == 'mixed' else None,
                     fixes_commit=self.base if mode == 'wrong-fixes' else None,
@@ -364,13 +398,13 @@ class ReleaseTests(unittest.TestCase):
 
     def test_pair_controller_pins_upstream_and_both_source_trees(self):
         trees = {
-            'full': r.git(self.repo, 'rev-parse', self.head + '^{tree}'),
+            'custom': r.git(self.repo, 'rev-parse', self.head + '^{tree}'),
             'fixes': r.git(self.repo, 'rev-parse', self.fixes_head + '^{tree}'),
         }
         for mode in ['valid', 'wrong-upstream', 'forged-tree']:
             inputs = self.destination()
             upstream = self.head if mode == 'wrong-upstream' else self.base
-            self.fake_bundle(inputs / 'one', 'full', upstream_base=upstream)
+            self.fake_bundle(inputs / 'one', 'custom', upstream_base=upstream)
             self.fake_bundle(inputs / 'two', 'fixes', upstream_base=upstream,
                              source_tree='f' * 40 if mode == 'forged-tree' else None)
             with self.subTest(mode=mode):
@@ -384,7 +418,7 @@ class ReleaseTests(unittest.TestCase):
 
     def test_chinese_notes_pin_both_source_commits(self):
         inputs = self.destination()
-        self.fake_bundle(inputs / 'one', 'full')
+        self.fake_bundle(inputs / 'one', 'custom')
         self.fake_bundle(inputs / 'two', 'fixes')
         pair = self.destination()
         r.assemble(inputs, pair, self.head, self.fixes_head)
@@ -396,11 +430,17 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn('中文发布说明', notes)
         self.assertIn(self.head, notes)
         self.assertIn(self.fixes_head, notes)
-        self.assertIn('full', notes)
+        self.assertIn('custom', notes)
+        self.assertNotIn('定制版（full）', notes)
         self.assertIn('fixes', notes)
         with self.assertRaises(FileExistsError):
             r.generate_notes(pair / 'release-pair.json', output, template)
         document = json.loads((pair / 'release-pair.json').read_text())
+        legacy = dict(document, schema_version=2)
+        legacy_path = self.destination()
+        legacy_path.write_text(json.dumps(legacy))
+        with self.assertRaisesRegex(ValueError, 'Unsupported release pair'):
+            r.generate_notes(legacy_path, self.destination(), template)
         document['variants'][0]['source_commit'] = self.base
         (pair / 'release-pair.json').write_text(json.dumps(document))
         with self.assertRaises(REJECTED):

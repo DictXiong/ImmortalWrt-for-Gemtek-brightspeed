@@ -20,7 +20,9 @@ import tarfile
 ROOT = Path(__file__).resolve().parents[2]
 LOCK = 'configs/xr1710g-release.json'
 FEEDS = 'configs/xr1710g-fixes-feeds.conf'
-FLAVORS = ('full', 'fixes')
+LOCK_SCHEMA = 2
+ARTIFACT_SCHEMA = 3
+FLAVORS = ('custom', 'fixes')
 FORBIDDEN_PACKAGES = {'ap-profile', 'cli-profile', 'xr-roaming'}
 
 
@@ -57,7 +59,7 @@ def plan(repo):
     need(not git(repo, 'status', '--porcelain'), 'Commit the source before preparing a release')
     lock = json.loads(git(repo, 'show', revision + ':' + LOCK))
     need(set(lock) == {'schema_version', 'version', 'upstream_base', 'fixes_commit'} and
-         lock['schema_version'] == 2, 'Unsupported release lock')
+         lock['schema_version'] == LOCK_SCHEMA, 'Unsupported release lock')
     need(re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', lock['version']), 'Invalid public version')
     profile=git(repo,'show',revision+':package/dicttech/ap-profile/Makefile')
     need(re.search(r'^PKG_VERSION:='+re.escape(lock['version'])+r'$',profile,re.M), 'Release/profile version mismatch')
@@ -94,8 +96,9 @@ def plan(repo):
 
 def source_check(directory, receipt):
     source = directory / 'source'
+    need(receipt.get('schema_version') == ARTIFACT_SCHEMA, 'Unsupported build receipt schema')
     need(receipt['flavor'] in FLAVORS and receipt['layout'] in ('legacy', 'ubi'), 'Invalid build receipt')
-    expected = receipt['release_commit'] if receipt['flavor'] == 'full' else receipt['fixes_commit']
+    expected = receipt['release_commit'] if receipt['flavor'] == 'custom' else receipt['fixes_commit']
     need(receipt['source_commit'] == expected, 'Edition source does not match its fixed commit')
     need(git(source, 'rev-parse', 'HEAD') == expected, 'Source HEAD moved')
     need(receipt['source_tree'] == git(source, 'rev-parse', expected+'^{tree}'),
@@ -118,9 +121,10 @@ def prepare(repo, directory, flavor, layout):
     directory.mkdir(parents=True)
     source = directory / 'source'
     run(['git', 'clone', '--shared', '--no-checkout', str(repo), str(source)], repo)
-    source_commit = p['release_commit'] if flavor == 'full' else p['fixes_commit']
+    source_commit = p['release_commit'] if flavor == 'custom' else p['fixes_commit']
     run(['git', 'checkout', '--detach', source_commit], source)
     receipt = {k: v for k, v in p.items() if k != 'feed_text'}
+    receipt['schema_version'] = ARTIFACT_SCHEMA
     # Keep the combined public build version distinct from the schema's version.
     receipt['build_version'] = p['version'] + '-' + p['release_commit'][:12]
     receipt.update({'flavor': flavor, 'layout': layout, 'source_commit': source_commit,
@@ -207,7 +211,7 @@ def build(directory, jobs, prepare_only=False):
     env = {**os.environ, 'SOURCE_DATE_EPOCH': str(d['source_date_epoch'])}
     def shell(script):
         run(['bash', '-Eeuo', 'pipefail', '-c', 'umask 022\n'+script], source, capture=False, env=env)
-    if d['flavor'] == 'full':
+    if d['flavor'] == 'custom':
         command = ['bash', 'scripts/dicttech/build-ap.sh', '--layout', d['layout'], '--jobs', str(jobs)]
         if prepare_only: command.append('--prepare-only')
         run(command, source, capture=False, env=env)
@@ -235,7 +239,7 @@ def build(directory, jobs, prepare_only=False):
         package_dir = output/'packages'
     else:
         package_dir = target/'dicttech-packages'/image.name.removesuffix('-squashfs-sysupgrade.itb')
-        need(package_dir.is_dir(), 'Verified full-edition APK set missing')
+        need(package_dir.is_dir(), 'Verified custom-edition APK set missing')
     public = directory/'public';public.mkdir()
     # Flat variant archives prevent collisions between config.buildinfo, APKs,
     # kernel ABI and checksums. Never upload bin/** or builder signing keys.
@@ -270,11 +274,11 @@ def assemble(inputs, output, revision, expected_fixes, expected_upstream=None, e
     reports = []
     for path in inputs.rglob('xr1710g-*.json'):
         d = json.loads(path.read_text())
-        need(d.get('schema_version') == 2 and d.get('passed') is True and
+        need(d.get('schema_version') == ARTIFACT_SCHEMA and d.get('passed') is True and
              d.get('release_commit') == revision and d.get('fixes_commit') == expected_fixes and
              d.get('flavor') in FLAVORS,
              'Artifact has a different source or did not pass')
-        source_commit=revision if d['flavor']=='full' else expected_fixes
+        source_commit=revision if d['flavor']=='custom' else expected_fixes
         need(d.get('source_commit')==source_commit,'Artifact edition has the wrong source commit')
         need(re.fullmatch('[0-9a-f]{40}',d.get('source_tree','')),'Invalid source tree')
         if expected_upstream is not None:
@@ -322,7 +326,7 @@ def assemble(inputs, output, revision, expected_fixes, expected_upstream=None, e
         shutil.copyfile(download,output/download.name)
         source_archive=path.parent/d['source_archive']
         shutil.copyfile(source_archive,output/source_archive.name)
-    save(output/'release-pair.json',{'schema_version':2,'release_commit':revision,'fixes_commit':expected_fixes,
+    save(output/'release-pair.json',{'schema_version':ARTIFACT_SCHEMA,'release_commit':revision,'fixes_commit':expected_fixes,
         'layout':reports[0][2]['layout'],'variants':[d for _,_,d in sorted(reports,key=lambda x:x[2]['flavor'])]})
     (output/'sha256sums').write_text(''.join(digest(p)+'  '+p.name+'\n' for p in sorted(output.iterdir()) if p.is_file()))
 
@@ -330,7 +334,7 @@ def assemble(inputs, output, revision, expected_fixes, expected_upstream=None, e
 def generate_notes(pair_path, output_path, template_path=None):
     """Generate Chinese release notes from an already verified immutable pair."""
     pair=json.loads(pair_path.read_text())
-    need(pair.get('schema_version')==2,'Unsupported release pair')
+    need(pair.get('schema_version')==ARTIFACT_SCHEMA,'Unsupported release pair')
     for key in ['release_commit','fixes_commit']:
         need(isinstance(pair.get(key),str) and re.fullmatch('[0-9a-f]{40}',pair[key]),'Invalid release source ID')
     variants=pair.get('variants',[])
@@ -338,13 +342,13 @@ def generate_notes(pair_path, output_path, template_path=None):
     need(pair.get('layout') in ('legacy','ubi'),'Invalid release layout')
     lines=[(template_path or ROOT/'docs/xr1710g-release-notes.md').read_text().rstrip(),
            '', '## 本次发布的固定源码', '',
-           '- 定制版（full）：`'+pair['release_commit']+'`',
+           '- 定制版（custom）：`'+pair['release_commit']+'`',
            '- 通用修复版（fixes）：`'+pair['fixes_commit']+'`',
            '- 分区布局：`'+pair['layout']+'`','',
            '以下记录对应本次实际构建，不使用移动分支名作为版本依据。', '']
     for d in sorted(variants,key=lambda x:x['flavor']):
-        expected=pair['release_commit'] if d['flavor']=='full' else pair['fixes_commit']
-        need(d.get('release_commit')==pair['release_commit'] and d.get('fixes_commit')==pair['fixes_commit'] and
+        expected=pair['release_commit'] if d['flavor']=='custom' else pair['fixes_commit']
+        need(d.get('schema_version')==ARTIFACT_SCHEMA and d.get('release_commit')==pair['release_commit'] and d.get('fixes_commit')==pair['fixes_commit'] and
              d.get('source_commit')==expected and d.get('layout')==pair['layout'], 'Notes contain mixed source snapshots')
         lines += ['- `'+d['flavor']+'` 源码提交：`'+d['source_commit']+'`']
     lines += ['', '固件、匹配 APK 与精确源码归档的校验值见附件 `sha256sums`；',
@@ -367,7 +371,7 @@ def main():
     elif args.action=='prepare':print(json.dumps(prepare(ROOT,args.directory,args.flavor,args.layout),indent=2))
     elif args.action=='assemble':
         p=plan(ROOT)
-        trees={'full':git(ROOT,'rev-parse',p['release_commit']+'^{tree}'),
+        trees={'custom':git(ROOT,'rev-parse',p['release_commit']+'^{tree}'),
                'fixes':git(ROOT,'rev-parse',p['fixes_commit']+'^{tree}')}
         assemble(args.inputs,args.output,p['release_commit'],p['fixes_commit'],p['upstream_base'],trees)
     elif args.action=='notes':generate_notes(args.pair,args.output)

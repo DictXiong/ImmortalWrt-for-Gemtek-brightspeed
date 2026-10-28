@@ -17,8 +17,9 @@ XR1710G 与 XG2010G 设备维护的 Airoha AN7581 固件项目。
 
 本仓库的 `dicttech/xr1710g-ap` 自用分支另提供[统一 AP 镜像与部署流程](docs/dicttech-ap.md)，
 使用独立构建配置、无秘密的公共默认值和外部 JSON 部署。其首次启动入口与下述上游默认配置不同。
-[双版本发布流程](docs/xr1710g-releases.md)从两条活跃维护分支的固定提交，分别构建 `full` 定制版和
+[双版本发布流程](docs/xr1710g-releases.md)从两条活跃维护分支的固定提交，分别构建 `custom` 定制版和
 `fixes` 通用修复版，并汇入同一个 Release；通用修复分支不带个人公钥或 AP 策略，原 PR 分支保持冻结。
+一般用户选择 `fixes`；`custom` 面向 DictTech 自用部署，包含所有者公钥和预置策略。
 
 当前维护两个相互隔离的硬件配置：
 

@@ -31,7 +31,7 @@ jobs:
   plan:
     runs-on: ubuntu-24.04
     outputs:
-      full_commit: ${{ steps.pins.outputs.full_commit }}
+      custom_commit: ${{ steps.pins.outputs.custom_commit }}
       fixes_commit: ${{ steps.pins.outputs.fixes_commit }}
     steps:
       - uses: actions/checkout@v6
@@ -41,14 +41,14 @@ jobs:
       - name: Freeze and validate the two source commits
         id: pins
         env:
-          FULL_SHA: ${{ github.sha }}
+          CUSTOM_SHA: ${{ github.sha }}
         run: |
           python3 scripts/dicttech/release.py plan > "$RUNNER_TEMP/release-plan.json"
           python3 - "$RUNNER_TEMP/release-plan.json" >> "$GITHUB_OUTPUT" <<'PY'
           import json, os, sys
           plan = json.load(open(sys.argv[1]))
-          assert plan['release_commit'] == os.environ['FULL_SHA']
-          print('full_commit=' + plan['release_commit'])
+          assert plan['release_commit'] == os.environ['CUSTOM_SHA']
+          print('custom_commit=' + plan['release_commit'])
           print('fixes_commit=' + plan['fixes_commit'])
           PY
       - name: Check optional draft-release authorization before compiling
@@ -72,13 +72,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        flavor: [full, fixes]
+        flavor: [custom, fixes]
     steps:
-      # The release controller always comes from the pinned personal commit.
+      # The release controller always comes from the pinned custom commit.
       # prepare checks out the selected edition's exact source commit separately.
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.plan.outputs.full_commit }}
+          ref: ${{ needs.plan.outputs.custom_commit }}
           fetch-depth: 0
       - name: Record hosted build capacity
         run: |
@@ -95,7 +95,7 @@ jobs:
         env:
           FLAVOR: ${{ matrix.flavor }}
           LAYOUT: ${{ inputs.layout || 'legacy' }}
-          FULL_SHA: ${{ needs.plan.outputs.full_commit }}
+          CUSTOM_SHA: ${{ needs.plan.outputs.custom_commit }}
           FIXES_SHA: ${{ needs.plan.outputs.fixes_commit }}
         run: |
           python3 scripts/dicttech/release.py prepare --flavor "$FLAVOR" --layout "$LAYOUT" \
@@ -103,9 +103,9 @@ jobs:
           python3 - "$RUNNER_TEMP/xr-release-$FLAVOR/source.json" <<'PY'
           import json, os, sys
           source = json.load(open(sys.argv[1]))
-          assert source['release_commit'] == os.environ['FULL_SHA']
+          assert source['release_commit'] == os.environ['CUSTOM_SHA']
           assert source['fixes_commit'] == os.environ['FIXES_SHA']
-          expected = os.environ['FULL_SHA'] if os.environ['FLAVOR'] == 'full' else os.environ['FIXES_SHA']
+          expected = os.environ['CUSTOM_SHA'] if os.environ['FLAVOR'] == 'custom' else os.environ['FIXES_SHA']
           assert source['source_commit'] == expected
           PY
       - name: Build and audit matched firmware and APKs
@@ -118,7 +118,7 @@ jobs:
       - name: Upload only the audited public edition
         uses: actions/upload-artifact@v7
         with:
-          name: xr1710g-${{ matrix.flavor }}-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.full_commit }}
+          name: xr1710g-${{ matrix.flavor }}-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.custom_commit }}
           if-no-files-found: error
           retention-days: 30
           path: ${{ runner.temp }}/xr-release-${{ matrix.flavor }}/public/*
@@ -126,7 +126,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: xr1710g-${{ matrix.flavor }}-build-log-${{ needs.plan.outputs.full_commit }}
+          name: xr1710g-${{ matrix.flavor }}-build-log-${{ needs.plan.outputs.custom_commit }}
           if-no-files-found: ignore
           retention-days: 14
           path: ${{ runner.temp }}/xr-${{ matrix.flavor }}-build.log
@@ -136,11 +136,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.plan.outputs.full_commit }}
+          ref: ${{ needs.plan.outputs.custom_commit }}
           fetch-depth: 0
       - uses: actions/download-artifact@v8
         with:
-          pattern: xr1710g-*-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.full_commit }}
+          pattern: xr1710g-*-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.custom_commit }}
           path: ${{ runner.temp }}/edition-artifacts
       - name: Verify both editions belong to the pinned source pair
         run: |
@@ -148,7 +148,7 @@ jobs:
             --output "$RUNNER_TEMP/release-pair"
       - uses: actions/upload-artifact@v7
         with:
-          name: xr1710g-release-pair-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.full_commit }}
+          name: xr1710g-release-pair-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.custom_commit }}
           if-no-files-found: error
           retention-days: 30
           path: ${{ runner.temp }}/release-pair/*
@@ -159,11 +159,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.plan.outputs.full_commit }}
+          ref: ${{ needs.plan.outputs.custom_commit }}
           fetch-depth: 0
       - uses: actions/download-artifact@v8
         with:
-          name: xr1710g-release-pair-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.full_commit }}
+          name: xr1710g-release-pair-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.custom_commit }}
           path: release-pair
       - name: Generate Chinese notes from the verified source pair
         run: |
@@ -173,7 +173,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           RELEASE_TAG: ${{ inputs.release_tag }}
-          RELEASE_SHA: ${{ needs.plan.outputs.full_commit }}
+          RELEASE_SHA: ${{ needs.plan.outputs.custom_commit }}
           GH_REPO: ${{ github.repository }}
         run: |
           [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$ ]] || { echo 'Invalid tag'; exit 1; }

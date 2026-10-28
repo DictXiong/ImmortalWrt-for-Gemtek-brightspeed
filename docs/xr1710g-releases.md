@@ -24,8 +24,14 @@ fixes 分支从原 PR 提交出发合并既有 naoki 基线，保留原始三个
 
 | 固件 | 固定源码 | 默认行为 |
 | --- | --- | --- |
-| `full` | 定制分支的发布提交 | DictTech AP 策略、部署契约、所有者公钥、CLI、漫游脚本、定制 UI 和已合入的通用修复 |
+| `custom` | 定制分支的发布提交 | DictTech AP 策略、部署契约、所有者公钥、CLI、漫游脚本、定制 UI 和已合入的通用修复 |
 | `fixes` | 配置中的 `fixes_commit` | 该 fixes 快照中的上游路由器/软件包默认行为及通用修复；不含个人策略、公钥和定制脚本 |
+
+一般用户选择 `fixes`；`custom` 面向 DictTech 自用部署。
+
+新构建使用 `custom`/`fixes` 命名，公开的 `source.json`、版本来源记录和 `release-pair.json` 使用 schema 3；配置锁的字段未变，仍为 schema 2。`release_commit` 继续表示这次发布控制器和定制版源码的准确提交。
+
+早期 RC 的 `full` 文件名、schema 2 记录及校验值保持原样；需要重放旧流程时使用对应 tag 中的控制器。新工具不接受 `full` 别名，也不会把旧产物自动重标成 `custom`。新的文件名前缀为 `xr1710g-custom-...` 和 `xr1710g-fixes-...`。
 
 fixes 构建沿用该快照的 `1710.config` 软件包策略，仅选定一个分区 profile 并写入可区分版本的构建信息。其依赖由定制提交中的 `configs/xr1710g-fixes-feeds.conf` 固定；共用的七个 feed 使用已验证的相同版本，其余上游 feed 单独固定。只应用 fixes 源码本身已有的 feed 补丁，不复制个人 feed 补丁。
 
@@ -43,11 +49,11 @@ fixes 构建沿用该快照的 `1710.config` 软件包策略，仅选定一个�
 
 ```sh
 python3 scripts/dicttech/release.py plan
-python3 scripts/dicttech/release.py prepare --flavor full --layout legacy \
-  --directory /tmp/xr-release-full
+python3 scripts/dicttech/release.py prepare --flavor custom --layout legacy \
+  --directory /tmp/xr-release-custom
 python3 scripts/dicttech/release.py prepare --flavor fixes --layout legacy \
   --directory /tmp/xr-release-fixes
-python3 scripts/dicttech/release.py build --directory /tmp/xr-release-full --jobs 4
+python3 scripts/dicttech/release.py build --directory /tmp/xr-release-custom --jobs 4
 python3 scripts/dicttech/release.py build --directory /tmp/xr-release-fixes --jobs 4
 ```
 
@@ -75,8 +81,8 @@ python3 scripts/dicttech/release.py notes --pair /tmp/xr-release-pair/release-pa
 
 定制分支推送修改发布工作流或 `configs/xr1710g-release.json` 的提交时，也会自动启动 `legacy` 布局的双版本候选构建。这使尚未进入默认分支的工作流也能首次运行；自动触发始终只生成候选 artifacts，不创建 tag 或 Release。其他源码提交可使用手动运行，显式选择布局；尚未在默认分支注册的 workflow 可能不支持 GitHub 的手动调度，可通过一次发布配置更新触发候选构建。
 
-1. 开始时固定并校验 full/fixes 两个 SHA，后续所有 job 使用这对快照。
-2. 两个隔离 matrix job 分别构建、审计 `full` 和 `fixes`；任一失败就不会汇总 Release。
+1. 开始时固定并校验 custom/fixes 两个 SHA，后续所有 job 使用这对快照。
+2. 两个隔离 matrix job 分别构建、审计 `custom` 和 `fixes`；任一失败就不会汇总 Release。
 3. `release_tag` 留空时，只生成候选 artifacts，不需要额外发布凭据。
 4. 填写新标签时，先检查额外发布凭据是否配置；两边构建及配对检查成功后，生成中文 notes 并创建一个草稿 Release。
 5. 发布前补充并检查本次实机结果与已知问题。工作流不会覆盖已有 tag 或 Release。
