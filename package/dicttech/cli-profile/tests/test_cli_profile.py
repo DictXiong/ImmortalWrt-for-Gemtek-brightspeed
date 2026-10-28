@@ -61,9 +61,10 @@ class ProfileTests(unittest.TestCase):
         # unrelated site completions with potentially writable ancestors.
         # Test the real host functions in an owned, private fixture instead
         # of weakening the shipped profile's completion security check.
-        functions = ("compinit", "compaudit", "compdump", "colors", "is-at-least")
+        functions = ("compinit", "compaudit", "compdump", "compinstall",
+                     "colors", "is-at-least")
         sources = run([executable, "-fc", '''
-for name in compinit compaudit compdump colors is-at-least; do
+for name in compinit compaudit compdump compinstall colors is-at-least; do
     autoload -Uz +X "$name" || exit 23
     print -r -- "${functions_source[$name]}"
 done
@@ -75,9 +76,13 @@ done
             path = completion_path / name
             shutil.copyfile(source, path)
             path.chmod(0o644)
-        self.env["FPATH"] = str(completion_path)
+        self.env["DICTTECH_CLI_TEST_FPATH"] = str(completion_path)
         flags = "-fic" if interactive else "-fc"
-        return run([executable, flags, 'source "$DICTTECH_CLI_ROOT/zshrc"\n' + script],
+        # Set fpath after global zshenv: some hosts prepend their installed
+        # function paths there, which would otherwise hide fixture omissions.
+        return run([executable, flags,
+                    'fpath=("$DICTTECH_CLI_TEST_FPATH")\n'
+                    'source "$DICTTECH_CLI_ROOT/zshrc"\n' + script],
                    env=self.env, cwd=self.home)
 
     def test_pinned_source_hashes_and_public_key_wire_format(self):
