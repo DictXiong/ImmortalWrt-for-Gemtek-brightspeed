@@ -80,6 +80,11 @@ jobs:
         with:
           ref: ${{ needs.plan.outputs.full_commit }}
           fetch-depth: 0
+      - name: Record hosted build capacity
+        run: |
+          nproc
+          free -h
+          df -h "$RUNNER_TEMP"
       - name: Install build tools
         run: |
           sudo apt-get update
@@ -108,7 +113,7 @@ jobs:
           FLAVOR: ${{ matrix.flavor }}
         run: |
           set -o pipefail
-          python3 scripts/dicttech/release.py build --directory "$RUNNER_TEMP/xr-release-$FLAVOR" --jobs 2 \
+          python3 scripts/dicttech/release.py build --directory "$RUNNER_TEMP/xr-release-$FLAVOR" --jobs "$(nproc)" \
             2>&1 | tee "$RUNNER_TEMP/xr-$FLAVOR-build.log"
       - name: Upload only the audited public edition
         uses: actions/upload-artifact@v7

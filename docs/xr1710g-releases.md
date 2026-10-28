@@ -54,6 +54,7 @@ python3 scripts/dicttech/release.py build --directory /tmp/xr-release-fixes --jo
 每次使用新的构建目录。`build --prepare-only` 只进行 feed 安装和 defconfig，不完整编译固件。两个版本可在独立构建器上并行运行；不会共享可变的构建输出或 APK 签名私钥。
 
 两个版本都会将 Kconfig 循环依赖作为配置错误，在编译前停止。并行编译失败时自动以 `-j1 V=s` 串行重试，保留具体编译错误；只有后续完整编译和产物审计通过才会生成公开候选。
+CI 按 runner 实际 CPU 核数设置并行编译，并在日志中记录 CPU、内存和磁盘容量。
 
 每个 `public/` 都包含明确标注版本的可直接刷写 ITB、配套固件/APK 归档、由准确 `source_commit` 导出的独立 `*-source.tar.gz` 源码归档、JSON 来源记录和校验值。归档只收录与该镜像清单匹配、经其公钥验证的 APK，不上传构建器私钥或真实部署配置。两个版本具有各自的内核 ABI 和签名密钥，不能混用 kmod/APK。固定输入不承诺二进制逐字节可重现，因为每次构建仍会生成独立签名密钥。
 
