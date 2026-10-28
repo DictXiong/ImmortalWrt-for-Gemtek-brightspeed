@@ -1,66 +1,45 @@
-# One branch, two XR1710G editions
+# XR1710G：两条维护分支，一个双版本 Release
 
-Maintain `dicttech/xr1710g-ap` as the only evolving release branch. Leave the
-three-commit PR branch `fix/xr1710g-ap-datapath` unchanged. Existing personal
-commits are retained: squashing already pushed and deployed history would lose
-useful regression references without reducing the eventual upstream merge diff.
-The new paired-release infrastructure is one separate change. Future work can
-remain in small, reviewable commits; release preparation never rewrites history.
+日常维护两条活跃分支，已经提交 PR 的分支保持冻结：
 
-## Source boundaries
+| 分支 | 用途 |
+| --- | --- |
+| `fix/xr1710g-ap-datapath` | 原始三个 fix 的 PR 分支，保持提交和引用不动 |
+| `dicttech/xr1710g-fixes` | 跟踪 naoki，维护可用于通用固件的 bug 修复 |
+| `dicttech/xr1710g-ap` | 个人定制版，通过 merge 跟进 fixes 分支 |
 
-| Edition | Firmware source | Default behavior |
+fixes 分支从原 PR 提交出发合并既有 naoki 基线，保留原始三个 fix 的 SHA。以后通用修复直接追加在 fixes 分支，再由定制分支 merge；不需要把新 fix 插入早期历史，也不需要为此 rebase 已发布或已部署的定制提交。仅涉及个人部署策略、配置契约或自用脚本的修复留在定制分支。
+
+## 固定两个源码提交
+
+定制分支中的 `configs/xr1710g-release.json` 使用 schema 2，记录：
+
+- `version`：与 AP profile 一致的公共版本。
+- `upstream_base`：这次 fixes 快照包含的固定 naoki 基线。
+- `fixes_commit`：这次通用固件使用的准确 fixes 提交 SHA。
+
+运行 workflow 时，定制版/发布控制器提交先固定为该次运行的 `github.sha`；fixes SHA 从这份提交中的配置读取。控制器检查固定 fixes 提交已经合入定制提交，避免两种版本携带不同批次的通用修复。
+
+构建阶段不再读取移动中的分支头。两个隔离的 detached checkout 分别取准确的定制提交和 fixes 提交，之后独立构建与审计；不会临时拼接补丁列表，也不会在维护分支中来回 checkout。源码提交、Git tree、控制器提交、分区布局和 feed 版本一起进入每份产物的 `source.json`。脏控制器、改动后的源码及额外的 rootfs overlay 会被拒绝。
+
+| 固件 | 固定源码 | 默认行为 |
 | --- | --- | --- |
-| `full` | Exact release commit on the personal branch | DictTech AP profile, deployment contract, CLI/owner public keys, roaming helper, personal UI and all three fixes |
-| `fixes` | Recorded naoki baseline plus only the reviewed fix commits | Upstream router/package/default policy; no DictTech provisioning, owner keys, AP policy, scripts or personal UI patches |
+| `full` | 定制分支的发布提交 | DictTech AP 策略、部署契约、所有者公钥、CLI、漫游脚本、定制 UI 和已合入的通用修复 |
+| `fixes` | 配置中的 `fixes_commit` | 该 fixes 快照中的上游路由器/软件包默认行为及通用修复；不含个人策略、公钥和定制脚本 |
 
-`configs/xr1710g-release.json` pins the upstream baseline, public version and
-ordered fix commit IDs. The initial fixes are pre-E2 WAN RX calibration, PPE
-bridge TTL preservation and mac80211 ONLY_MONITOR decapsulation handling.
-Upstream changes already merged into the recorded baseline are included in
-both editions. An already incorporated identical fix is recorded as such;
-patch conflicts stop the build and require review.
+fixes 构建沿用该快照的 `1710.config` 软件包策略，仅选定一个分区 profile 并写入可区分版本的构建信息。其依赖由定制提交中的 `configs/xr1710g-fixes-feeds.conf` 固定；共用的七个 feed 使用已验证的相同版本，其余上游 feed 单独固定。只应用 fixes 源码本身已有的 feed 补丁，不复制个人 feed 补丁。
 
-The controller makes two fresh detached local clones of the **same release
-commit**. The fixes clone checks out the pinned upstream commit and applies the
-three commits to its index without creating a new commit or maintaining another
-branch. Its tree is checked against upstream plus the allowed fix paths, and
-the final fix contents must equal those in the full edition. Full source must
-equal the exact release tree. Rootfs overlays, dirty controllers, modified
-sources and unexpected untracked inputs are refused.
+## 分区布局与版本切换
 
-This is deliberately not a Kconfig switch: personal changes also touch shared
-boot code, hostapd, LuCI patches and DTS. Disabling just `ap-profile` would leave
-some of those changes in a supposedly generic image.
+一次构建选择 `legacy`（默认）或 `ubi`，产出该布局的两个 sysupgrade ITB。选择 profile 不会转换引导程序或分区表，也不会刷写路由器、Recovery、U-Boot 或校准数据。
 
-The fixes build starts with upstream `1710.config`, retaining its package
-policy and selecting just the requested partition profile. Feed repositories
-are pinned by `configs/xr1710g-fixes-feeds.conf`; the seven shared feeds use the
-same revisions as the validated personal build. Extra stock feeds are pinned
-separately. Only feed patches present in the upstream source are applied.
-Personal package/UI/boot changes are not copied into that tree.
+对于 `legacy`，通用版保留上游 DTS 的前 6 MiB `vendor` 分区命名；定制版将同一跨度拆分为 `bootloader`、`uenv` 和 `dsd`。两个版本的镜像检查分别验证各自准确的分区表、rootdisk 和 factory cell。
 
-## Partition layouts and upgrades
+跨定制版/通用版切换前应备份并准备适合目标版本的配置。源码和镜像隔离不会清除路由器已有的 overlay；直接保留旧配置可能留下旧版公钥、访客规则及 AP 配置，即使新镜像不含对应个人软件包。
 
-Every invocation chooses `legacy` (default) or `ubi`. These are distinct device
-profiles, not a bootloader/partition migration. A release contains exactly two
-sysupgrade ITBs for the selected layout, rather than mixing both layouts.
+## 本地构建
 
-For `legacy`, the stock upstream DTS calls the first 6 MiB `vendor`; the full
-edition splits that span into `bootloader`, `uenv` and `dsd`. Each edition's
-finished-image checker validates its own exact map, rootdisk and factory cells.
-Neither build flashes a router, Recovery, bootloader or factory data.
-
-The generic edition is **not** a replacement for a provisioned full edition
-with a retained personal overlay. Back up before crossing editions and use
-fresh configuration appropriate to the destination. Otherwise retained owner
-keys, guest rules and AP configuration can outlive the package that owned them.
-This source/image separation does not erase configuration already on a device.
-
-## Local entry points
-
-Commit reviewed changes first; real deployment inputs stay outside this tree.
-From a clean checkout:
+先提交经过检查的修改，真实部署输入仍放在本仓库外。从干净的定制分支运行：
 
 ```sh
 python3 scripts/dicttech/release.py plan
@@ -72,59 +51,51 @@ python3 scripts/dicttech/release.py build --directory /tmp/xr-release-full --job
 python3 scripts/dicttech/release.py build --directory /tmp/xr-release-fixes --jobs 4
 ```
 
-Use fresh directory names for each build. `build --prepare-only` exercises feed
-installation and defconfig without compiling firmware. No checkout operation
-runs in the maintained source tree; the PR branch is not moved. Both builds
-can run simultaneously on independent builders. Download/toolchain caches are
-not shared with mutable outputs or signing keys.
+每次使用新的构建目录。`build --prepare-only` 只进行 feed 安装和 defconfig，不完整编译固件。两个版本可在独立构建器上并行运行；不会共享可变的构建输出或 APK 签名私钥。
 
-Each `public/` contains a clearly named ITB, an archive with firmware, manifest,
-config/feeds/version/source metadata, audit reports and **only** its matching
-signed APK set, plus a JSON receipt and checksums. Each edition has its own
-kernel ABI and signing keys; never mix their kmods/APKs. Random builder signing
-keys mean locked inputs alone do not promise bit-for-bit identical binaries.
-Private APK signing keys and real deployment data are never release members.
-The firmware is not claimed to have a publisher signature merely because its
-included APK signatures and FIT hashes passed.
+每个 `public/` 都包含明确标注版本的可直接刷写 ITB、配套固件/APK 归档、由准确 `source_commit` 导出的独立 `*-source.tar.gz` 源码归档、JSON 来源记录和校验值。归档只收录与该镜像清单匹配、经其公钥验证的 APK，不上传构建器私钥或真实部署配置。两个版本具有各自的内核 ABI 和签名密钥，不能混用 kmod/APK。固定输入不承诺二进制逐字节可重现，因为每次构建仍会生成独立签名密钥。
 
-`assemble` accepts two successful edition artifacts belonging to the same
-release commit/layout/fix set, checks bundle and ITB hashes and the archive
-member allowlist, and emits one pair manifest and checksum list. A missing
-edition, mixed commit, modified image or extra private archive file is refused.
+将两个 `public/` 目录作为输入交给 `assemble`，可得到一个配对目录：
 
-## GitHub Actions and releases
+```sh
+python3 scripts/dicttech/release.py assemble --inputs /path/to/edition-artifacts \
+  --output /tmp/xr-release-pair
+python3 scripts/dicttech/release.py notes --pair /tmp/xr-release-pair/release-pair.json \
+  --output /tmp/xr-release-notes.md
+```
 
-Run **Build XR1710G release pair** (`xr1710g-release.yml`) on this branch:
+只有两份产物都通过、属于配置中的同一对固定提交且布局一致时才会成功。缺失版本、混入其他提交、修改后的 ITB/归档或额外的私密归档成员会被拒绝。`notes` 使用中文模板与已验证配对记录生成说明，列出真实源码提交，不把构建检查写成不存在的实机验收。
 
-1. Select the layout. Two isolated matrix jobs build and audit `full`/`fixes`.
-2. Leave `release_tag` empty for candidate artifacts only.
-3. Set a new tag to create **one draft release**, only after both builds and
-   pair validation succeed. It includes both directly downloadable ITBs and
-   their separate firmware/APK bundles, source receipts and checksums.
-4. Review hardware acceptance and release notes before publishing the draft.
+## 一个 GitHub Release
 
-The workflow never overwrites an existing tag/release. The original upstream
-**Build Firmware** workflow refuses this personal source tree, preventing a
-stock-config/personal-source hybrid from being published accidentally. The
-existing **Build DictTech AP** push workflow remains a full-edition candidate
-check and does not publish releases.
+在定制分支运行 **Build XR1710G release pair**（`xr1710g-release.yml`）：
 
-CI validates construction and artifact boundaries; it does not prove physical
-WAN stability, cold/warm boot recovery, client MLO/6GHz, roaming or the live
-guest spoofing/tag-injection matrix. Keep those acceptance results and known
-issues explicit in each release rather than treating a successful compilation
-as a hardware certification.
+1. 开始时固定并校验 full/fixes 两个 SHA，后续所有 job 使用这对快照。
+2. 两个隔离 matrix job 分别构建、审计 `full` 和 `fixes`；任一失败就不会汇总 Release。
+3. `release_tag` 留空时，只生成候选 artifacts，不需要额外发布凭据。
+4. 填写新标签时，先检查额外发布凭据是否配置；两边构建及配对检查成功后，生成中文 notes 并创建一个草稿 Release。
+5. 发布前补充并检查本次实机结果与已知问题。工作流不会覆盖已有 tag 或 Release。
 
-## Updating upstream
+Release 的主 tag 指向固定的定制提交；附件中的通用固件对应 `fixes_commit`，由清单明确标注。GitHub 自动附带的源码 ZIP/tarball 对应主 tag，不代表另一份源码。发布附件因此同时提供两个版本各自的精确源码归档，并校验归档哈希；也可以为准确 fixes SHA 另建 `版本号-fixes` tag，便于浏览，但无需再创建第二个 Release。
 
-Merge naoki into the personal branch normally, update `upstream_base` to that
-merged commit, review/update feed pins, and run source projection tests and both
-builds. Update the explicit fix list when fixes are adopted or revised; do not
-automatically use a moving remote branch as the release base. A conflict or fix
-content mismatch blocks the release instead of silently changing its scope.
+原 **Build Firmware** workflow 在个人源码树上仍会拒绝执行，防止把上游配置与个人源码混成第三种固件。**Build DictTech AP** push workflow 保留为定制版候选检查，不发布 Release。
 
-Offline boundary regression tests:
+### 自动创建草稿的凭据
+
+创建草稿使用仓库 Secret `RELEASE_TOKEN`，不回退到默认 `GITHUB_TOKEN`。该 token 必须能访问本仓库，并有 **Contents: write** 和 **Workflows: write**；经典 PAT 对应仓库访问及 `workflow` scope。无需创建草稿时，保持 `release_tag` 为空即可。
+
+原因是定制提交相对默认分支修改了 `.github/workflows/`：GitHub 对该类目标提交要求额外的 workflow 写权限，默认 `GITHUB_TOKEN` 无法获得这项权限。详见 [GitHub 创建 Release API 的权限说明](https://docs.github.com/en/rest/releases/releases#create-a-release)。缺少 Secret 会在耗时编译前失败；其具体权限是否充分仍由 GitHub 在创建 Release 时校验，仓库可读不等于具备发布权限。此实现不自动修改 Secret，也没有把未实际调用过的发布路径声称为已在线验证。
+
+## 后续修复与上游同步
+
+通用修复在 `dicttech/xr1710g-fixes` 上开发、验证和提交。naoki 更新也先 merge 到这个分支，再把 fixes 分支 merge 到定制分支；新 fix 只需追加，不重排旧历史或改写原 PR 分支。
+
+完成合并后，在定制分支更新 `upstream_base` 和 `fixes_commit`，审查需要更新的 feed pins，提交固定配置。运行 `plan` 验证祖先关系和两份准确源码，再执行两个版本的构建及适用的实机验收。已被上游采纳的修复按正常 merge/冲突处理维护，发布时不再依赖固定的“前三/第四个 fix”提交位置。
+
+离线回归：
 
 ```sh
 python3 scripts/dicttech/tests/test_release.py
 ```
+
+CI 的源码、构建及产物检查不等于实机认证。WAN 长时稳定性、冷/暖启动恢复、实际 MLO/6GHz 客户端、物理漫游和硬件卸载下完整的访客源地址伪造/VLAN 注入矩阵，只有相应实测证据才能标为通过；未测项目继续保留为未测。

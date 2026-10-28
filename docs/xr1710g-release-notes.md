@@ -1,23 +1,10 @@
-This release contains two XR1710G editions built from one recorded release
-commit. Select the edition and partition layout matching your intended use.
+本次发布包含 XR1710G 的两个版本。两个版本分别从清单中固定的提交独立构建，共用本页 Release，具体源码提交、分区布局及文件校验值见下方自动生成的发布信息和 `release-pair.json`。
 
-- **full**: DictTech's personal AP firmware, including owner public-key access,
-  fleet provisioning, guest policy, wired roaming and personal UI/CLI defaults.
-  This edition is intended for the owner's deployment.
-- **fixes**: the recorded naoki baseline plus the reviewed WAN RX calibration,
-  PPE bridge TTL and mac80211 ONLY_MONITOR fixes. It retains upstream router
-  defaults and excludes DictTech public keys, provisioning and personal policy.
+- **`full` 定制版**：面向 DictTech 自用 AP 部署，包含统一 AP 配置、外部配置部署工具、访客网络策略、有线回程漫游，以及定制的 WebUI 和命令行环境。新刷入且尚未完成初始化的镜像包含所有者公钥及初始化专用公钥；初始化专用身份在确认部署后退役。此版本的首次启动入口与上游通用默认配置不同。
+- **`fixes` 通用修复版**：使用独立维护的 fixes 分支，保留所记录 naoki 基线的路由器默认行为及软件包策略，叠加通用 bug 修复；不包含 DictTech 所有者公钥、初始化凭据、AP 部署策略或定制脚本/UI。首批修复包括 WAN RX 校准、PPE 桥接 TTL 以及 mac80211 ONLY_MONITOR 解封装处理；本次确切内容以固定的源码提交为准。
 
-Both ITBs are directly downloadable. Each matching archive includes its own
-image, manifest, source/config/feed metadata, audit reports and signed APK set.
-Check `sha256sums` and `release-pair.json`; do not mix editions' kmods or APKs.
-Firmware publisher signing and runtime hardware acceptance are separate from
-the bundled integrity/package-signature checks.
+两个 `.itb` 均可直接下载。各自的配套归档包括固件、软件包清单、源码/配置/feed 记录、审计结果和匹配的签名 APK；对应的 `*-source.tar.gz` 则由各自准确的源码提交独立导出。GitHub 自动附带的 Source code ZIP/tarball 仅对应本 Release 的主 tag，不代表另一版本源码。升级和安装前请核对 `sha256sums`；不要混用两个版本或不同构建的 kmod/APK。APK 签名和 FIT/文件哈希校验不等同于固件发布者签名，也不替代实机验证。
 
-These images do not migrate the bootloader/Recovery or partition layout.
-Back up before upgrading. Changing between personal and generic editions with
-retained configuration can retain the previous edition's keys and policy.
+请按设备实际分区布局选择镜像。本发布不会转换分区表，也不会更新 U-Boot、Recovery 或原厂校准数据。跨定制版/通用版切换时，应先备份并准备适合目标版本的配置；保留旧 overlay 可能同时保留旧公钥、访客规则和 AP 策略。
 
-Before publication, add the actual hardware acceptance results and known
-issues. Build success alone does not establish warm/cold boot reliability,
-MLO/6GHz client behavior or complete guest isolation under hardware offload.
+本页自动填入的是构建及文件来源记录。只有已有明确证据的项目才能列为实机通过；编译成功不能证明冷/暖启动可靠性、WAN 长时稳定性、实际 MLO/6GHz 客户端行为、漫游体验或硬件卸载下完整的访客伪造地址/VLAN 注入隔离。公开发布前应补充本次适用的实机验收结果与已知问题，未测项目应保留为未测。
