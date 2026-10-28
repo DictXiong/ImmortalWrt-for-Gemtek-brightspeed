@@ -609,6 +609,37 @@ class Transaction(unittest.TestCase):
         time.sleep(.1)
         self.assertEqual(json.loads(self.service_state.read_text()), json.loads(self.original_services))
 
+    def test_rollback_publishes_runtime_pending_before_terminal_state(self):
+        barrier = self.base / 'rollback-publication-barrier'
+        published = self.base / 'rollback-published'
+        barrier.touch()
+        source = self.script.read_text()
+        marker = ' record rolled-back "$reason"\n'
+        self.assertEqual(source.count(marker), 1)
+        self.script.write_text(source.replace(marker, marker +
+            ' : > ' + shlex.quote(str(published)) + '\n' +
+            ' while test -e ' + shlex.quote(str(barrier)) + '; do sleep .02; done\n'))
+        self.stage(); self.call('apply', self.token)
+        wait(lambda: (self.state / 'reload-complete').exists())
+        process = subprocess.Popen(self.shell + [str(self.script), 'rollback', self.token],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=self.env, start_new_session=True)
+        try:
+            wait(published.exists)
+            self.assertTrue((self.state / 'services-restore-pending').exists())
+            # The old apply completion stamp must not make rollback look done.
+            self.assertTrue((self.state / 'reload-complete').exists())
+            self.assertEqual(self.call('status')['state'], 'rollback_pending')
+            self.assertNotEqual(json.loads(self.service_state.read_text()), json.loads(self.original_services))
+        finally:
+            barrier.unlink(missing_ok=True)
+            stdout, stderr = process.communicate(timeout=20)
+        self.assertEqual(process.returncode, 0, stderr.decode())
+        self.assertIn(json.loads(stdout)['state'], ('rollback_pending', 'rolled-back'))
+        wait(lambda: (self.state / 'rolled-back').exists() and
+             not (self.state / 'services-restore-pending').exists())
+        self.assertOriginal()
+
     def kill_recorded_reloader(self):
         pid, ticks, token = (self.state / 'reload.ready').read_text().split()
         pid, ticks = int(pid), int(ticks)

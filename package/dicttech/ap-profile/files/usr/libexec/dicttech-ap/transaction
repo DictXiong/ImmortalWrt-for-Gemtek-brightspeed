@@ -213,8 +213,9 @@ restore_locked() {
  done < "$STATE/before"
  resolver_restore
  if test -f "$STATE/was-isolated"; then : > "$(p /tmp/dicttech-ap-bootstrap-isolated)"; else rm -f "$(p /tmp/dicttech-ap-bootstrap-isolated)"; fi
- record rolled-back "$reason"
+ # Unlocked readers must see pending runtime restoration before terminal state.
  record services-restore-pending "$reason"
+ record rolled-back "$reason"
  if ! "$TIMEOUT" -s TERM -k 2 15 "$SERVICES" restore "$STATE/services.before" links; then record rollback-incomplete service_links_failed; fi
  sync
 }
