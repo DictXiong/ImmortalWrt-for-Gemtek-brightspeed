@@ -57,6 +57,57 @@ class Configuration(unittest.TestCase):
         with self.assertRaises(m.ConfigError):
             fn()
 
+    def complete_identity(self):
+        address = lambda tail: 'f2:a5:44:14:' + tail
+        return {'complete': True, 'bridge': address('00:00'),
+                'ethernet': {key: address(f'00:{slot:02x}') for key, slot in
+                             [('wan', 16), ('lan2', 17), ('lan3', 18), ('lan4', 19), ('cpu', 31)]},
+                'radios': {f'radio{i}': address(f'00:{128 + i * 16:02x}') for i in range(3)},
+                'mlds': {role: address(f'02:{i * 4:02x}') for i, role in enumerate(m.ROLES)},
+                'bssids': {role: [address(f'02:{i * 4 + band:02x}') for band in (1, 2, 3)]
+                           for i, role in enumerate(m.ROLES)},
+                'duid': '00030001f2a544140000'}
+
+    def test_complete_producer_table_is_rendered_without_legacy_allocation(self):
+        value = document(1)
+        identity = self.complete_identity()
+        value['devices']['ap_0']['identity'] = identity
+        original = copy.deepcopy(value)
+        state = self.state(value)
+        self.assertEqual(state['device']['identity'], identity)
+        self.assertEqual(value, original)
+        rows = {r['name']: r for r in parse_uci(m.render(state)['etc/config/wireless'])}
+        self.assertEqual(rows['ssid_main']['options']['macaddr'], identity['mlds']['main'])
+        self.assertEqual(rows['ssid_iot']['options']['macaddr'], identity['bssids']['iot'][0])
+        self.assertEqual(state['device']['mac_base'], original['devices']['ap_0']['mac_base'])
+
+    def test_complete_table_rejects_missing_slots_collisions_and_hardware_mismatch(self):
+        for change in ('missing', 'collision', 'cpu-prefix', 'radio-collision'):
+            with self.subTest(change=change):
+                value = document(1)
+                identity = self.complete_identity()
+                value['devices']['ap_0']['identity'] = identity
+                if change == 'missing':
+                    del identity['mlds']['iot']
+                elif change == 'collision':
+                    identity['bssids']['guest'][2] = identity['bssids']['main'][0]
+                elif change == 'cpu-prefix':
+                    identity['ethernet']['cpu'] = '00:58:28:44:14:1f'
+                else:
+                    identity['radios']['radio0'] = identity['bridge']
+                self.reject(lambda: self.state(value))
+
+    def test_complete_table_preserves_unused_custom_reservations(self):
+        value = document(1)
+        identity = self.complete_identity()
+        identity['mlds']['spare'] = 'f2:a5:44:14:02:0c'
+        identity['bssids']['spare'] = ['f2:a5:44:14:02:0d', 'f2:a5:44:14:02:0e', 'f2:a5:44:14:02:0f']
+        value['devices']['ap_0']['identity'] = identity
+        self.assertEqual(self.state(value)['device']['identity'], identity)
+        value['common']['extra_ssids'] = [{'id': 'spare', 'name': 'Spare', 'bands': ['5g']}]
+        profile = next(p for p in self.state(value)['ssids'] if p['key'] == 'spare')
+        self.assertEqual(profile['bssids'], [identity['bssids']['spare'][1]])
+
     def test_defaults_are_delta_only_and_deterministic(self):
         a = self.state()
         self.assertEqual(a['common']['country'], 'US')

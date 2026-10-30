@@ -200,6 +200,8 @@ roaming-disabled profile is excluded. There is no automatic trust/discovery.
 
 ## Device MAC identity
 
+External configuration producers may set `device.identity.complete = true` and supply the entire bridge, Ethernet, radio-base, MLD, BSSID and DUID table. This mode validates and renders the supplied addresses without legacy offsets or custom-SSID hashing. It requires three reserved BSSIDs per SSID, including inactive bands and optional unused slots; reserved IoT MLD addresses do not create MLD interfaces. Omitting `complete` retains the independent JSON tool's existing allocation behavior. Cross-device collision and hardware-capacity checks remain mandatory.
+
 `mac_base` is a stable nonzero unicast address. New devices derive a locally
 administered wireless identities from it. The preset offset allocation is:
 

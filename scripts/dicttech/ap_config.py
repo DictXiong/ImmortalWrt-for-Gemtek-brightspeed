@@ -299,7 +299,42 @@ def _ssid_specs(common: dict, defaults: dict, path: str) -> list[dict]:
     return profiles
 
 
+def _complete_identity(device: dict, path: str, profiles: list[dict]) -> dict:
+    """Validate a producer-owned address table without allocating any addresses."""
+    path += ".identity"
+    fields = {"complete", "bridge", "ethernet", "radios", "mlds", "bssids", "duid"}
+    result = copy.deepcopy(obj(device["identity"], path, fields, fields))
+    # mac_base remains part of the device interchange schema, but is not an
+    # allocator input in this mode. In particular, do not add legacy offsets.
+    mac(device["mac_base"], path.rsplit(".", 1)[0] + ".mac_base")
+    ports = {"wan", "lan2", "lan3", "lan4"}
+    obj(result["ethernet"], path + ".ethernet", ports | {"cpu"}, ports)
+    radios = {"radio0", "radio1", "radio2"}
+    obj(result["radios"], path + ".radios", radios, radios)
+    keys = set(ROLES)
+    for group in ("mlds", "bssids"):
+        values = result[group]
+        if not isinstance(values, dict):
+            fail(path + "." + group, "must be an object")
+        for key in values:
+            if key not in ROLES and (not isinstance(key, str) or not EXTRA_ID.fullmatch(key)):
+                fail(path + "." + group, "invalid custom identity ID")
+        keys.update(values)
+    if len(keys - set(ROLES)) > 64:
+        fail(path, "at most 64 custom identity slots may be reserved")
+    keys.update(profile["key"] for profile in profiles)
+    for group in ("mlds", "bssids"):
+        obj(result[group], path + "." + group, keys, keys)
+    _validate_identity(result, path, {key: 3 for key in keys}, complete=True)
+    return result
+
+
 def _identity(device: dict, path: str, profiles: list[dict]) -> dict:
+    override = device.get("identity", {})
+    if isinstance(override, dict) and "complete" in override:
+        if boolean(override["complete"], path + ".identity.complete"):
+            return _complete_identity(device, path, profiles)
+        override = {key: value for key, value in override.items() if key != "complete"}
     base = mac(device["mac_base"], path + ".mac_base")
     number = int(base.replace(":", ""), 16)
     def derived(offset):
@@ -322,7 +357,7 @@ def _identity(device: dict, path: str, profiles: list[dict]) -> dict:
                           "guest": [derived(0x60), derived(0x62)], "iot": [derived(0x70)]},
               "duid": "00030001" + base.replace(":", "")}
     counts = {"main": 3, "guest": 2, "iot": 1}
-    override = obj(device.get("identity", {}), path + ".identity", set(result))
+    override = obj(override, path + ".identity", set(result))
     custom_ids = {profile["key"] for profile in profiles if profile["key"] not in ROLES}
     for group in ("mlds", "bssids"):
         values = override.get(group, {})
@@ -357,31 +392,54 @@ def _identity(device: dict, path: str, profiles: list[dict]) -> dict:
             slots[BANDS.index(band)] = address
         normalized_override["bssids"][key] = slots
     result = deep_merge(result, normalized_override)
-    result["bridge"] = mac(result["bridge"], path + ".identity.bridge")
+    _validate_identity(result, path + ".identity", counts)
+    return result
+
+
+def _validate_identity(result: dict, path: str, counts: dict, *, complete: bool = False) -> None:
+    result["bridge"] = mac(result["bridge"], path + ".bridge")
     for group in ("ethernet", "radios", "mlds"):
-        result[group] = {key: mac(value, path + ".identity." + group + "." + key) for key, value in result[group].items()}
+        result[group] = {key: mac(value, path + "." + group + "." + key) for key, value in result[group].items()}
     all_bssids = []
     for key, count in counts.items():
         values = result["bssids"][key]
         if not isinstance(values, list) or len(values) != count:
-            fail(path + ".identity.bssids." + key, f"must contain exactly {count} MAC address(es)")
-        result["bssids"][key] = [mac(value, path + ".identity.bssids." + key) for value in values]
+            fail(path + ".bssids." + key, f"must contain exactly {count} MAC address(es)")
+        result["bssids"][key] = [mac(value, path + ".bssids." + key) for value in values]
         all_bssids.extend(result["bssids"][key])
     if len(set(all_bssids)) != len(all_bssids):
-        fail(path + ".identity.bssids", "different BSSes must have different addresses")
+        fail(path + ".bssids", "different BSSes must have different addresses")
     if result["bridge"] in all_bssids:
-        fail(path + ".identity", "bridge address collides with a BSS")
+        fail(path, "bridge address collides with a BSS")
     if len(set(result["mlds"].values())) != len(result["mlds"]) or result["bridge"] in result["mlds"].values():
-        fail(path + ".identity.mlds", "MLD addresses must be distinct and separate from the bridge")
+        fail(path + ".mlds", "MLD addresses must be distinct and separate from the bridge")
     for key, address in result["mlds"].items():
-        aliases = result["bssids"][key] if key not in ROLES else result["bssids"][key][:1]
+        aliases = result["bssids"][key] if complete or key not in ROLES else result["bssids"][key][:1]
         if address in all_bssids and address not in aliases:
-            fail(path + ".identity.mlds", "an MLD may share only its own reserved BSSID")
+            fail(path + ".mlds", "an MLD may share only its own reserved BSSID")
+    if complete:
+        # XR1710G's CPU and LAN2 GDMs share the LAN high-MAC register.
+        # This validates the target table, not whether a live sequence of
+        # per-interface updates can migrate a previously registered prefix.
+        ethernet = result["ethernet"]
+        if "cpu" in ethernet and ethernet["cpu"][:8] != ethernet["lan2"][:8]:
+            fail(path + ".ethernet", "cpu and lan2 must share their first three MAC bytes")
+        # A bridge and its Ethernet ports may intentionally share an address.
+        # Radio bases are allocation parameters, not extra active interfaces,
+        # but reserve them against each other and all explicit identities.
+        wired = {result["bridge"], *result["ethernet"].values()}
+        radio_bases = list(result["radios"].values())
+        wireless = {*all_bssids, *result["mlds"].values()}
+        if len(set(radio_bases)) != len(radio_bases):
+            fail(path + ".radios", "radio allocation bases must be distinct")
+        if set(radio_bases) & (wired | wireless):
+            fail(path + ".radios", "radio allocation base collides with another identity")
+        if wired & wireless:
+            fail(path, "Ethernet address collides with a wireless identity")
     duid = result["duid"]
     if not isinstance(duid, str) or not re.fullmatch(r"[0-9a-fA-F]{8,128}", duid) or len(duid) % 2:
-        fail(path + ".identity.duid", "must be an even-length hexadecimal DHCP DUID")
+        fail(path + ".duid", "must be an even-length hexadecimal DHCP DUID")
     result["duid"] = duid.lower()
-    return result
 
 
 def _password_hash(value: Any, path: str) -> str:

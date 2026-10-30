@@ -318,98 +318,293 @@
       }
     },
     "identity": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "bridge": {
-          "type": "string",
-          "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
-          "description": "Renderer also requires nonzero unicast and checks fleet collisions."
-        },
-        "ethernet": {
+      "oneOf": [
+        {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "wan": {
+            "bridge": {
               "type": "string",
               "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
               "description": "Renderer also requires nonzero unicast and checks fleet collisions."
             },
-            "lan2": {
-              "type": "string",
-              "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
-              "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+            "ethernet": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "wan": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                  "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                },
+                "lan2": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                  "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                },
+                "lan3": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                  "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                },
+                "lan4": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                  "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                },
+                "cpu": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                  "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                }
+              }
             },
-            "lan3": {
-              "type": "string",
-              "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
-              "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+            "radios": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "radio0": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                  "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                },
+                "radio1": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                  "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                },
+                "radio2": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                  "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                }
+              }
             },
-            "lan4": {
-              "type": "string",
-              "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
-              "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+            "mlds": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+              },
+              "properties": {
+                "main": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                  "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                },
+                "guest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                  "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                }
+              },
+              "propertyNames": {
+                "pattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$",
+                "not": {
+                  "const": "iot"
+                }
+              },
+              "maxProperties": 66
             },
-            "cpu": {
+            "bssids": {
+              "type": "object",
+              "additionalProperties": {
+                "oneOf": [
+                  {
+                    "type": "array",
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                      "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                    },
+                    "uniqueItems": true
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "minProperties": 1,
+                    "properties": {
+                      "2g": {
+                        "type": "string",
+                        "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                        "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                      },
+                      "5g": {
+                        "type": "string",
+                        "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                        "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                      },
+                      "6g": {
+                        "type": "string",
+                        "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                        "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                      }
+                    }
+                  }
+                ],
+                "description": "Custom identities reserve per-band MACs independent of enabled bands. A partial band map is preferred; arrays use fixed 2g/5g/6g slots. Inactive custom IDs may remain reserved."
+              },
+              "properties": {
+                "main": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                    "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "uniqueItems": true
+                },
+                "guest": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                    "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                  },
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "uniqueItems": true
+                },
+                "iot": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                    "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                  },
+                  "minItems": 1,
+                  "maxItems": 1,
+                  "uniqueItems": true
+                }
+              },
+              "propertyNames": {
+                "pattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$"
+              },
+              "maxProperties": 67
+            },
+            "duid": {
               "type": "string",
-              "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
-              "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+              "pattern": "^(?:[0-9a-fA-F]{2}){4,64}$"
+            },
+            "complete": {
+              "const": false
             }
           }
         },
-        "radios": {
+        {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "radio0": {
+            "bridge": {
               "type": "string",
               "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
               "description": "Renderer also requires nonzero unicast and checks fleet collisions."
             },
-            "radio1": {
-              "type": "string",
-              "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
-              "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+            "ethernet": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "wan": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                  "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                },
+                "lan2": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                  "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                },
+                "lan3": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                  "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                },
+                "lan4": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                  "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                },
+                "cpu": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                  "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                }
+              },
+              "required": [
+                "wan",
+                "lan2",
+                "lan3",
+                "lan4"
+              ]
             },
-            "radio2": {
-              "type": "string",
-              "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
-              "description": "Renderer also requires nonzero unicast and checks fleet collisions."
-            }
-          }
-        },
-        "mlds": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string",
-            "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
-            "description": "Renderer also requires nonzero unicast and checks fleet collisions."
-          },
-          "properties": {
-            "main": {
-              "type": "string",
-              "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
-              "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+            "radios": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "radio0": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                  "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                },
+                "radio1": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                  "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                },
+                "radio2": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                  "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                }
+              },
+              "required": [
+                "radio0",
+                "radio1",
+                "radio2"
+              ]
             },
-            "guest": {
-              "type": "string",
-              "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
-              "description": "Renderer also requires nonzero unicast and checks fleet collisions."
-            }
-          },
-          "propertyNames": {
-            "pattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$",
-            "not": {
-              "const": "iot"
-            }
-          },
-          "maxProperties": 66
-        },
-        "bssids": {
-          "type": "object",
-          "additionalProperties": {
-            "oneOf": [
-              {
+            "mlds": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+              },
+              "properties": {
+                "main": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                  "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                },
+                "guest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                  "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                },
+                "iot": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
+                  "description": "Renderer also requires nonzero unicast and checks fleet collisions."
+                }
+              },
+              "propertyNames": {
+                "pattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$"
+              },
+              "maxProperties": 66,
+              "required": [
+                "main",
+                "guest",
+                "iot"
+              ]
+            },
+            "bssids": {
+              "type": "object",
+              "additionalProperties": {
                 "type": "array",
                 "minItems": 3,
                 "maxItems": 3,
@@ -417,79 +612,69 @@
                   "type": "string",
                   "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
                   "description": "Renderer also requires nonzero unicast and checks fleet collisions."
-                },
-                "uniqueItems": true
+                }
               },
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "minProperties": 1,
-                "properties": {
-                  "2g": {
+              "properties": {
+                "main": {
+                  "type": "array",
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "items": {
                     "type": "string",
                     "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
                     "description": "Renderer also requires nonzero unicast and checks fleet collisions."
-                  },
-                  "5g": {
+                  }
+                },
+                "guest": {
+                  "type": "array",
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "items": {
                     "type": "string",
                     "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
                     "description": "Renderer also requires nonzero unicast and checks fleet collisions."
-                  },
-                  "6g": {
+                  }
+                },
+                "iot": {
+                  "type": "array",
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "items": {
                     "type": "string",
                     "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
                     "description": "Renderer also requires nonzero unicast and checks fleet collisions."
                   }
                 }
-              }
-            ],
-            "description": "Custom identities reserve per-band MACs independent of enabled bands. A partial band map is preferred; arrays use fixed 2g/5g/6g slots. Inactive custom IDs may remain reserved."
-          },
-          "properties": {
-            "main": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
-                "description": "Renderer also requires nonzero unicast and checks fleet collisions."
               },
-              "minItems": 3,
-              "maxItems": 3,
-              "uniqueItems": true
+              "propertyNames": {
+                "pattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$"
+              },
+              "maxProperties": 67,
+              "required": [
+                "main",
+                "guest",
+                "iot"
+              ]
             },
-            "guest": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
-                "description": "Renderer also requires nonzero unicast and checks fleet collisions."
-              },
-              "minItems": 2,
-              "maxItems": 2,
-              "uniqueItems": true
+            "duid": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-fA-F]{2}){4,64}$"
             },
-            "iot": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "pattern": "^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$",
-                "description": "Renderer also requires nonzero unicast and checks fleet collisions."
-              },
-              "minItems": 1,
-              "maxItems": 1,
-              "uniqueItems": true
+            "complete": {
+              "const": true
             }
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$"
-          },
-          "maxProperties": 67
-        },
-        "duid": {
-          "type": "string",
-          "pattern": "^(?:[0-9a-fA-F]{2}){4,64}$"
+          "required": [
+            "complete",
+            "bridge",
+            "ethernet",
+            "radios",
+            "mlds",
+            "bssids",
+            "duid"
+          ]
         }
-      }
+      ]
     },
     "device": {
       "type": "object",
