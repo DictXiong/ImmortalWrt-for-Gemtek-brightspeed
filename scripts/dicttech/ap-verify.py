@@ -69,7 +69,7 @@ def collect(args, state):
         # Filter on the AP: daemon argv can contain secrets and is never returned.
         'services': ['sh', '-c', "ubus -t 5 call service list | jq 'map_values({instances:(.instances // {} | map_values({running:.running}))})'"],
         # Deliberate field allowlist excludes passphrases, PSKs, SAE passwords.
-        'security': ['sh', '-c', "for f in /var/run/hostapd-phy*.conf; do [ -f \"$f\" ] || continue; awk '/^(interface|bss|ssid|ssid2|bssid|bridge|wpa|wpa_key_mgmt|ieee80211w|rrm_neighbor_report|rrm_beacon_report|bss_transition|ap_isolate|ignore_broadcast_ssid|mld_ap|mld_link_id)=/ { print }' \"$f\"; done"],
+        'security': ['sh', '-c', "for f in /var/run/hostapd-phy*.conf; do [ -f \"$f\" ] || continue; awk '/^(interface|bss|ssid|ssid2|bssid|bridge|wpa|wpa_key_mgmt|ieee80211w|rrm_neighbor_report|rrm_beacon_report|bss_transition|ap_isolate|ignore_broadcast_ssid|mld_ap|mld_link_id|disable_11be|beacon_prot)=/ { print }' \"$f\"; done"],
     }
     for profile in ssid_profiles(state):
         key = profile['key']
@@ -264,12 +264,14 @@ def evaluate(state, files, data, external=None):
                         block.get('ieee80211w', '0') == str(profile['pmf']) and
                         block.get('interface', block.get('bss')) == profile['iface'] and bssid in expected_links and mlo and
                         block.get('bridge') == state['platform']['bridge'] and
+                        block.get('disable_11be', '0') == ('0' if profile.get('eht', True) else '1') and
+                        (profile.get('eht', True) or block.get('beacon_prot') == '1') and
                         block.get('ignore_broadcast_ssid', '0') == ('1' if profile['hidden'] else '0') and
                         all(block.get(field, '0') == wanted_roaming for field in ('rrm_neighbor_report', 'rrm_beacon_report', 'bss_transition')) and
                         (profile['network'] != 'guest' or block.get('ap_isolate', '0') == '0'))
         config_bssids = {block.get('bssid', '').lower() for block in configs}
         test('security_' + key, config_bssids == set(expected_links) and all(secure(block) for block in configs),
-             'Per-link generated hostapd WPA/PMF/network/hidden/k-v policy; no secret fields collected')
+             'Per-link generated hostapd WPA/PMF/network/hidden/k-v/EHT/beacon-protection policy; no secret fields collected')
         roaming = data.get('roaming_' + key, {})
         roaming = roaming if isinstance(roaming, dict) else {}
         peers = state['peers'][key]

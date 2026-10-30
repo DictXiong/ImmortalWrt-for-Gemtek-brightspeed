@@ -14,6 +14,11 @@ applying a different policy. The versioned JSON Schema is adjacent to that file
 as `deployment.schema.json`; the Python validator adds fleet consistency and
 UTF-8 byte-length checks that JSON Schema cannot fully express.
 
+Use the schema shipped with the matching deployment tools. An older AP can
+retain an earlier v2 schema that rejects newly supported optional fields such
+as `eht`; this does not prevent deployment by the updated host renderer. The
+optional fields do not change the profile ID, schema version or defaults hash.
+
 ## Inputs
 
 Keep the following real files outside the firmware Git checkout. A combined
@@ -100,6 +105,9 @@ login or automatically merge new keys into an already provisioned AP.
   `ssids.iot.name` and `ssids.iot.hidden`. Each SSID also owns its `encryption`:
   Main/Guest require `sae`; IoT accepts `sae`, `sae-mixed` or `psk2`.
 - `extra_ssids`: an ordered array of zero or more ordinary custom SSIDs.
+- `ssids.iot.eht` and each custom SSID's `eht`: boolean, default `true`.
+  `false` disables only that BSS's EHT while keeping HE and the existing
+  PMF/beacon protection. MLO requires EHT; the renderer rejects that conflict.
 - `roaming.enabled`, `roaming.interval` (30–300), `roaming.ttl` (180–1800), with
   TTL at least three check intervals.
 

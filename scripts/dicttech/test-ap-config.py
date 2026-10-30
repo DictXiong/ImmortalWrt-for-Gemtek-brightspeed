@@ -83,6 +83,42 @@ class Configuration(unittest.TestCase):
                 value['common']['ssids'] = {role: {'encryption': encryption}}
                 self.reject(lambda: self.state(value))
 
+    def test_per_ssid_eht_preserves_other_bss_and_identity(self):
+        value = document()
+        value['common']['extra_ssids'] = [{'id': 'printer', 'name': 'Printer', 'bands': ['5g'], 'encryption': 'psk2'}]
+        baseline = self.state(value)
+        value['common']['ssids'] = {'iot': {'eht': False}}
+        value['common']['extra_ssids'][0]['eht'] = False
+        state = self.state(value)
+        profiles = {p['key']: p for p in state['ssids']}
+        self.assertFalse(profiles['iot']['eht'])
+        self.assertFalse(profiles['printer']['eht'])
+        self.assertTrue(profiles['main']['eht'])
+        self.assertTrue(profiles['guest']['eht'])
+        self.assertEqual(state['device']['identity'], baseline['device']['identity'])
+        before = {r['name']: r for r in parse_uci(m.render(baseline)['etc/config/wireless'])}
+        rows = {r['name']: r for r in parse_uci(m.render(state)['etc/config/wireless'])}
+        for section in ('ssid_iot', 'ssid_extra_printer'):
+            self.assertEqual(rows[section]['lists'].pop('hostapd_bss_options'), ['disable_11be=1', 'beacon_prot=1'])
+        self.assertEqual(rows, before)
+        value['common']['ssids']['iot']['eht'] = True
+        value['common']['extra_ssids'][0]['eht'] = True
+        restored = m.render(self.state(value))['etc/config/wireless']
+        self.assertEqual(restored, m.render(baseline)['etc/config/wireless'])
+
+    def test_eht_rejects_mlo_and_non_boolean_values(self):
+        value = document()
+        value['common']['extra_ssids'] = [{'id': 'lab', 'name': 'Lab', 'eht': False}]
+        self.reject(lambda: self.state(value))
+        for role in ('main', 'guest'):
+            value = document(); value['common']['ssids'] = {role: {'eht': False}}
+            self.reject(lambda: self.state(value))
+        for invalid in (None, 0, 1, 'false', []):
+            value = document(); value['common']['ssids'] = {'iot': {'eht': invalid}}
+            self.reject(lambda: self.state(value))
+            value = document(); value['common']['extra_ssids'] = [{'id': 'single', 'name': 'Single', 'bands': ['5g'], 'eht': invalid}]
+            self.reject(lambda: self.state(value))
+
     def test_default_ntp_keeps_owner_servers_and_fallbacks(self):
         state = self.state()
         servers = state['common']['ntp_servers']

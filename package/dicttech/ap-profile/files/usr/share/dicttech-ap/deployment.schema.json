@@ -279,6 +279,10 @@
                     "psk2"
                   ],
                   "description": "Security belongs to its SSID. PMF is derived: SAE requires it; WPA2 policies make it optional."
+                },
+                "eht": {
+                  "type": "boolean",
+                  "description": "Enable EHT (Wi-Fi 7); defaults to true. MLO requires EHT."
                 }
               }
             }
@@ -604,6 +608,10 @@
         },
         "roaming": {
           "type": "boolean"
+        },
+        "eht": {
+          "type": "boolean",
+          "description": "Enable EHT (Wi-Fi 7); defaults to true. MLO requires EHT."
         }
       }
     }

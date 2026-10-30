@@ -60,6 +60,8 @@ def fixture(common=None):
                                  '\nbridge=' + state['platform']['bridge'] +
                                  '\nwpa=2\nwpa_key_mgmt=' + modes + '\nieee80211w=' + str(profile['pmf']) +
                                  '\nignore_broadcast_ssid=' + ('1' if profile['hidden'] else '0') + '\nap_isolate=0\n')
+            if not profile['eht']:
+                data['security'] += 'disable_11be=1\nbeacon_prot=1\n'
             if profile['mlo']:
                 data['security'] += 'mld_ap=1\nmld_link_id=' + str(link_id) + '\n'
             if profile['roaming']:
@@ -100,6 +102,28 @@ def change_security(data, ssid, field, value):
 class Acceptance(unittest.TestCase):
     def setUp(self):
         self.state, self.files, self.data = fixture()
+
+    def test_iot_eht_disable_must_reach_generated_hostapd(self):
+        self.state, self.files, self.data = fixture({'ssids': {'iot': {'eht': False}}})
+        report, _ = self.run_report()
+        self.assertEqual(next(t['status'] for t in report['tests'] if t['id'] == 'security_iot'), 'PASS')
+        for field, value in (('disable_11be', '0'), ('beacon_prot', '0')):
+            self.state, self.files, self.data = fixture({'ssids': {'iot': {'eht': False}}})
+            change_security(self.data, 'DictTech-IoT', field, value)
+            report, _ = self.run_report()
+            self.assertEqual(next(t['status'] for t in report['tests'] if t['id'] == 'security_iot'), 'FAIL')
+        self.state, self.files, self.data = fixture({'ssids': {'iot': {'eht': False}}})
+        self.data['security'] = self.data['security'].replace('beacon_prot=1\n', '')
+        report, _ = self.run_report()
+        self.assertEqual(next(t['status'] for t in report['tests'] if t['id'] == 'security_iot'), 'FAIL')
+
+    def test_legacy_public_state_without_eht_defaults_to_original_policy(self):
+        # Saved receipts from before this option have no resolved EHT field.
+        for profile in self.state['ssids']:
+            profile.pop('eht')
+        report, _ = self.run_report()
+        self.assertTrue(all(t['status'] == 'PASS' for t in report['tests'] if t['id'].startswith('security_')))
+        self.assertEqual(report['status'], 'NOT_TESTED')
 
     def run_report(self, external=None):
         return v.evaluate(self.state, self.files, self.data, external)

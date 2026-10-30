@@ -193,12 +193,12 @@ def validate_delta(delta: Any, path: str = "common") -> None:
         obj(delta["ssids"], path + ".ssids", set(ROLES))
         for role, values in delta["ssids"].items():
             where = path + ".ssids." + role
-            obj(values, where, {"name", "six_ghz", "encryption"} if role == "main" else {"name", "hidden", "encryption"} if role == "iot" else {"name", "encryption"})
+            obj(values, where, {"name", "six_ghz", "encryption"} if role == "main" else {"name", "hidden", "encryption", "eht"} if role == "iot" else {"name", "encryption"})
             if "name" in values:
                 text(values["name"], where + ".name", 1, 32)
             if "encryption" in values and values["encryption"] not in ("sae", "sae-mixed", "psk2"):
                 fail(where + ".encryption", "unsupported security policy")
-            for key in ("six_ghz", "hidden"):
+            for key in ("six_ghz", "hidden", "eht"):
                 if key in values:
                     boolean(values[key], where + "." + key)
     if "roaming" in delta:
@@ -216,7 +216,7 @@ def validate_delta(delta: Any, path: str = "common") -> None:
         ids = set()
         for index, values in enumerate(extras):
             where = path + ".extra_ssids[" + str(index) + "]"
-            obj(values, where, {"id", "name", "bands", "mlo", "encryption", "network", "hidden", "password_ref", "roaming"}, {"id", "name"})
+            obj(values, where, {"id", "name", "bands", "mlo", "encryption", "network", "hidden", "password_ref", "roaming", "eht"}, {"id", "name"})
             ident = values["id"]
             if not isinstance(ident, str) or not EXTRA_ID.fullmatch(ident) or ident in ROLES:
                 fail(where + ".id", "must be a non-reserved UCI-safe ID of 1–32 characters")
@@ -228,7 +228,7 @@ def validate_delta(delta: Any, path: str = "common") -> None:
                 bands = values["bands"]
                 if not isinstance(bands, list) or not 1 <= len(bands) <= 3 or any(not isinstance(b, str) or b not in BANDS for b in bands) or len(set(bands)) != len(bands):
                     fail(where + ".bands", "must contain distinct supported bands")
-            for field in ("mlo", "hidden", "roaming"):
+            for field in ("mlo", "hidden", "roaming", "eht"):
                 if field in values:
                     boolean(values[field], where + "." + field)
             if "encryption" in values and values["encryption"] not in ("sae", "sae-mixed", "psk2"):
@@ -249,6 +249,7 @@ def _ssid_specs(common: dict, defaults: dict, path: str) -> list[dict]:
                 "name": common["ssids"][role]["name"], "bands": bands,
                 "mlo": role != "iot", "network": "guest" if role == "guest" else "lan",
                 "encryption": encryption, "pmf": 2 if encryption == "sae" else 1,
+                "eht": common["ssids"][role].get("eht", True),
                 "hidden": common["ssids"][role].get("hidden", False),
                 "roaming": common["roaming"]["enabled"], "password_ref": role}
     main = preset("main", list(BANDS if common["ssids"]["main"]["six_ghz"] else BANDS[:2]))
@@ -259,9 +260,12 @@ def _ssid_specs(common: dict, defaults: dict, path: str) -> list[dict]:
         bands = [band for band in BANDS if band in value["bands"]]
         value["bands"] = bands
         value["mlo"] = entry.get("mlo", len(bands) > 1)
+        value["eht"] = value.get("eht", True)
         where = path + ".extra_ssids"
         if (value["mlo"] and len(bands) < 2) or (not value["mlo"] and len(bands) != 1):
             fail(where, "MLO requires multiple bands; single-link SSIDs require one band")
+        if value["mlo"] and not value["eht"]:
+            fail(where, "MLO requires EHT")
         if (value["mlo"] or "6g" in bands) and value["encryption"] != "sae":
             fail(where, "MLO and 6GHz require WPA3 SAE with required PMF")
         extras.append(copy.deepcopy(value))
@@ -269,7 +273,7 @@ def _ssid_specs(common: dict, defaults: dict, path: str) -> list[dict]:
         iface = "ap-mld" + str(next_mld) if value["mlo"] else "ap-x" + hashlib.sha256(value["id"].encode()).hexdigest()[:8]
         next_mld += int(value["mlo"])
         profiles.append({"key": key, "section": "ssid_extra_" + key, "iface": iface,
-                         "name": value["name"], "bands": bands, "mlo": value["mlo"],
+                         "name": value["name"], "bands": bands, "mlo": value["mlo"], "eht": value["eht"],
                          "network": value["network"], "encryption": value["encryption"],
                          "pmf": 2 if value["encryption"] == "sae" else 1,
                          "hidden": value["hidden"], "roaming": common["roaming"]["enabled"] and value["roaming"],
@@ -626,6 +630,10 @@ def render(resolved: dict, defaults_path: str | Path | None = None) -> dict[str,
                    "rrm_neighbor_report": enabled, "rrm_beacon_report": enabled,
                    "bss_transition": enabled, "ieee80211r": "0"}
         lists = {"network": [profile["network"]]}
+        if not profile["eht"]:
+            # EHT+PMF enabled beacon protection before this compatibility
+            # override; retain that protection after a full config reload.
+            lists["hostapd_bss_options"] = ["disable_11be=1", "beacon_prot=1"]
         if profile["mlo"]:
             options.update(mlo="1", macaddr=profile["mld_mac"])
             lists["device"] = profile["radios"]
