@@ -2,7 +2,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=ap-profile
-PKG_VERSION:=2.1.1
+PKG_VERSION:=2.1.2
 PKG_RELEASE:=1
 PKG_LICENSE:=GPL-2.0-only
 PKGARCH:=all
@@ -19,7 +19,8 @@ endef
 define Package/ap-profile/description
  Versioned no-secret AP defaults, DHCP and wired setup, provisioning guard and
  device-specific configuration support. Requires separately supplied local
- device and credential data; no shared password is included in this package.
+ device and credential data. Fresh setup accepts root/password until the
+ enrollment transaction confirms and activates the configured credentials.
 endef
 
 define Package/ap-profile/conffiles

@@ -174,7 +174,7 @@ def main():
         assert "option device 'lan4'" in network and "option device 'br-setup.1'" in network
         dropbear = (f.root / 'etc/config/dropbear').read_text().split("config dropbear 'bootstrap'")
         assert "option PasswordAuth 'on'" in dropbear[0]
-        assert "option PasswordAuth 'off'" in dropbear[1] and "option RootPasswordAuth 'off'" in dropbear[1]
+        assert "option PasswordAuth 'on'" in dropbear[1] and "option RootPasswordAuth 'on'" in dropbear[1]
         assert "listen_http '192.168.250.1:80'" in (f.root / 'etc/config/uhttpd').read_text()
         firewall = (f.root / 'etc/config/firewall').read_text()
         assert "option forward 'DROP'" in firewall and 'masq' not in firewall
@@ -287,8 +287,7 @@ def main():
                     argv = command_file.read_text().splitlines()
                     device = 'br-setup.1' if section == 'bootstrap' else 'lan4'
                     assert argv[argv.index('-l') + 1] == device and argv[argv.index('-p') + 1] == '12022'
-                    assert ('-s' in argv) == (section == 'bootstrap')
-                    assert ('-g' in argv) == (section == 'bootstrap')
+                    assert '-s' not in argv and '-g' not in argv
     check('actual_dropbear_init_device_binds_each_entry_and_never_wildcards_pending_dhcp', direct_dropbear_binding)
 
     for name in ['network', 'firewall', 'dhcp', 'dropbear', 'uhttpd']:

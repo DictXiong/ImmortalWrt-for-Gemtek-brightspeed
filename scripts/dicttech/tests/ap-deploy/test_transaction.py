@@ -376,6 +376,9 @@ class Transaction(unittest.TestCase):
         self.assertOriginal()
 
     def fresh_bootstrap(self, mode='dhcp'):
+        # Ordinary transaction fixtures start with an owner's existing password;
+        # a fresh-device fixture must start with a locked/empty factory account.
+        self.put('etc/shadow', b'root:!:20000:0:99999:7:::\nservice:locked:20000:0:99999:7:::\n')
         fixture_source = CONTROLLER.parent / 'tests/bootstrap/setup.py'
         spec = importlib.util.spec_from_file_location('bootstrap_setup_fixture', fixture_source)
         module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
@@ -420,11 +423,13 @@ class Transaction(unittest.TestCase):
         auth = self.root / 'etc/dropbear/authorized_keys'
         state = self.root / 'etc/dicttech-ap-bootstrap-key/state'
         owner = (self.root / 'usr/share/dicttech-cli/authorized_keys').read_bytes()
-        key = (self.root / 'usr/share/dicttech-ap/bootstrap-authorized-key.pub').read_bytes()
+        default_hash = (self.root / 'usr/share/dicttech-ap/bootstrap-password-hash').read_text().strip()
         self.call_key_helper('managed')
-        self.assertEqual(auth.read_bytes(), owner + key)
+        self.assertEqual(auth.read_bytes(), owner)
+        self.assertEqual((self.root / 'etc/shadow').read_text().split(':')[1], default_hash)
         self.assertEqual(state.read_bytes(), b'fresh\n')
         self.assertEqual(self.call('confirm', self.token)['state'], 'confirmed')
+        self.assertEqual((self.root / 'etc/shadow').read_text().split(':')[1], '$6$fixture$newhash')
         self.assertEqual(auth.read_bytes(), owner)
         self.assertEqual(state.read_bytes(), b'retired\n')
         (self.root / 'etc/dicttech-ap/device.json').unlink()
@@ -436,24 +441,30 @@ class Transaction(unittest.TestCase):
         auth = self.root / 'etc/dropbear/authorized_keys'
         self.call_key_helper('managed')
         self.assertEqual(auth.read_bytes(), b'')
+        self.assertEqual((self.root / 'etc/shadow').read_text().split(':')[1],
+                         (self.root / 'usr/share/dicttech-ap/bootstrap-password-hash').read_text().strip())
         self.assertEqual(self.call('confirm', self.token)['state'], 'confirmed')
         self.assertEqual(auth.read_bytes(), b'')
+        self.assertEqual((self.root / 'etc/shadow').read_text().split(':')[1], '$6$fixture$newhash')
 
     def test_failed_retirement_confirmation_rolls_back_key_and_lifecycle_together(self):
         self.initialize_with_real_key_helper()
         auth = self.root / 'etc/dropbear/authorized_keys'
         state = self.root / 'etc/dicttech-ap-bootstrap-key/state'
         original_auth, original_state = auth.read_bytes(), state.read_bytes()
+        shadow = self.root / 'etc/shadow'
+        original_shadow = shadow.read_bytes()
         helper = self.root / 'usr/libexec/dicttech-ap/bootstrap-key'
         real = helper.with_name('bootstrap-key.real'); helper.rename(real)
         helper.write_text('#!/bin/sh\n' + shlex.quote(str(real)) + ' "$@"\n[ "$1" != retire ]\n'); helper.chmod(0o700)
         self.call('confirm', self.token, good=False)
         self.assertFalse((self.state / 'confirmed').exists())
-        self.assertNotEqual(auth.read_bytes(), original_auth)
+        self.assertNotEqual(shadow.read_bytes(), original_shadow)
         helper.unlink(); real.rename(helper)
         self.call('rollback', self.token)
         self.assertEqual(auth.read_bytes(), original_auth)
         self.assertEqual(state.read_bytes(), original_state)
+        self.assertEqual(shadow.read_bytes(), original_shadow)
 
     def test_unconfirmed_initialize_reboot_restores_original_key_grant(self):
         self.initialize_with_real_key_helper()
@@ -463,6 +474,21 @@ class Transaction(unittest.TestCase):
         self.assertEqual((self.root / 'etc/dropbear/authorized_keys').read_bytes(), original_auth)
         self.assertEqual((self.root / 'etc/dicttech-ap-bootstrap-key/state').read_bytes(), b'fresh\n')
         self.assertFalse((self.root / 'etc/dicttech-ap/device.json').exists())
+
+    def test_retirement_success_without_final_password_never_confirms(self):
+        self.initialize_with_real_key_helper()
+        shadow = self.root / 'etc/shadow'
+        default_shadow = shadow.read_bytes()
+        helper = self.root / 'usr/libexec/dicttech-ap/bootstrap-key'
+        real = helper.with_name('bootstrap-key.real'); helper.rename(real)
+        helper.write_text('#!/bin/sh\n[ "$1" != retire ] || exit 0\nexec ' +
+                          shlex.quote(str(real)) + ' "$@"\n'); helper.chmod(0o700)
+        self.call('confirm', self.token, good=False)
+        self.assertFalse((self.state / 'confirmed').exists())
+        self.assertEqual(shadow.read_bytes(), default_shadow)
+        helper.unlink(); real.rename(helper)
+        self.call('rollback', self.token)
+        self.assertEqual(shadow.read_bytes(), self.before['etc/shadow'])
 
     def test_isolated_initialization_requires_exact_setup_and_pinned_boot(self):
         self.fresh_bootstrap('isolated')
@@ -528,6 +554,7 @@ class Transaction(unittest.TestCase):
         access = deploy.bootstrap_access(contract['identity'])
         self.assertEqual(access['offline']['address'], '192.168.250.1')
         self.assertFalse(access['dhcp']['ready'])
+        self.assertFalse(access['dhcp']['public_key_only'])
         approved = {'device_id': 'fixture_ap', 'bridge_mac': '02:00:00:00:99:00',
                     'allowed_boards': ['gemtek,xr1710g'], 'initialize': True,
                     'expect_boot_id': contract['boot_id']}

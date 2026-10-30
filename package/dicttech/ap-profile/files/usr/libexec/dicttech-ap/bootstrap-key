@@ -1,5 +1,6 @@
 #!/bin/sh
-# Initialization-only public credential. Never changes the curated owner set.
+# Initialization authentication lifecycle; retains its legacy path for upgrades.
+# Fresh setup uses root/password, never an installation-specific private key.
 set -eu
 umask 077
 SYSROOT=
@@ -12,6 +13,9 @@ AUTH=$(p /etc/dropbear/authorized_keys)
 KEY=$(p /usr/share/dicttech-ap/bootstrap-authorized-key.pub)
 OWNER=$(p /usr/share/dicttech-cli/authorized_keys)
 TX=$(p /root/.dicttech-ap-transaction)
+GENERIC_TX=$(p /root/.openwrt-deploy/state)
+PASSWORD=$(p /usr/share/dicttech-ap/bootstrap-password-hash)
+SHADOW=$(p /etc/shadow)
 plain() { test -f "$1" && test ! -L "$1"; }
 private() { plain "$1" && test "$(ls -nd "$1" | awk '{print $1 ":" $3}')" = '-rw-------:0'; }
 state() {
@@ -57,18 +61,59 @@ strip() {
  (set -C; filter "$AUTH" > "$AUTH.new.$$"); chmod 600 "$AUTH.new.$$"
  if cmp -s "$AUTH" "$AUTH.new.$$"; then rm "$AUTH.new.$$"; else mv "$AUTH.new.$$" "$AUTH"; fi
 }
+password_default() {
+ private "$SHADOW" && plain "$PASSWORD" || return 1
+ test "$(awk -F: '$1=="root" {print $2}' "$SHADOW")" = "$(cat "$PASSWORD")"
+}
+password_material() {
+ private "$1" && test "$(wc -l < "$1" | tr -d ' ')" = 1 || return 1
+ case "$(cat "$1")" in '$6$'*|'$5$'*|'$y$'*) :;; *) return 1;; esac
+ case "$(cat "$1")" in *:*|*' '*|*"$(printf '\t')"*) return 1;; esac
+}
+set_password() {
+ private "$SHADOW" || return 1
+ test "$(awk -F: '$1=="root" {n++} END {print n+0}' "$SHADOW")" = 1 || return 1
+ test ! -e "$SHADOW.new.$$" && test ! -L "$SHADOW.new.$$" || return 1
+ (set -C; awk 'BEGIN {FS=OFS=":"} FNR==NR {hash=$0;next} $1=="root" {$2=hash} {print}' "$1" "$SHADOW" > "$SHADOW.new.$$") || return 1
+ chmod 600 "$SHADOW.new.$$"; mv "$SHADOW.new.$$" "$SHADOW"
+}
 retire() {
  # This tombstone is outside the removable/quarantined managed profile.
+ # Only retire an existing initialization password, never reset a configured one.
+ if test "$(state 2>/dev/null || true)" != retired && password_default; then
+  if password_material "$(p /etc/dicttech-ap/root-password-hash)"; then
+   set_password "$(p /etc/dicttech-ap/root-password-hash)"
+  else printf '!\n' | set_password -; fi
+ fi
  strip
  write_state retired
  sync
 }
 pending() {
  test "$(state 2>/dev/null || true)" = fresh || return 1
- test -d "$TX" && test ! -L "$TX" && private "$TX/manifest.json" || return 1
- test ! -e "$TX/confirmed" && test ! -e "$TX/rolled-back" || return 1
- plain "$TX/applying" || plain "$TX/applied" || return 1
- "$JQ" -e --arg boot "$(cat "$BOOT")" '.approved_target.initialize==true and .boot_id==$boot' "$TX/manifest.json" >/dev/null
+ if test -d "$TX" && test ! -L "$TX" && private "$TX/manifest.json" &&
+    test ! -e "$TX/confirmed" && test ! -e "$TX/rolled-back" &&
+    { plain "$TX/applying" || plain "$TX/applied"; } &&
+    "$JQ" -e --arg boot "$(cat "$BOOT")" '.approved_target.initialize==true and .boot_id==$boot' "$TX/manifest.json" >/dev/null; then return 0; fi
+ # Nix has its own journal and one planned candidate boot. No new credential
+ # is granted here: the fresh password must already exist in shadow.
+ test -d "$GENERIC_TX" && test ! -L "$GENERIC_TX" && private "$GENERIC_TX/manifest.json" && private "$GENERIC_TX/lease" || return 1
+ test ! -e "$GENERIC_TX/confirmed" && test ! -e "$GENERIC_TX/rolled-back" || return 1
+ plain "$GENERIC_TX/applying" || plain "$GENERIC_TX/applied" || return 1
+ "$JQ" -e '.schema_version==1 and .profile_ap==true and .initialize==true and (.token|type=="string" and length==32)' "$GENERIC_TX/manifest.json" >/dev/null || return 1
+ local origin deadline stamp current
+ read -r origin deadline < "$GENERIC_TX/lease"
+ case "$deadline" in ''|*[!0-9]*) return 1;; esac
+ test "$origin" = "$("$JQ" -r .boot_id "$GENERIC_TX/manifest.json")" || return 1
+ current=$(cat "$BOOT"); stamp=$(cut -d. -f1 "$(p /proc/uptime)")
+ if test "$origin" = "$current"; then test "$stamp" -lt "$deadline"; return; fi
+ private "$GENERIC_TX/reboot.json" || return 1
+ "$JQ" -e --arg origin "$origin" --arg current "$current" --argjson stamp "$stamp" --argjson deadline "$deadline" --slurpfile manifest "$GENERIC_TX/manifest.json" '
+  .schema_version==1 and .token==$manifest[0].token and .origin_boot_id==$origin and .origin_deadline==$deadline and
+  (if .state=="armed" then $stamp<180
+   elif .state=="awaiting-resume" then .boot_id==$current and $stamp<180
+   elif .state=="resumed" then .boot_id==$current and (.deadline|type=="number") and $stamp<.deadline
+   else false end)' "$GENERIC_TX/reboot.json" >/dev/null
 }
 case "${1:-}" in
  fresh)
@@ -81,20 +126,20 @@ case "${1:-}" in
    retire; exit
   elif test -e "$(p /root/dicttech-ap-quarantine)" || test -L "$(p /root/dicttech-ap-quarantine)"; then
    retire; exit
-  else write_state fresh; sync; fi
- private "$AUTH" && plain "$KEY" && plain "$OWNER" || exit 1
- # A caller-supplied authorization file (including []) is an explicit policy.
- # Only the untouched image default is eligible for an initialization grant.
- if ! cmp -s "$AUTH" "$OWNER"; then retire; exit; fi
-  test ! -e "$AUTH.new.$$" && test ! -L "$AUTH.new.$$" || exit 1
-  (set -C; filter "$AUTH" > "$AUTH.new.$$")
-  cat "$KEY" >> "$AUTH.new.$$"; chmod 600 "$AUTH.new.$$"
-  if cmp -s "$AUTH" "$AUTH.new.$$"; then rm "$AUTH.new.$$"; else mv "$AUTH.new.$$" "$AUTH"; fi
+  else
+   private "$SHADOW" && plain "$PASSWORD" || exit 1
+   case "$(awk -F: '$1=="root" {print $2}' "$SHADOW")" in ''|'!'|'*') :;; *) retire; exit;; esac
+   set_password "$PASSWORD"
+   write_state fresh; sync
+  fi
+  # Keep explicit owner/empty-key policies, removing only the old bootstrap key.
+  strip
   ;;
  managed)
   # Pending initialization may retain an existing grant, never grant it anew.
   if pending; then exit 0; fi
   retire;;
  retire) retire;;
- *) printf 'usage: bootstrap-key fresh|managed|retire\n' >&2; exit 2;;
+ password-pending) password_default && pending;;
+ *) printf 'usage: bootstrap-key fresh|managed|retire|password-pending\n' >&2; exit 2;;
 esac

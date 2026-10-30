@@ -100,6 +100,10 @@ allowed() {
 retire_initialization_key() {
  if test -x "$KEYLIFE" && "$JQ" -e '.approved_target.initialize==true' "$STATE/manifest.json" >/dev/null; then
   "$KEYLIFE" retire || fail initialization_key_retirement_failed
+  if test -f "$STATE/root-hash-required"; then
+   file_private "$(p /etc/shadow)" &&
+    test "$(awk -F: '$1=="root" {print $2}' "$(p /etc/shadow)")" = "$(cat "$(p /etc/dicttech-ap/root-password-hash)")" || fail initialization_password_retirement_failed
+  fi
  fi
 }
 path_safe() {
@@ -158,7 +162,8 @@ current_matches() {
  resolver_correct || return 1
  if test -f "$STATE/root-hash-required"; then
   file_private "$(p /etc/shadow)" || return 1
-  test "$(awk -F: '$1=="root" {print $2}' "$(p /etc/shadow)")" = "$(cat "$(p /etc/dicttech-ap/root-password-hash)")" || return 1
+  test "$(awk -F: '$1=="root" {print $2}' "$(p /etc/shadow)")" = "$(cat "$(p /etc/dicttech-ap/root-password-hash)")" ||
+   { test -x "$KEYLIFE" && "$KEYLIFE" password-pending; } || return 1
  fi
 }
 atomic_install() {
@@ -181,6 +186,9 @@ sync_root_password() {
  local file shadow roots
  file=$(p /etc/dicttech-ap/root-password-hash); shadow=$(p /etc/shadow)
  validate_root_hash "$file"
+ # Password-only enrollment must survive the configured address/MAC transition.
+ # The lifecycle helper commits the final hash when that transaction confirms.
+ if test -x "$KEYLIFE" && "$KEYLIFE" password-pending; then return 0; fi
  plain "$shadow" || fail missing_root_password_material
  roots=$(awk -F: '$1=="root" {n++} END {print n+0}' "$shadow")
  test "$roots" = 1 || fail invalid_shadow_root_count

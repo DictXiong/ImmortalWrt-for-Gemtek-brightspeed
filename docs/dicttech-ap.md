@@ -107,38 +107,37 @@ An unprovisioned image has two management entries. **wan/lan2/lan3** form a
 temporary native-VLAN-1 bridge and obtain a DHCP address. A private, persistent
 random locally administered MAC and `xr1710g-setup-<MAC>` hostname distinguish
 fresh APs in the upstream lease list, even if factory MACs were duplicated.
-That DHCP entry permits **public-key SSH only**, port `12022`, using the owner's
-pinned key set. On its first fresh setup it also grants the separately shipped
-initialization public key, fingerprint
-`SHA256:so78iUvPVq4rK5TJl8Acd6rIHBMVN2XSm/CirMhjfUw`. Only the public key is
-in firmware; its private key is never copied. ROM `authorized_keys` remains the
-unchanged curated eleven-key set. The DHCP entry has no HTTP listener or
-password/blank-password SSH access.
+Both the DHCP entry and the offline entry allow SSH on port `12022` as
+**root/password** until initialization is confirmed. The reviewed owner public
+keys remain available, but no installation-specific private key is required.
+The shared image contains a public default-password hash; the virgin shadow
+remains blank/locked until the first fresh boot installs that hash. The DHCP
+entry has no HTTP listener.
 
-The extra credential lasts until initialization is **confirmed**. With omitted
-`authorized_keys`, apply keeps it for the controller's reconnect; confirm removes
-it without restarting Dropbear, so the existing authenticated master can receive
-the result. A new connection using only that key must then be rejected. Explicit
-authorization lists, including `[]`, take effect exactly and immediately; they
-are never supplemented to preserve the initialization connection. Callers who
-replace access must reconnect using their selected permanent identity.
+An active initialization transaction retains the default password for address
+changes and its one explicitly planned reboot. Confirmation installs the
+configured private root-password hash and retires the default credential without
+restarting Dropbear, so the authenticated master can receive the result. If no
+valid final hash exists, retirement locks the default password. Explicit
+`authorized_keys` lists, including `[]`, take effect exactly and are never
+supplemented; an empty key list does not disable the initialization password.
 
 The private lifecycle stamp under `/etc/dicttech-ap-bootstrap-key/` is separate
 from the managed profile, retained by package upgrades and sysupgrade, and
 backed up/restored with initialization transactions. Configured exports carry a
-retired stamp and filter out the initialization identity. Ordinary reboot,
-missing/quarantined profile, and manual removal of the temporary key never
-grant it again. A full factory reset erases this stamp and intentionally begins
-a new initialization. The first stamp is durable before granting: interruption
-in that small window fails closed rather than retrying the grant; use the owner
-keys or the physical LAN4 entry to recover. Failed/unconfirmed initialization
-restores the original authorization and lifecycle state through rollback.
+retired stamp and filter out the legacy initialization public key. The helper
+and stamp retain their historical `bootstrap-key` names for upgrade compatibility;
+fresh images no longer grant that key. Ordinary reboot, a missing/quarantined
+profile, or an existing user password never re-enables the default password.
+A full factory reset erases this stamp and intentionally begins a new
+initialization. Failed/unconfirmed initialization restores the original
+authorization, shadow and lifecycle state through rollback.
 
 **lan4** remains isolated at `192.168.250.1/24`, with HTTP and SSH `12022`.
 Connect directly and assign, for example, `192.168.250.100/24` without a gateway
-or DNS. This fallback works without a DHCP uplink. The blank initial root
-credential is confined to this physical setup entry; provisioning installs
-the private password hash. Wi-Fi, DHCP server, IPv6 and NAT are disabled during
+or DNS. This fallback works without a DHCP uplink and uses the same initial
+root/password credential. Provisioning installs the private password hash.
+Wi-Fi, DHCP server, IPv6 and NAT are disabled during
 setup. ARP settings keep the static setup address off the DHCP bridge, avoiding
 default-IP collisions during batch enrollment. A quarantined invalid managed
 configuration fails closed to **lan4 only**, rather than joining an uplink.

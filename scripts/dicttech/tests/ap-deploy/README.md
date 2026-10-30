@@ -31,6 +31,11 @@ resolver normalization with exact original regular-file/symlink restoration;
 unapplied trial cancellation preserving concurrent edits; and stopping a hung
 owned reloader before rollback can complete.
 
+Fresh initialization retains root/password through apply and installs the
+configured root hash only at confirmation. The tests verify this with omitted
+and explicitly empty authorized keys, refuse confirmation when retirement fails
+or leaves the default hash, and restore shadow plus lifecycle state on rollback.
+
 # Operator interface
 
 `ap-deploy.py` consumes the canonical structured JSON emitted by `ap_config.py`.

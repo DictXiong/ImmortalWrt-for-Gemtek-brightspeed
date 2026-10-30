@@ -205,7 +205,7 @@ def bootstrap_access(identity):
     return {'mode': 'dhcp' if identity.get('bootstrap_dhcp') else 'isolated',
             'offline': {'port': 'lan4', 'address': '192.168.250.1', 'ssh_port': 12022, 'http_port': 80},
             'dhcp': {'ready': identity.get('bootstrap_dhcp_ready') is True,
-                     'ssh_port': 12022, 'public_key_only': True}}
+                     'ssh_port': 12022, 'public_key_only': False}}
 
 
 def receipt_path(args):

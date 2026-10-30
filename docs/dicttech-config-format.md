@@ -77,12 +77,13 @@ secrets
 Wi-Fi passwords are 8–63 UTF-8 bytes. Control characters, duplicate JSON fields,
 unknown configuration fields and unsupported versions are rejected. Secrets
 must not be passed as shell arguments or printed by validation/plan commands.
-Absent `authorized_keys` preserves current permanent keys; during first
-initialization it leaves the extra bootstrap credential in place until confirm
-retires it. Same-device exports remove that temporary identity. An explicit `[]`
+Absent `authorized_keys` preserves current permanent keys. An explicit `[]`
 requests an empty authorized-key file immediately, and a nonempty explicit list
-replaces it exactly. The shipped initialization key cannot be listed as a
-permanent credential. Device SSH host keys are not part of
+replaces it exactly. Fresh initialization uses root/password until confirmation
+activates `root_password_hash`; an active transaction can preserve that default
+through its one planned reboot. Empty public-key authorization does not disable
+this temporary password. Same-device exports remove the legacy initialization
+public key, which cannot be listed as a permanent credential. Device SSH host keys are not part of
 this document or model rendering. Updating root's password hash must preserve
 all other shadow rows.
 
@@ -347,7 +348,8 @@ The renderer creates `etc/dicttech-ap/device.json` with nonsecret resolved
 identity/policy, defaults SHA and a nonsecret configuration fingerprint. It
 omits credentials and secret-derived hashes. The private root hash lives at
 `etc/dicttech-ap/root-password-hash`; the target transaction synchronizes only
-root's shadow hash. The renderer never generates host keys or whole shadow files.
+root's shadow hash, deferring activation until confirmation during fresh
+initialization. The renderer never generates host keys or whole shadow files.
 
 `etc/dicttech-ap/managed-files.json` is a separate **private** first-preseed
 completeness manifest. It contains hashes of all rendered files except itself,

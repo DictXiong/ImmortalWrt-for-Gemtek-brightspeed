@@ -20,7 +20,7 @@ def main():
     if not sys.platform.startswith('linux'):
         parser.error('the inert /proc and shell fixtures require Linux')
     commands = ['sh', 'jq', 'tar', 'cp', 'mv', 'chmod', 'wc', 'tr', 'readlink', 'hexdump', 'timeout',
-                'ln', 'rm', 'mkdir', 'sed', 'sha256sum', 'awk', 'cat', 'touch']
+                'ln', 'rm', 'mkdir', 'sed', 'sha256sum', 'awk', 'cat', 'touch', 'openssl']
     missing = [name for name in commands if not shutil.which(name)]
     if missing:
         parser.error('missing local test tools: ' + ', '.join(missing))
@@ -32,7 +32,8 @@ def main():
               package / 'etc/init.d/dicttech-ap-prepare',
               package / 'etc/init.d/dicttech-ap-finalize']
     inputs += [package / 'usr/libexec/dicttech-ap/bootstrap-key',
-               package / 'usr/share/dicttech-ap/bootstrap-authorized-key.pub']
+               package / 'usr/share/dicttech-ap/bootstrap-authorized-key.pub',
+               package / 'usr/share/dicttech-ap/bootstrap-password-hash']
     inputs.extend(sorted((package / 'usr/lib/dicttech-ap/setup').iterdir()))
     inputs.append(source / 'package/network/services/dropbear/files/dropbear.init')
     for item in inputs:

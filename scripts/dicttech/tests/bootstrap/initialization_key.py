@@ -32,9 +32,16 @@ def main():
     def fresh(f):
         f.call('prepare')
         auth, state, owner, key = paths(f)
-        assert auth.read_bytes() == owner + key and state.read_bytes() == b'fresh\n'
+        assert auth.read_bytes() == owner and state.read_bytes() == b'fresh\n'
         assert auth.stat().st_mode & 0o777 == 0o600 and state.stat().st_mode & 0o777 == 0o600
         assert state.parent.stat().st_mode & 0o777 == 0o700
+        expected = (f.root / 'usr/share/dicttech-ap/bootstrap-password-hash').read_text().strip()
+        assert (f.root / 'etc/shadow').read_text().split(':')[1] == expected
+        # Verify the public credential itself, not just agreement between two
+        # copies of an accidentally changed hash. No device secrets are used.
+        digest = subprocess.run(['openssl', 'passwd', '-6', '-salt', 'DictTechInit', '-stdin'],
+                                input='password\n', capture_output=True, text=True, check=True).stdout.strip()
+        assert expected == digest
         before = auth.stat().st_mtime_ns, state.stat().st_mtime_ns
         helper(f, 'fresh'); f.call('finalize')
         assert (auth.stat().st_mtime_ns, state.stat().st_mtime_ns) == before
@@ -51,7 +58,7 @@ def main():
         auth, state, owner, key = paths(f)
         auth.write_bytes(b'')
         f.call('prepare')
-        assert auth.read_bytes() == b'' and state.read_bytes() == b'retired\n'
+        assert auth.read_bytes() == b'' and state.read_bytes() == b'fresh\n'
 
     def pending(f):
         f.call('prepare'); auth, state, owner, key = paths(f)
@@ -59,7 +66,7 @@ def main():
                 'boot_id': (f.root / 'proc/sys/kernel/random/boot_id').read_text().strip()}).encode())
         f.write('root/.dicttech-ap-transaction/applied', b'fixture\n')
         helper(f, 'managed')
-        assert auth.read_bytes() == owner + key and state.read_bytes() == b'fresh\n'
+        assert auth.read_bytes() == owner and state.read_bytes() == b'fresh\n'
         auth.write_bytes(b'')
         helper(f, 'managed')
         assert auth.read_bytes() == b'', 'explicit [] must never be supplemented'
@@ -112,15 +119,86 @@ def main():
         f.call('finalize')
         assert auth.read_bytes() == owner and state.read_bytes() == b'retired\n'
 
-    def failed_grant_not_retried(f):
-        # Stamp-first crash/failure intentionally fails closed. Recovery uses
-        # existing owner keys or LAN4, never an automatic repeated grant.
+    def custom_password_is_never_reset(f):
         auth, state, owner, key = paths(f)
-        auth.unlink()
-        helper(f, 'fresh', good=False)
-        auth.write_bytes(owner); auth.chmod(0o600)
+        custom = b'root:$6$owner$not-a-default:20000:0:99999:7:::\n'
+        f.write('etc/shadow', custom)
+        f.call('prepare')
+        assert (f.root / 'etc/shadow').read_bytes() == custom
+        assert state.read_bytes() == b'retired\n'
+        assert auth.read_bytes() == owner
+
+    def generic_pending_password_survives_reboot_then_retires(f):
+        f.call('prepare'); auth, state, owner, key = paths(f)
+        expected = (f.root / 'usr/share/dicttech-ap/bootstrap-password-hash').read_text().strip()
+        assert (f.root / 'etc/shadow').read_text().split(':')[1] == expected
+        boot = (f.root / 'proc/sys/kernel/random/boot_id').read_text().strip()
+        token = 'a' * 32
+        f.write('proc/uptime', b'10.00 10.00\n')
+        f.write('root/.openwrt-deploy/state/manifest.json', json.dumps({
+            'schema_version': 1, 'profile_ap': True, 'initialize': True, 'token': token, 'boot_id': boot}).encode())
+        f.write('root/.openwrt-deploy/state/lease', (boot + ' 600\n').encode())
+        f.write('root/.openwrt-deploy/state/applied', b'fixture\n')
+        f.write('etc/dicttech-ap/root-password-hash', b'$6$owner$final-password-material\n')
+        helper(f, 'password-pending'); helper(f, 'managed')
+        f.write('root/.openwrt-deploy/state/reboot.json', json.dumps({
+            'schema_version': 1, 'token': token, 'origin_boot_id': boot,
+            'origin_deadline': 600, 'state': 'armed'}).encode())
+        f.write('proc/sys/kernel/random/boot_id', b'00000000-0000-4000-8000-000000000002\n')
+        helper(f, 'password-pending'); helper(f, 'managed')
+        assert (f.root / 'etc/shadow').read_text().split(':')[1] == expected
+        helper(f, 'retire')
+        assert (f.root / 'etc/shadow').read_text().split(':')[1] == '$6$owner$final-password-material'
+        assert state.read_bytes() == b'retired\n'
+        helper(f, 'password-pending', good=False)
+        # Marker loss cannot reopen the public password.
         helper(f, 'fresh')
-        assert auth.read_bytes() == owner and state.read_bytes() == b'fresh\n'
+        assert (f.root / 'etc/shadow').read_text().split(':')[1] == '$6$owner$final-password-material'
+
+    def shadow_symlink_is_not_followed(f):
+        shadow = f.root / 'etc/shadow'
+        target = f.root / 'tmp/shadow-target'; target.write_bytes(b'untouched')
+        shadow.unlink(); shadow.symlink_to(target)
+        helper(f, 'fresh', good=False)
+        assert target.read_bytes() == b'untouched'
+
+    def generic_invalid_lease_retires_default(f, mutation):
+        f.call('prepare')
+        auth, state, owner, key = paths(f)
+        boot = (f.root / 'proc/sys/kernel/random/boot_id').read_text().strip()
+        manifest = {'schema_version': 1, 'profile_ap': True, 'initialize': True,
+                    'token': 'a' * 32, 'boot_id': boot}
+        f.write('proc/uptime', b'100.00 0.00\n')
+        f.write('root/.openwrt-deploy/state/manifest.json', json.dumps(manifest).encode())
+        f.write('root/.openwrt-deploy/state/lease', (boot + ' 600\n').encode())
+        f.write('root/.openwrt-deploy/state/applied', b'fixture\n')
+        if mutation == 'expired':
+            f.write('proc/uptime', b'601.00 0.00\n')
+        elif mutation == 'wrong_boot':
+            f.write('proc/sys/kernel/random/boot_id', b'00000000-0000-4000-8000-000000000002\n')
+        elif mutation == 'closed':
+            f.write('root/.openwrt-deploy/state/rolled-back', b'fixture\n')
+        elif mutation == 'not_init':
+            manifest['initialize'] = False
+            f.write('root/.openwrt-deploy/state/manifest.json', json.dumps(manifest).encode())
+        elif mutation == 'symlink_manifest':
+            path = f.root / 'root/.openwrt-deploy/state/manifest.json'
+            target = f.root / 'tmp/manifest-target'; target.write_bytes(path.read_bytes())
+            path.unlink(); path.symlink_to(target)
+        helper(f, 'password-pending', good=False)
+        helper(f, 'managed')
+        assert (f.root / 'etc/shadow').read_text().split(':')[1] == '!'
+        assert state.read_bytes() == b'retired\n' and auth.read_bytes() == owner
+        helper(f, 'fresh')
+        assert (f.root / 'etc/shadow').read_text().split(':')[1] == '!'
+
+    def other_shadow_accounts_preserved(f):
+        original = b'root:!:20000:0:99999:7:::\nservice:*:12345:0:99999:7:::\n'
+        f.write('etc/shadow', original)
+        f.call('prepare')
+        helper(f, 'retire')
+        assert (f.root / 'etc/shadow').read_bytes() == original
+        assert (f.root / 'etc/shadow').stat().st_mode & 0o777 == 0o600
 
     check('fresh_grant_once_readonly_repeated_prepare', fresh)
     check('manual_removal_survives_same_fresh_reboot', lambda f: revoked(f, False))
@@ -133,7 +211,13 @@ def main():
     check('symlink_state_removes_grant_without_following', lambda f: malformed_state(f, True))
     check('filter_actual_identity_preserves_other_comments', filtering)
     check('corrupt_marker_during_setup_retires_before_fallback', corrupt_pending_marker)
-    check('interrupted_initial_grant_fails_closed_without_retry', failed_grant_not_retried)
+    check('custom_password_is_never_reset', custom_password_is_never_reset)
+    check('generic_pending_password_survives_reboot_then_retires', generic_pending_password_survives_reboot_then_retires)
+    check('shadow_symlink_is_not_followed', shadow_symlink_is_not_followed)
+    for mutation in ('expired', 'wrong_boot', 'closed', 'not_init', 'symlink_manifest'):
+        check('generic_invalid_lease_' + mutation + '_locks_and_never_reopens',
+              lambda f, mutation=mutation: generic_invalid_lease_retires_default(f, mutation))
+    check('other_shadow_accounts_and_private_mode_preserved', other_shadow_accounts_preserved)
     print(json.dumps(results))
 
 

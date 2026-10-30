@@ -18,7 +18,7 @@ def case(name):
   (f/'tmp/.uci/unrelated').write_text('UNRELATED-PENDING-DELTA\n')
   shutil.copy(SHARE/'templates/guest-guard.nft',f/'etc/xr-guest-vlan192.nft');shutil.copy(SHARE/'templates/13-nf-bridge.conf',f/'etc/sysctl.d/13-nf-bridge.conf')
   (f/'etc/dicttech-ap/root-password-hash').write_text('$6$fixture$fixture\n')
-  (f/'etc/shadow').write_text('root:!:1:0:99999:7:::\n');(f/'etc/dropbear/authorized_keys').write_text('fixture-key\n')
+  (f/'etc/shadow').write_text('root:!:1:0:99999:7:::\n');(f/'etc/shadow').chmod(0o600);(f/'etc/dropbear/authorized_keys').write_text('fixture-key\n')
   (f/'etc/dropbear/authorized_keys').chmod(0o600)
   (f/'usr/share/dicttech-cli').mkdir()
   shutil.copyfile(R/'package/dicttech/cli-profile/files/usr/share/dicttech-cli/authorized_keys',f/'usr/share/dicttech-cli/authorized_keys')

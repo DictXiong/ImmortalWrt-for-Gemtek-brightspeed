@@ -69,6 +69,19 @@ class RootfsChecks(unittest.TestCase):
         state.unlink()
         self.assertEqual(asset.read_bytes(), original)
 
+    def test_public_initialization_password_asset_is_required_and_regular(self):
+        asset = self.root / 'usr/share/dicttech-ap/bootstrap-password-hash'
+        original = asset.read_bytes()
+        asset.chmod(0o600)
+        with self.assertRaisesRegex(check.RootfsError, 'public initialization password hash'):
+            check.check_rootfs(self.root)
+        asset.chmod(0o644)
+        asset.unlink(); asset.symlink_to('/unowned-public-password-fixture')
+        with self.assertRaisesRegex(check.RootfsError, 'missing or symlinked'):
+            check.check_rootfs(self.root)
+        asset.unlink(); asset.write_bytes(original); asset.chmod(0o644)
+        self.assertTrue(check.check_rootfs(self.root)['passed'])
+
     def test_stale_runtime_and_changed_default_config_fail(self):
         for relative in ('usr/libexec/dicttech-ap/transaction', 'usr/lib/xr-roaming/helper.sh', 'etc/config/xr_roaming'):
             path = self.root / relative; before = path.read_bytes(); path.write_bytes(before + b'\n# stale fixture\n')

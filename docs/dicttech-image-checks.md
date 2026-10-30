@@ -91,8 +91,10 @@ that generates disabled Wi-Fi interfaces, and confirms upstream credential and
 wireless defaults are suppressed. It does not execute a hardware-dependent UCI
 wireless generator on the build host.
 
-Device deployment state, preset usable root passwords and private SSH/HTTPS
-host identities are rejected in the shared image. The owner public-key file
+Device deployment state, preset usable root passwords in shadow and private SSH/HTTPS
+host identities are rejected in the shared image. The public root/password
+initialization hash is an immutable, checked asset installed only by fresh boot;
+it is not device secret material. The owner public-key file
 is required to match the reviewed `cli-profile` asset exactly, as a regular
 0600 file; missing, empty, extra or replaced keys fail. CLI assets, helper,
 root rc files, ARP policy and the reviewed history collector/RPC/init/ACL

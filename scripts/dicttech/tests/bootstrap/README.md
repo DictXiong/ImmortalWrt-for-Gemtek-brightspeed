@@ -4,7 +4,7 @@ Run from the source checkout:
 python3 scripts/dicttech/test-ap-bootstrap.py --output bootstrap-tests.json
 ```
 
-Linux, Python 3, jq and ordinary shell utilities are required. No root privileges,
+Linux, Python 3, jq, OpenSSL and ordinary shell utilities are required. No root privileges,
 router access, SSH authentication, browser, prepared feeds or built firmware are
 needed. `--source-root` can select a separate build source checkout.
 
@@ -23,17 +23,28 @@ rejection, malformed snapshot JSON and unavailable/malformed ubus replies.
 Fresh, unprovisioned firmware keeps LAN4 as a separate offline entry at
 `192.168.250.1/24`. WAN/LAN2/LAN3 form the VLAN-aware `br-setup` DHCP uplink,
 using a once-generated, private persistent locally administered MAC and hostname.
-That uplink accepts owner public-key SSH on port 12022; the offline LAN4 entry
-also retains HTTP and password SSH. No Wi-Fi, DHCP/RA server, NAT or upstream
+Both entries accept root/password SSH on port 12022 until initialization is
+confirmed, alongside the unchanged owner public-key set. The offline LAN4 entry
+also retains HTTP. No Wi-Fi, DHCP/RA server, NAT or upstream
 LuCI listener starts. An invalid managed marker remains quarantined in the
 LAN4-only profile and cannot use first-device initialization.
 
 Both SSH instances use `DirectInterface`, which the actual Dropbear init converts
 to device-bound `-l lan4` / `-l br-setup.1` sockets. Merely binding the maintenance
-IP would let Linux weak-host routing reach the password listener through another
+IP would let Linux weak-host routing reach the maintenance listener through another
 interface; merely using `Interface` can also emit a wildcard listener while DHCP
 is pending. The inert fixture executes the checkout's actual init function to
 check both device bindings and that a pending DHCP interface creates no listener.
+
+Initialization-authentication fixtures verify the public password against its
+SHA-512 crypt value, first-boot installation, preservation of explicit empty
+authorized keys, existing custom passwords and unrelated shadow rows. They cover
+native and Nix pending journals, one planned reboot, expired/closed/wrong-boot
+leases, legacy-key filtering, retirement and symlink refusal. Configured,
+retired or quarantined devices never regain the default password; confirmation
+activates the final root hash, or locks the default if none is valid. The helper
+and lifecycle directory retain their legacy `bootstrap-key` names solely for
+upgrade compatibility.
 
 `bootstrap.sh check-setup` is a read-only proof shared by the transaction helper.
 It compares all setup templates and persisted identity/state, checks disabled
@@ -84,7 +95,8 @@ Actual init scripts are restricted to enable/disable/links; ubus and IP state ar
 inert responses, with network services and nft blocked. It verifies fresh DHCP,
 canonical S13 repair after real UCI commits, offline pending-DHCP enrollment,
 transaction identity proof, template/MAC tamper rejection, and optional CLI
-activation. C7 intentionally ships jq without Oniguruma, so this fixture first
+activation, initialization password retention across a planned reboot, expired
+lease refusal, confirmation and legacy-key retirement. C7 intentionally ships jq without Oniguruma, so this fixture first
 confirms that regex calls fail; bootstrap generation and validation must use
 literal split/join and ASCII checks instead of jq test/gsub. This catches target
 feature differences that the host jq fixtures cannot expose.

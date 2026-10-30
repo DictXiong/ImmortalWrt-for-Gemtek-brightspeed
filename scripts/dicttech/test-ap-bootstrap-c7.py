@@ -211,7 +211,11 @@ for row in rows:print('    inet '+row['address']+'/'+str(row['mask'])+' scope gl
         key = (self.root / 'usr/share/dicttech-ap/bootstrap-authorized-key.pub').read_bytes()
         auth = self.root / 'etc/dropbear/authorized_keys'
         key_state = self.root / 'etc/dicttech-ap-bootstrap-key/state'
-        if auth.read_bytes() != owner + key or key_state.read_bytes() != b'fresh\n':
+        default_hash = (self.root / 'usr/share/dicttech-ap/bootstrap-password-hash').read_text().strip()
+        def root_hash():
+            return next(row.split(':')[1] for row in (self.root / 'etc/shadow').read_text().splitlines()
+                        if row.startswith('root:'))
+        if auth.read_bytes() != owner or key_state.read_bytes() != b'fresh\n' or root_hash() != default_hash:
             raise RuntimeError('C7 actual initialization helper did not grant exactly once')
         shell = next(row.split(':')[6] for row in (self.root / 'etc/passwd').read_text().splitlines()
                      if row.startswith('root:'))
@@ -265,17 +269,55 @@ for row in rows:print('    inet '+row['address']+'/'+str(row['mask'])+' scope gl
             'approved_target': {'initialize': True}}).encode())
         self.put('root/.dicttech-ap-transaction/applied', b'fixture\n')
         self.shell('C7 pending initialization keeps default grant', key_helper, 'managed')
-        if auth.read_bytes() != owner + key:
+        if auth.read_bytes() != owner or root_hash() != default_hash:
             raise RuntimeError('C7 pending initialization lost its temporary credential')
         self.put('etc/dropbear/authorized_keys', b'')
         self.shell('C7 explicit empty remains empty during pending initialization', key_helper, 'managed')
         if auth.read_bytes(): raise RuntimeError('C7 helper supplemented explicit empty authorization')
+        # A Nix initialization may cross one planned reboot. Use the real slim
+        # jq/ash helper paths with synthetic state and no router or services.
+        (self.root / 'root/.dicttech-ap-transaction/applied').unlink()
+        token = 'a' * 32
+        original_boot = '11111111-1111-4111-8111-111111111111'
+        new_boot = '22222222-2222-4222-8222-222222222222'
+        self.put('root/.openwrt-deploy/state/manifest.json', json.dumps({
+            'schema_version': 1, 'profile_ap': True, 'initialize': True,
+            'token': token, 'boot_id': original_boot}).encode())
+        self.put('root/.openwrt-deploy/state/lease', (original_boot + ' 600\n').encode())
+        self.put('root/.openwrt-deploy/state/applied', b'fixture\n')
+        self.shell('C7 Nix initialization keeps public password', key_helper, 'password-pending')
+        self.put('root/.openwrt-deploy/state/reboot.json', json.dumps({
+            'schema_version': 1, 'token': token, 'origin_boot_id': original_boot,
+            'origin_deadline': 600, 'state': 'armed'}).encode())
+        self.put('proc/sys/kernel/random/boot_id', (new_boot + '\n').encode())
+        self.shell('C7 one armed candidate boot keeps public password', key_helper, 'password-pending')
+        self.put('root/.openwrt-deploy/state/reboot.json', json.dumps({
+            'schema_version': 1, 'token': token, 'origin_boot_id': original_boot,
+            'origin_deadline': 600, 'state': 'resumed', 'boot_id': new_boot,
+            'deadline': 500}).encode())
+        self.shell('C7 resumed candidate boot keeps public password', key_helper, 'password-pending')
+        self.put('proc/uptime', b'501.00 0.00\n')
+        self.shell('C7 expired candidate lease rejected', key_helper, 'password-pending', good=False)
+        self.put('proc/uptime', b'100.00 0.00\n')
+        self.put('root/.openwrt-deploy/state/confirmed', b'fixture\n')
+        self.shell('C7 confirmed journal no longer holds default', key_helper, 'password-pending', good=False)
+        shadow_before_retirement = (self.root / 'etc/shadow').read_bytes()
+        self.shell('C7 missing final hash locks public password', key_helper, 'retire')
+        if root_hash() != '!':
+            raise RuntimeError('C7 retirement without final hash left default password usable')
+        # Rewind only synthetic files to exercise the independent successful
+        # confirmation branch with the same real target awk implementation.
+        self.put('etc/shadow', shadow_before_retirement)
+        self.put('etc/dicttech-ap-bootstrap-key/state', b'fresh\n')
+        final_hash = '$6$owner$final-password-material'
+        self.put('etc/dicttech-ap/root-password-hash', (final_hash + '\n').encode())
         self.put('etc/dropbear/authorized_keys', owner + key)
         self.shell('C7 actual awk retirement and tombstone', key_helper, 'retire')
-        if auth.read_bytes() != owner or key_state.read_bytes() != b'retired\n':
+        if auth.read_bytes() != owner or key_state.read_bytes() != b'retired\n' or root_hash() != final_hash:
             raise RuntimeError('C7 retirement did not restore exact owner authorization')
         self.shell('C7 retired state never regrants', key_helper, 'fresh')
-        if auth.read_bytes() != owner: raise RuntimeError('C7 retired state reopened temporary access')
+        if auth.read_bytes() != owner or root_hash() != final_hash:
+            raise RuntimeError('C7 retired state reopened temporary access')
         other = next(row for row in owner.splitlines() if row.startswith(b'ssh-ed25519 '))
         identity_pair = b' '.join(key.split()[:2])
         preserved = other + b' comment mentions ' + identity_pair + b' "arbitrary comment\n'
@@ -285,7 +327,8 @@ for row in rows:print('    inet '+row['address']+'/'+str(row['mask'])+' scope gl
         return {'passed': True, 'steps': self.steps, 'dhcp_and_offline_pending_proven': True,
                 'actual_init_enable_exercised': True, 'slim_jq_without_regex': True,
                 'bounded_cli_success_and_missing_helper_proven': True,
-                'initialization_key_fresh_pending_explicit_empty_retired_with_actual_c7_tools': True,
+                'initialization_password_fresh_pending_reboot_confirmed_retired_with_actual_c7_tools': True,
+                'legacy_initialization_key_stripped': True,
                 'ash_sha256': hashlib.sha256(self.bb.read_bytes()).hexdigest(),
                 'jq_sha256': hashlib.sha256((self.rom / 'usr/bin/jq').read_bytes()).hexdigest()}
 

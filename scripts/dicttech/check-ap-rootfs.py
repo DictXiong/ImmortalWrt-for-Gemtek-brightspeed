@@ -244,8 +244,13 @@ def check_unprovisioned(rootfs, source_root):
     require(not entries, 'virgin rootfs contains device deployment state or secrets under etc/dicttech-ap')
     lifecycle = rootfs / 'etc/dicttech-ap-bootstrap-key'
     require(lifecycle.is_dir() and not lifecycle.is_symlink() and lifecycle.stat().st_mode & 0o7777 == 0o700,
-            'initialization-key lifecycle directory must be private 0700')
-    require(not list(lifecycle.iterdir()), 'virgin rootfs contains initialization-key lifecycle state')
+            'initialization authentication lifecycle directory must be private 0700')
+    require(not list(lifecycle.iterdir()), 'virgin rootfs contains initialization authentication lifecycle state')
+    password = rootfs / 'usr/share/dicttech-ap/bootstrap-password-hash'
+    require(regular(password) and password.stat().st_mode & 0o7777 == 0o644,
+            'public initialization password hash must be a regular 0644 asset')
+    require(digest(password.read_bytes()) == 'd21ddc21be62c5d02ec89bb4e924875ec0d14b3cba14bbc33aa6772b220df186',
+            'wrong public initialization password hash')
     bootstrap_key = rootfs / 'usr/share/dicttech-ap/bootstrap-authorized-key.pub'
     helper = rootfs / 'usr/libexec/dicttech-ap/bootstrap-key'
     require(regular(bootstrap_key) and bootstrap_key.stat().st_mode & 0o7777 == 0o644,
@@ -295,6 +300,7 @@ def check_unprovisioned(rootfs, source_root):
     resolver = rootfs / 'etc/resolv.conf'
     require(resolver.is_symlink() and os.readlink(resolver) == '/tmp/resolv.conf.d/resolv.conf.auto', 'virgin AP resolver must use netifd DNS without dnsmasq')
     return {'deployment_state': 'absent', 'private_host_identity': 'absent', 'preset_root_password': False,
+            'first_boot_root_password': 'public root/password; retired on initialization confirmation',
             'preset_authorized_keys': 'reviewed public DictTech set', 'authorized_keys_sha256': digest(keys_source.read_bytes()), 'wireless_generation': 'AP marker selects disabled interfaces; upstream defaults suppressed',
             'roaming_publication': 'RAM symlink', 'resolver': 'netifd automatic DNS symlink'}
 
