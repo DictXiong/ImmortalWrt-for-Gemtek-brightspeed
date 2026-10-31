@@ -56,6 +56,9 @@ def device(layout='legacy', old_alias=False):
     compatible = text(board) + (text('gemtek,xr1710g-ubi') if old_alias else b'') + text('airoha,an7581')
     nodes = {'/': {'compatible': compatible}, '/chosen': {'rootdisk': cell(55)},
              '/soc/nand/partitions': {'compatible': text('fixed-partitions'), '#address-cells': cell(1), '#size-cells': cell(1)}}
+    nodes['/soc/i2c0@1fbf8000'] = {'compatible': text('mediatek,mt7621-i2c'),
+                                 'reg': cell(0, 0x1fbf8000, 0, 0x100), 'status': text('okay')}
+    nodes['/soc/i2c0@1fbf8000/hwmon@2e'] = {'compatible': text('nuvoton,nct7802'), 'reg': cell(0x2e)}
     for name, offset, size, ro in check.PARTITIONS[layout]:
         path = '/soc/nand/partitions/' + name + '@' + format(offset, 'x')
         nodes[path] = {'label': text(name), 'reg': cell(offset, size)}
@@ -147,6 +150,33 @@ class ImageChecks(unittest.TestCase):
         for layout in ('legacy', 'ubi'):
             report = check.check_image(fit(device(layout), metadata(layout)), layout)
             self.assertTrue(report['passed']); self.assertEqual(report['factory_cell_format'], layout)
+            self.assertEqual(report['i2c_hwmon']['compatible'], 'mediatek,mt7621-i2c')
+
+    def test_compiled_fit_requires_supported_i2c_and_enabled_nct7802(self):
+        i2c = '/soc/i2c0@1fbf8000'; monitor = i2c + '/hwmon@2e'
+        for layout in ('legacy', 'ubi'):
+            for mutate in ('vendor-driver', 'window', 'missing-monitor', 'address',
+                           'monitor-driver', 'disabled-controller', 'disabled-monitor', 'disabled-parent'):
+                with self.subTest(layout=layout, mutate=mutate):
+                    nodes = device(layout)
+                    if mutate == 'vendor-driver':
+                        nodes[i2c]['compatible'] = text('airoha,airoha-i2c')
+                    elif mutate == 'window':
+                        nodes[i2c]['reg'] = cell(0, 0x1fbf8100, 0, 0x100)
+                    elif mutate == 'missing-monitor':
+                        del nodes[monitor]
+                    elif mutate == 'address':
+                        nodes[monitor]['reg'] = cell(0x2f)
+                    elif mutate == 'monitor-driver':
+                        nodes[monitor]['compatible'] = text('nuvoton,nct6775')
+                    elif mutate == 'disabled-controller':
+                        nodes[i2c]['status'] = text('disabled')
+                    elif mutate == 'disabled-monitor':
+                        nodes[monitor]['status'] = text('disabled')
+                    else:
+                        nodes['/soc'] = {'status': text('disabled')}
+                    with self.assertRaisesRegex(check.ImageError, 'I2C0'):
+                        check.check_image(fit(nodes, metadata(layout)), layout)
 
     def test_wrong_layout_metadata_is_rejected(self):
         with self.assertRaisesRegex(check.ImageError, 'compatibility'):

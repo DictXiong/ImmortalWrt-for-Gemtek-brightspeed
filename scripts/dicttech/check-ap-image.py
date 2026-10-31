@@ -169,8 +169,23 @@ def check_tree(blob, layout, allow_legacy_alias=False):
             cells.append(tuple(struct.unpack('>II', reg)))
     expected_cells = {(0, 0x1e00), (0x5000, 6), (0x6000, 6)} if layout == 'legacy' else {(0x5000, 0x1e00), (0x6c, 0x11), (0x86, 0x11)}
     require(set(cells) == expected_cells, 'factory EEPROM/MAC cell offsets do not match the selected layout format')
+    i2c = '/soc/i2c0@1fbf8000'
+    controller = nodes.get(i2c, {})
+    require('mediatek,mt7621-i2c' in strings(controller.get('compatible', b'\0')),
+            'I2C0 does not select the supported i2c-mt7621 driver')
+    require(controller.get('reg') == struct.pack('>4I', 0, 0x1fbf8000, 0, 0x100),
+            'I2C0 register window does not match the XR1710G controller')
+    monitors = [path for path in child_paths(nodes, i2c)
+                if 'nuvoton,nct7802' in strings(nodes[path].get('compatible', b'\0')) and
+                nodes[path].get('reg') == struct.pack('>I', 0x2e)]
+    require(len(monitors) == 1, 'I2C0 NCT7802 monitor at address 0x2e missing or duplicated')
+    require(all(nodes.get(path, {}).get('status', b'okay\0') in {b'okay\0', b'ok\0'}
+                for path in ('/', '/soc', i2c, monitors[0])),
+            'I2C0 NCT7802 monitor or its controller is disabled')
     return {'compatible': compatible, 'partitions': [{'name': name, 'offset': offset, 'size': size, 'read_only': ro}
             for name, offset, size, ro in actual], 'rootdisk_volume': 'fit', 'factory_cell_format': layout,
+            'i2c_hwmon': {'controller': i2c, 'compatible': 'mediatek,mt7621-i2c',
+                          'monitor': monitors[0], 'address': 0x2e},
             'dtb_sha256': hashlib.sha256(blob).hexdigest()}
 
 

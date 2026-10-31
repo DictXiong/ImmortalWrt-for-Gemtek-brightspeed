@@ -34,6 +34,12 @@ The gate verifies:
 - The factory EEPROM/MAC offsets: legacy uses its repacked calibration volume;
   the OpenWrt U-Boot layout uses the complete DSD format. They are not
   interchangeable.
+- The compiled I2C0 node uses the supported `mediatek,mt7621-i2c` binding and
+  enables the NCT7802 fan/temperature monitor at address `0x2e`. The legacy
+  board must inherit this binding from the SoC DTS; the unsupported vendor
+  override leaves the bus unbound. This image check establishes the device-tree
+  contract; runtime fan feedback and driver probing still require a hardware
+  check.
 - Optional assembled-rootfs module architecture and ELF vermagic consistency.
   This is **not** a kernel ABI hash check or proof that the supplied directory
   was extracted from this exact FIT rootfs. Keep the build manifest, kernel
