@@ -16,8 +16,9 @@ class RootfsChecks(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='dicttech-rootfs-fixture-')
         self.root = Path(self.temp.name) / 'rootfs'; self.root.mkdir()
-        package = check.REPO / 'package/dicttech/ap-profile/files'
-        shutil.copytree(package, self.root, dirs_exist_ok=True)
+        for relative, source in check.profile_map(check.REPO).items():
+            target = self.root / relative; target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
         for relative, source in check.roaming_map(check.REPO).items():
             target = self.root / relative; target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)

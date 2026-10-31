@@ -100,7 +100,7 @@ pending() {
  test -d "$GENERIC_TX" && test ! -L "$GENERIC_TX" && private "$GENERIC_TX/manifest.json" && private "$GENERIC_TX/lease" || return 1
  test ! -e "$GENERIC_TX/confirmed" && test ! -e "$GENERIC_TX/rolled-back" || return 1
  plain "$GENERIC_TX/applying" || plain "$GENERIC_TX/applied" || return 1
- "$JQ" -e '.schema_version==1 and .profile_ap==true and .initialize==true and (.token|type=="string" and length==32)' "$GENERIC_TX/manifest.json" >/dev/null || return 1
+ "$JQ" -e '.schema_version==1 and .native_runtime==true and .initialize==true and (.token|type=="string" and length==32)' "$GENERIC_TX/manifest.json" >/dev/null || return 1
  local origin deadline stamp current
  read -r origin deadline < "$GENERIC_TX/lease"
  case "$deadline" in ''|*[!0-9]*) return 1;; esac

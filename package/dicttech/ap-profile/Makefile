@@ -2,8 +2,8 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=ap-profile
-PKG_VERSION:=2.1.2
-PKG_RELEASE:=2
+PKG_VERSION:=2.2.0
+PKG_RELEASE:=1
 PKG_LICENSE:=GPL-2.0-only
 PKGARCH:=all
 
@@ -39,7 +39,10 @@ define Package/ap-profile/install
 	$(INSTALL_DIR) $(1)/etc/init.d $(1)/etc/dropbear
 	$(CP) ./files/usr/share/dicttech-ap/. $(1)/usr/share/dicttech-ap/
 	$(CP) ./files/usr/libexec/dicttech-ap/. $(1)/usr/libexec/dicttech-ap/
-	$(CP) ./files/usr/lib/dicttech-ap/. $(1)/usr/lib/dicttech-ap/
+	$(INSTALL_BIN) ./files/usr/lib/dicttech-ap/bootstrap.sh ./files/usr/lib/dicttech-ap/services.sh $(1)/usr/lib/dicttech-ap/
+	# This image explicitly selects the XR factory adapter and its enrollment assets.
+	$(INSTALL_DIR) $(1)/usr/lib/dicttech-ap/factory
+	$(CP) ./files/usr/lib/dicttech-ap/platforms/xr1710g/. $(1)/usr/lib/dicttech-ap/factory/
 	$(INSTALL_BIN) ./files/etc/init.d/* $(1)/etc/init.d/
 	$(INSTALL_CONF) $(TOPDIR)/package/dicttech/cli-profile/files/usr/share/dicttech-cli/authorized_keys $(1)/etc/dropbear/authorized_keys
 	$(INSTALL_DIR) $(1)/lib/upgrade/keep.d

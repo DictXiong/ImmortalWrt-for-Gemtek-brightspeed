@@ -357,15 +357,33 @@ def check_luci_rpc(rootfs):
             'group_or_other_writable': False}
 
 
+def profile_map(source_root):
+    source = source_root / 'package/dicttech/ap-profile/files'
+    require(source.is_dir(), 'authoritative ap-profile source directory missing')
+    # Match the XR image package's explicit factory selection. Other platform
+    # ports provide their own factory assets; the resource runtime is shared.
+    selected = source / 'usr/lib/dicttech-ap/platforms/xr1710g'
+    mapping = {}
+    for path in source.rglob('*'):
+        if not (path.is_file() or path.is_symlink()):
+            continue
+        relative = path.relative_to(source)
+        if relative.parts[:5] == ('usr', 'lib', 'dicttech-ap', 'platforms', 'xr1710g'):
+            relative = Path('usr/lib/dicttech-ap/factory') / path.relative_to(selected)
+        elif relative.parts[:4] == ('usr', 'lib', 'dicttech-ap', 'platforms'):
+            continue
+        mapping[str(relative)] = path
+    require('usr/lib/dicttech-ap/factory/adapter.sh' in mapping, 'selected XR factory adapter missing')
+    require(bool(mapping), 'ap-profile source is empty')
+    return mapping
+
+
 def check_rootfs(rootfs, source_root=REPO, manifest=None):
     rootfs, source_root = rootfs.resolve(), source_root.resolve()
     require(rootfs.is_dir(), 'rootfs directory missing')
     for relative in ('etc/dicttech-ap/state', 'etc/dropbear/key', 'etc/ssh/key', 'www/xr-roaming', 'lib/wifi/mac80211.uc'):
         safe_ancestors(rootfs, relative)
-    source = source_root / 'package/dicttech/ap-profile/files'
-    require(source.is_dir(), 'authoritative ap-profile source directory missing')
-    mapping = {str(p.relative_to(source)): p for p in source.rglob('*') if p.is_file() or p.is_symlink()}
-    require(bool(mapping), 'ap-profile source is empty')
+    mapping = profile_map(source_root)
     mapping.update(roaming_map(source_root))
     cli = cli_map(source_root)
     mapping.update(cli)

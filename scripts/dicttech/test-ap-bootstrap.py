@@ -34,7 +34,8 @@ def main():
     inputs += [package / 'usr/libexec/dicttech-ap/bootstrap-key',
                package / 'usr/share/dicttech-ap/bootstrap-authorized-key.pub',
                package / 'usr/share/dicttech-ap/bootstrap-password-hash']
-    inputs.extend(sorted((package / 'usr/lib/dicttech-ap/setup').iterdir()))
+    inputs.extend(sorted((package / 'usr/lib/dicttech-ap/platforms/xr1710g').rglob('*')))
+    inputs = [item for item in inputs if item.is_file()]
     inputs.append(source / 'package/network/services/dropbear/files/dropbear.init')
     for item in inputs:
         if not item.is_file():

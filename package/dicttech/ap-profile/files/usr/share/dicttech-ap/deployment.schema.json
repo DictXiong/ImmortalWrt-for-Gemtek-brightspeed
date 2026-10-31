@@ -180,7 +180,7 @@
         },
         "max_mlds": {
           "type": "integer",
-          "minimum": 1,
+          "minimum": 0,
           "maximum": 256
         },
         "mac_prefix_groups": {
@@ -581,8 +581,44 @@
           },
           "maxProperties": 128,
           "propertyNames": {
-            "pattern": "^[A-Za-z0-9_./-]+$",
-            "maxLength": 4096
+            "pattern": "^(etc/|usr/libexec/openwrt-managed/)[A-Za-z0-9_.-]{1,255}(/[A-Za-z0-9_.-]{1,255})*$",
+            "maxLength": 4096,
+            "allOf": [
+              {
+                "not": {
+                  "pattern": "(^|/)\\.{1,2}(/|$)"
+                }
+              },
+              {
+                "not": {
+                  "enum": [
+                    "etc/shadow",
+                    "etc/passwd",
+                    "etc/group",
+                    "etc/gshadow",
+                    "etc/resolv.conf",
+                    "etc/dropbear/authorized_keys"
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "pattern": "^etc/(rc\\.d(/|$)|ssh(/|$)|openwrt-deploy(/|$)|dicttech-ap(/|$)|dicttech-ap-bootstrap-key(/|$)|dropbear/dropbear_)"
+                }
+              },
+              {
+                "anyOf": [
+                  {
+                    "not": {
+                      "pattern": "^etc/init\\.d/"
+                    }
+                  },
+                  {
+                    "pattern": "^etc/init\\.d/openwrt-managed-"
+                  }
+                ]
+              }
+            ]
           }
         },
         "resolver": {

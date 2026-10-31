@@ -260,8 +260,10 @@ def resource_path(value: Any, path: str, *, lifecycle: bool = False) -> str:
         fail(path, "must be a safe relative resource path")
     if not (value.startswith("etc/") or value.startswith("usr/libexec/openwrt-managed/")):
         fail(path, "resource is outside configuration roots")
-    blocked = {"etc/shadow", "etc/passwd", "etc/group", "etc/resolv.conf"}
-    if (value in blocked or value.startswith(("etc/rc.d/", "etc/ssh/"))
+    blocked = {"etc/shadow", "etc/passwd", "etc/group", "etc/gshadow", "etc/resolv.conf", "etc/ssh", "etc/rc.d",
+               "etc/openwrt-deploy", "etc/dicttech-ap", "etc/dicttech-ap-bootstrap-key"}
+    if (value in blocked or value.startswith(("etc/rc.d/", "etc/ssh/", "etc/openwrt-deploy/",
+                                                   "etc/dicttech-ap-bootstrap-key/"))
             or value.startswith("etc/dropbear/dropbear_")
             or value == "etc/init.d/openwrt-deploy-guard"):
         fail(path, "resource belongs to a protected system facility")
@@ -376,7 +378,7 @@ def _platform(value: Any, path: str) -> dict:
         text(value["radio_path"], path + ".radio_path", 1, 512)
     for key in ("max_ap_per_radio", "max_mlds"):
         if key in value:
-            integer(value[key], path + "." + key, 1, 256)
+            integer(value[key], path + "." + key, 0 if key == "max_mlds" else 1, 256)
     groups = value.get("mac_prefix_groups", [])
     if not isinstance(groups, list) or len(groups) > 64:
         fail(path + ".mac_prefix_groups", "must contain at most 64 interface groups")
@@ -528,11 +530,16 @@ def _profiles(values: Any, path: str, identity: dict, uci: dict, platform: dict)
                 or any(type(index) is not int or not 0 <= index <= 15 for index in link_ids)
                 or len(set(link_ids)) != len(link_ids)):
             fail(path, "radio/link descriptions are inconsistent")
+        eht_radios = []
         for radio, band, link in zip(radios, bands, link_ids):
             named(radio, path + ".radios")
             row = wireless.get(radio)
             if row is None or row["type"] != "wifi-device" or row["options"].get("band") != band:
                 fail(path + ".radios", "radio metadata differs from its UCI device")
+            htmode = row["options"].get("htmode", "NOHT")
+            if not isinstance(htmode, str):
+                fail(path + ".radios", "radio htmode must be a scalar")
+            eht_radios.append(htmode.startswith("EHT"))
             if row["options"].get("disabled", "0") != "0":
                 fail(path + ".radios", "SSID references a disabled radio")
             if "radio" in row["options"] and row["options"]["radio"] != str(link):
@@ -548,6 +555,8 @@ def _profiles(values: Any, path: str, identity: dict, uci: dict, platform: dict)
         for field in ("ieee80211k", "bss_transition"):
             if options.get(field, "0") != ("1" if profile["roaming"] else "0"):
                 fail(path + ".roaming", "roaming metadata differs from explicit wireless UCI")
+        if profile["eht"] and not all(eht_radios):
+            fail(path + ".eht", "enabled EHT requires an EHT mode on every selected radio")
         if profile["eht"] and "disable_11be=1" in options.get("hostapd_bss_options", []):
             fail(path + ".eht", "enabled EHT differs from explicit hostapd BSS setting")
         network = options.get("network")
@@ -562,7 +571,7 @@ def _profiles(values: Any, path: str, identity: dict, uci: dict, platform: dict)
         elif (options.get("mlo", "0") != "0" or options.get("device") != radios[0]
               or not isinstance(options.get("macaddr"), str) or options["macaddr"].lower() != expected[0]):
             fail(path, "single-link UCI differs from explicit identity/link descriptions")
-        if not profile["eht"] and "disable_11be=1" not in options.get("hostapd_bss_options", []):
+        if not profile["eht"] and any(eht_radios) and "disable_11be=1" not in options.get("hostapd_bss_options", []):
             fail(path + ".eht", "disabled EHT requires the corresponding hostapd BSS setting")
         if base_encryption in {"sae", "sae-mixed", "psk2"}:
             password = options.get("key")

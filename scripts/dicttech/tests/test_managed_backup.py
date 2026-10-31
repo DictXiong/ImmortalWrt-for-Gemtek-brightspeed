@@ -78,7 +78,9 @@ class ManagedBackup(unittest.TestCase):
         self.run_hook(False);self.assertEqual(self.target.read_text(),'/etc/existing\n')
     def test_traversal_reserved_files_and_invalid_schema_rejected(self):
         original=copy.deepcopy(self.manifest)
-        for value in ('../outside','etc/../shadow','etc/shadow','etc/dropbear/dropbear_ed25519_host_key'):
+        for value in ('../outside','etc/../shadow','etc/shadow','etc/gshadow','etc/openwrt-deploy','etc/openwrt-deploy/managed.json',
+                      'etc/dicttech-ap','etc/dicttech-ap-bootstrap-key','etc/dicttech-ap-bootstrap-key/state',
+                      'etc/dropbear/dropbear_ed25519_host_key'):
             self.manifest=copy.deepcopy(original);self.manifest['files'][-1]['path']=value;self.write_manifest()
             self.run_hook(False);self.assertEqual(self.target.read_text(),'/etc/existing\n')
         self.manifest=copy.deepcopy(original);self.manifest['schema_version']=2;self.write_manifest();self.run_hook(False)

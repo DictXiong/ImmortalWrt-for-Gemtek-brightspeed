@@ -178,6 +178,7 @@ def preserve_host_identity(args, resolved, files):
 
 def tar_bytes(files: dict[str, bytes], manifest=None):
     buf = io.BytesIO()
+    modes = file_modes(files) if manifest is None else {}
     with tarfile.open(fileobj=buf, mode='w', format=tarfile.USTAR_FORMAT) as tar:
         contents = {'manifest.json': json.dumps(manifest, separators=(',', ':')).encode() + b'\n'} if manifest is not None else {}
         contents.update({'payload/' + str(i): value for i, value in enumerate(files.values())} if manifest is not None else files)
@@ -186,7 +187,9 @@ def tar_bytes(files: dict[str, bytes], manifest=None):
                 raise ValueError('unsafe archive path')
             info = tarfile.TarInfo(path)
             info.uid = info.gid = 0
-            info.mode = 0o600
+            # Transaction members are private transport blobs; configuration
+            # exports must retain the producer modes checked at first boot.
+            info.mode = int(modes[path], 8) if manifest is None else 0o600
             info.mtime = 0
             info.size = len(data)
             tar.addfile(info, io.BytesIO(data))

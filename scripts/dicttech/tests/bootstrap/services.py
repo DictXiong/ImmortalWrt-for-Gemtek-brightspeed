@@ -5,11 +5,11 @@ SRC=R/'package/dicttech/ap-profile/files/usr/lib/dicttech-ap/services.sh'
 report=[]
 with tempfile.TemporaryDirectory(prefix='dt-ap-services-', dir='/tmp') as d:
  f=pathlib.Path(d)
- for p in ['etc/init.d','etc/rc.d','etc/dicttech-ap','usr/lib/dicttech-ap/setup','bin','running']:(f/p).mkdir(parents=True)
+ for p in ['etc/init.d','etc/rc.d','etc/dicttech-ap','usr/lib/dicttech-ap/factory/setup','bin','running']:(f/p).mkdir(parents=True)
  (f/'usr/share/dicttech-ap').mkdir(parents=True)
  shutil.copy(R/'package/dicttech/ap-profile/files/usr/share/dicttech-ap/contract.json',f/'usr/share/dicttech-ap/contract.json')
- shutil.copy(R/'package/dicttech/ap-profile/files/usr/lib/dicttech-ap/setup/services.json',f/'usr/lib/dicttech-ap/setup/services.json')
- policy=json.loads((f/'usr/lib/dicttech-ap/setup/services.json').read_text())
+ shutil.copy(R/'package/dicttech/ap-profile/files/usr/lib/dicttech-ap/platforms/xr1710g/setup/services.json',f/'usr/lib/dicttech-ap/factory/setup/services.json')
+ policy=json.loads((f/'usr/lib/dicttech-ap/factory/setup/services.json').read_text())
  for n in ['xr_roaming','wifihistory']:policy['services'][n].update(enable=True,running=True)
  (f/'etc/dicttech-ap/device.json').write_text(json.dumps(policy))
  names=['network','sysntpd','firewall','dropbear','uhttpd','xr_roaming','wifihistory','sysctl','cpufreq','airoha-npu','fan','dnsmasq','usteer','npu-jitter','radius','3proxy']
@@ -94,7 +94,7 @@ esac
 
  # Rollback machinery is not an ordinary service: restoring its previous
  # inactive state must not stop the guard that is executing the rollback.
- (f/'etc/dicttech-ap/device.json').write_text((f/'usr/lib/dicttech-ap/setup/services.json').read_text())
+ (f/'etc/dicttech-ap/device.json').write_text((f/'usr/lib/dicttech-ap/factory/setup/services.json').read_text())
  guard=f/'etc/init.d/dicttech-ap-transaction';guard.write_text('#!/bin/sh\ntouch '+shlex.quote(str(f/'guard-was-called'))+'\n');guard.chmod(0o755)
  safe_snapshot=f/'guard-safe.json';o=run('snapshot',safe_snapshot);assert o.returncode==0,o.stderr
  assert 'dicttech-ap-transaction' not in [row['service'] for row in json.loads(safe_snapshot.read_text())['services']]
@@ -104,7 +104,7 @@ esac
  badpolicy=json.loads((f/'etc/dicttech-ap/device.json').read_text());badpolicy['services']['dicttech-ap-transaction']={'enable':False,'running':False}
  (f/'etc/dicttech-ap/device.json').write_text(json.dumps(badpolicy));o=run('apply');assert o.returncode!=0
  assert not (f/'guard-was-called').exists()
- (f/'etc/dicttech-ap/device.json').write_text((f/'usr/lib/dicttech-ap/setup/services.json').read_text())
+ (f/'etc/dicttech-ap/device.json').write_text((f/'usr/lib/dicttech-ap/factory/setup/services.json').read_text())
  report.append({'case':'independent_guards_are_never_snapshotted_stopped_or_configured','passed':True})
  # Reject an inventory that cannot be restored before publishing a snapshot or
  # running even read-only per-service operations.

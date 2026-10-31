@@ -8,6 +8,7 @@ import io
 import json
 import os
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -15,6 +16,11 @@ from unittest.mock import patch
 
 REPO = Path(__file__).resolve().parents[4]
 CONTROLLER = REPO / 'scripts/dicttech/ap-deploy.py'
+sys.path.insert(0, str(REPO / 'scripts/dicttech'))
+sys.path.insert(0, str(REPO / 'scripts/dicttech/tests'))
+import ap_config
+from resource_fixture import document
+
 spec = importlib.util.spec_from_file_location('ap_deploy_export', CONTROLLER)
 deploy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(deploy)
@@ -50,6 +56,33 @@ class IdentityExport(unittest.TestCase):
             result = {m.name: tar.extractfile(m).read() for m in tar}
         self.assertEqual(self.dest.stat().st_mode & 0o777, 0o600)
         return result, read, json.loads(output.getvalue())
+
+    def test_actual_export_roundtrip_retains_declared_resource_modes(self):
+        value = document(); node = value['devices']['node_0']
+        node['files'].update({
+            'usr/libexec/openwrt-managed/probe': {'content_base64': 'IyEvYmluL3NoCmV4aXQgMAo=', 'mode': '755'},
+            'etc/public-plugin.conf': {'content_base64': 'cHVibGljIHNldHRpbmcK', 'mode': '644'},
+        })
+        config = self.base / 'config.json'; config.write_text(json.dumps(value)); config.chmod(0o600)
+        argv = [str(CONTROLLER), 'export', '--config', str(config), '--device', 'node_0', '--output', str(self.dest)]
+        with patch.object(deploy.sys, 'argv', argv), contextlib.redirect_stdout(io.StringIO()):
+            deploy.main()
+        expected = ap_config.render(ap_config.resolve(value, 'node_0'))
+        ledger = json.loads(expected['etc/dicttech-ap/managed-files.json'])
+        modes = {item['path']: item['mode'] for item in ledger['files']}
+        with tarfile.open(self.dest, 'r:gz') as archive:
+            for member in archive:
+                target = self.base / 'preseed' / member.name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(archive.extractfile(member).read()); target.chmod(member.mode)
+                self.assertEqual(member.mode, int(modes.get(member.name, '600'), 8))
+                if member.name in expected:
+                    self.assertEqual(target.read_bytes(), expected[member.name])
+                    self.assertEqual(target.stat().st_mode & 0o777, int(modes.get(member.name, '600'), 8))
+        self.assertEqual(self.dest.stat().st_mode & 0o777, 0o600)
+        transport = deploy.tar_bytes(expected, {'fixture': 'transport-modes'})
+        with tarfile.open(fileobj=io.BytesIO(transport)) as archive:
+            self.assertTrue(all(member.mode == 0o600 for member in archive))
 
     def test_default_export_never_captures_or_clones_host_identity(self):
         archive, read, report = self.run_export()

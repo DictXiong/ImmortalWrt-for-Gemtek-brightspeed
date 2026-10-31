@@ -352,9 +352,14 @@ class Transaction(unittest.TestCase):
         contract = self.call('check'); manifest, _ = deploy.bundle(self.files, contract, 'fixture_ap', 120)
         manifest['files'][0]['sha256'] = '0' * 64
         self.call('stage', data=deploy.tar_bytes(self.files, manifest), good=False); self.assertOriginal()
-        unsafe = {'etc/dropbear/dropbear_ed25519_host_key': b'never install\n'}
-        _, payload = deploy.bundle(unsafe, contract, 'fixture_ap', 120)
-        self.call('stage', data=payload, good=False); self.assertOriginal()
+        for path in ('etc/dropbear/dropbear_ed25519_host_key', 'etc/gshadow',
+                     'etc/openwrt-deploy', 'etc/openwrt-deploy/managed.json',
+                     'etc/dicttech-ap', 'etc/dicttech-ap-bootstrap-key',
+                     'etc/dicttech-ap-bootstrap-key/unowned'):
+            with self.subTest(path=path):
+                unsafe = {**self.files, path: b'never install\n'}
+                _, payload = deploy.bundle(unsafe, contract, 'fixture_ap', 120)
+                self.call('stage', data=payload, good=False); self.assertOriginal()
 
     def test_invalid_root_hash_rejected_before_any_write(self):
         contract = self.call('check')

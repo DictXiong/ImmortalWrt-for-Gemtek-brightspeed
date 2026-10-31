@@ -10,8 +10,9 @@ def case(name):
  with tempfile.TemporaryDirectory(prefix='dt-ap-bootstrap-', dir='/tmp') as d:
   f=pathlib.Path(d)
   for p in ['etc/config','etc/dicttech-ap','etc/dropbear','etc/sysctl.d','etc/init.d','etc/rc.d','etc/uci-defaults','lib/functions','proc/sys/kernel/random','root','tmp','tmp/.uci','bin','usr/lib/dicttech-ap','usr/libexec/dicttech-ap']:(f/p).mkdir(parents=True)
+  (f/'tmp/sysinfo').mkdir();(f/'tmp/sysinfo/board_name').write_text('gemtek,xr1710g\n')
   (f/'proc/sys/kernel/random/boot_id').write_text('00000000-0000-4000-8000-000000000001\n')
-  shutil.copytree(SHARE,f/'usr/share/dicttech-ap');shutil.copytree(SRC/'setup',f/'usr/lib/dicttech-ap/setup')
+  shutil.copytree(SHARE,f/'usr/share/dicttech-ap');shutil.copytree(SRC/'platforms/xr1710g',f/'usr/lib/dicttech-ap/factory')
   for n in CONFIGS:
    (f/'etc/config'/n).write_text('ORIGINAL-'+n+'\n')
    (f/'tmp/.uci'/n).write_text('MANAGED-DELTA-'+n+'\n')
@@ -31,13 +32,17 @@ def case(name):
   ssids.append({'key':'iot','section':'ssid_iot','iface':'ap-iot','mlo':False,'bands':['2g']})
   if name=='minimal':ssids=[]
   if name=='one-arbitrary':ssids=[{'key':'cafe','section':'wifi_cafe','iface':'wifi-cafe','mlo':False,'bands':['5g']}]
-  marker={'schema_version':3,'profile':'openwrt-config-v3','device_id':'fixture','contract_sha256':hashlib.sha256((SHARE/'contract.json').read_bytes()).hexdigest(),'config_fingerprint':'a'*64,'ssids':ssids,'services':{}}
+  marker={'schema_version':3,'profile':'openwrt-config-v3','device_id':'fixture','contract_sha256':hashlib.sha256((SHARE/'contract.json').read_bytes()).hexdigest(),'config_fingerprint':'a'*64,'platform':{'board_names':['gemtek,xr1710g']},'ssids':ssids,'services':{}}
   if name!='fresh':(f/'etc/dicttech-ap/device.json').write_text(json.dumps(marker))
   def manifest():
    rels=['etc/config/'+n for n in CONFIGS]+['etc/sysctl.d/13-nf-bridge.conf','etc/xr-guest-vlan192.nft','etc/dicttech-ap/device.json','etc/dicttech-ap/root-password-hash']
    if name=='minimal':rels=['etc/dicttech-ap/device.json','etc/dicttech-ap/root-password-hash']
    if name=='empty-authorized-keys':
     (f/'etc/dropbear/authorized_keys').write_text('');rels.append('etc/dropbear/authorized_keys')
+   protected={'protected-account':'etc/gshadow','protected-engine':'etc/openwrt-deploy/managed.json'}
+   if name in protected:
+    path=f/protected[name];path.parent.mkdir(parents=True,exist_ok=True);path.write_text('UNCHANGED-PRIVATE-STATE\n')
+    rels.append(protected[name])
    value={'schema_version':3,'profile':'openwrt-config-v3','files':[{'path':p,'mode':'600','sha256':hashlib.sha256((f/p).read_bytes()).hexdigest()}for p in rels]}
    (f/'etc/dicttech-ap/managed-files.json').write_text(json.dumps(value))
    for path in rels+['etc/dicttech-ap/managed-files.json']:(f/path).chmod(0o600)
@@ -58,9 +63,11 @@ def case(name):
   if name=='backup-failure':tool('tar','exit 1\n')
   p=f/'usr/libexec/dicttech-ap/transaction';p.write_text('#!/bin/sh\nprintf "sync-root-password\\n" >>"'+str(log)+'"\n');p.chmod(0o755)
   p=f/'usr/lib/dicttech-ap/services.sh';p.write_text('#!/bin/sh\nprintf "services %s\\n" "$*" >>"'+str(log)+'"\n');p.chmod(0o755)
-  script=(SRC/'bootstrap.sh').read_text();script=re.sub(r'/(?:usr/share|usr/libexec|usr/lib|etc|root|tmp)/',lambda m:str(f/m.group(0).strip('/'))+'/',script)
-  script=script.replace('PATH=/usr/sbin:/usr/bin:/sbin:/bin','PATH='+shlex.quote(str(f/'bin')+':'+os.environ['PATH'])).replace('-C / ','-C '+str(f)+' ').replace('"/$name"','"'+str(f)+'/$name"').replace('destination=/$name','destination='+str(f)+'/$name').replace('base=${2:-}', 'base=${2:-'+str(f)+'}').replace('next current=', 'next current='+shlex.quote(str(f))).replace('/proc/sys/kernel/random/boot_id',str(f/'proc/sys/kernel/random/boot_id'))
-  p=f/'bootstrap.sh';p.write_text(script);p.chmod(0o755)
+  p=f/'bootstrap.sh'
+  for source,destination in ((SRC/'bootstrap.sh',p),(SRC/'platforms/xr1710g/adapter.sh',f/'usr/lib/dicttech-ap/factory/adapter.sh')):
+   script=source.read_text();script=re.sub(r'/(?:usr/share|usr/libexec|usr/lib|etc|root|tmp)/',lambda m:str(f/m.group(0).strip('/'))+'/',script)
+   script=script.replace('PATH=/usr/sbin:/usr/bin:/sbin:/bin','PATH='+shlex.quote(str(f/'bin')+':'+os.environ['PATH'])).replace('-C / ','-C '+str(f)+' ').replace('"/$name"','"'+str(f)+'/$name"').replace('destination=/$name','destination='+str(f)+'/$name').replace('base=${2:-}', 'base=${2:-'+str(f)+'}').replace('next current=', 'next current='+shlex.quote(str(f))).replace('/proc/sys/kernel/random/boot_id',str(f/'proc/sys/kernel/random/boot_id'))
+   destination.write_text(script);destination.chmod(0o755)
   def run(command):return subprocess.run([os.environ['DICTTECH_AP_TEST_SHELL'],str(p),command],text=True,capture_output=True)
   if name.startswith('boot-twice-'):
    persistent_boot_case(name,f,p,log)
@@ -122,6 +129,9 @@ def case(name):
    if name!='fresh':
     archives=list((f/'root/dicttech-ap-quarantine').glob('*.tar.gz'));assert len(archives)==1
     x=subprocess.run(['tar','-xOzf',str(archives[0]),'etc/config/network'],text=True,capture_output=True);assert x.stdout=='ORIGINAL-network\n'
+  if name in ('protected-account','protected-engine'):
+   path='etc/gshadow' if name=='protected-account' else 'etc/openwrt-deploy/managed.json'
+   assert (f/path).read_text()=='UNCHANGED-PRIVATE-STATE\n'
   report.append({'case':name,'passed':True})
 def persistent_boot_case(name,f,bootstrap,log):
  """Use actual rc.common enabling/dispatch, without executing host init services."""
@@ -211,6 +221,7 @@ def persistent_boot_case(name,f,bootstrap,log):
  # A real reboot loses /tmp and has a distinct boot ID; accepted profile and
  # ROM rc links survive, unlike the deleted uci-defaults scripts.
  shutil.rmtree(f/'tmp');(f/'tmp/.uci').mkdir(parents=True)
+ (f/'tmp/sysinfo').mkdir();(f/'tmp/sysinfo/board_name').write_text('gemtek,xr1710g\n')
  (f/'proc/sys/kernel/random/boot_id').write_text('00000000-0000-4000-8000-000000000002\n')
  shadow='root:GUI-CHANGED:1:0:99999:7:::\n'
  (f/'etc/shadow').write_text(shadow)
@@ -233,5 +244,5 @@ def persistent_boot_case(name,f,bootstrap,log):
   assert 'wireless.radio0.disabled=1' in log.read_text()
   assert len(list((f/'root/dicttech-ap-quarantine').glob('*.tar.gz')))==1
 
-for name in ['fresh','minimal','one-arbitrary','dynamic-extra','missing-extra-section','duplicate-ssid-section','valid','normalization','steady-gui','new-manifest','invalid','missing-config','truncated-config','tampered-config','backup-failure','corrupt-snapshot','empty-authorized-keys','delta-clear-failure','restore-copy-failure','boot-twice-gui','boot-twice-missing-config','boot-twice-missing-asset','boot-twice-marker-tamper','boot-twice-root-material-tamper']:case(name)
+for name in ['fresh','protected-account','protected-engine','minimal','one-arbitrary','dynamic-extra','missing-extra-section','duplicate-ssid-section','valid','normalization','steady-gui','new-manifest','invalid','missing-config','truncated-config','tampered-config','backup-failure','corrupt-snapshot','empty-authorized-keys','delta-clear-failure','restore-copy-failure','boot-twice-gui','boot-twice-missing-config','boot-twice-missing-asset','boot-twice-marker-tamper','boot-twice-root-material-tamper']:case(name)
 print(json.dumps(report,indent=2))

@@ -24,6 +24,25 @@ Factory-only ARP settings prevent weak-host replies exposing the common LAN4
 address on the discovery bridge during batch enrollment. Configured settings
 come from Nix and are not imposed by the firmware's backend.
 
+The XR factory implementation lives in
+`package/dicttech/ap-profile/files/usr/lib/dicttech-ap/platforms/xr1710g/`.
+The image package selects this adapter and its templates for installation at
+`/usr/lib/dicttech-ap/factory/`. Before writing or proving factory setup, the
+adapter requires `gemtek,xr1710g` or `gemtek,xr1710g-ubi`, matching the
+legacy and UBI XR device trees. Its port layout, discovery
+bridge, setup hostname, factory service policy and template proof are platform
+facts. The ten factory assets retain the existing XR enrollment behavior,
+including DHCP discovery, separate LAN4 maintenance and root/password on SSH
+port 12022.
+
+The shared bootstrap retains resource verification, credential lifecycle,
+snapshots, rollback and configured-boot acceptance. A valid complete producer
+configuration does not load or require the XR factory adapter. A future hardware
+port supplies another factory adapter/assets and selects suitable package
+dependencies and target restrictions; it does not replace the shared transaction
+or acceptance engine. The current image still targets Airoha/XR1710G. This
+separation does not claim that another router has been ported or tested.
+
 Roaming peer addresses are also explicit producer input. An offline maintenance
 entry does not automatically make peer discovery or Internet access available;
 those depend on the generated network and roaming configuration.

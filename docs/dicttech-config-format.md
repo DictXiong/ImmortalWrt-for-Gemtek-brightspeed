@@ -52,6 +52,10 @@ metadata cannot claim one security/VLAN/BSSID policy while rendering another.
 Hardware capacity and address collisions are validated against the supplied
 platform and identity. A radio `macaddr_base` is an allocation parameter, not an
 extra active interface or a guaranteed PHY address.
+A platform may declare `max_mlds: 0` when it supports no active MLO interfaces;
+`max_ap_per_radio` remains positive. EHT metadata requires EHT mode on every
+selected radio. Disabling EHT on an HE/VHT/HT radio requires no EHT-specific
+hostapd option; an EHT radio needs the explicit per-BSS disable setting.
 
 ## UCI, files and services
 
@@ -106,8 +110,8 @@ Besides explicit UCI/files, the renderer emits:
 - `etc/dicttech-ap/managed-files.json`: private resource paths, SHA-256 and modes.
   This excludes its own digest and must not be published.
 
-The first configured boot verifies the complete producer ledger before
-acceptance. Boot snapshots survive upstream UCI normalization without accepting
+The first configured boot verifies the complete producer ledger and checks the
+actual board against the producer's `platform.board_names` before acceptance. Boot snapshots survive upstream UCI normalization without accepting
 partial resources. Subsequent accepted GUI edits remain possible; a later
 explicit deployment reports drift. Missing files, unsafe permissions or invalid
 metadata fail closed to factory recovery, with the original files quarantined.

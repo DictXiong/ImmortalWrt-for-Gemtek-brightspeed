@@ -9,6 +9,7 @@ host network interfaces, mounts, firmware, or remote devices are touched.
 from __future__ import annotations
 
 import argparse
+import tarfile
 import hashlib
 import json
 import os
@@ -32,6 +33,8 @@ class Runtime:
         profile = source / 'package/dicttech/ap-profile/files'
         for rel in ['usr/lib/dicttech-ap', 'usr/libexec/dicttech-ap']:
             shutil.copytree(profile / rel, self.root / rel, dirs_exist_ok=True, symlinks=True)
+        shutil.copytree(profile / 'usr/lib/dicttech-ap/platforms/xr1710g',
+                        self.root / 'usr/lib/dicttech-ap/factory', dirs_exist_ok=True)
         shutil.copytree(profile / 'usr/share/dicttech-ap', self.root / 'usr/share/dicttech-ap', dirs_exist_ok=True)
         # early_mounts() creates /tmp/run and /tmp/lock before procd/rcS. Leaving
         # them out falsely makes actual procd.sh fail at its load-time lock.
@@ -205,6 +208,13 @@ for row in rows:print('    inet '+row['address']+'/'+str(row['mask'])+' scope gl
             raise ValueError('C7 ROM must not contain a configured device marker')
         for rel in ['etc/config/network', 'etc/config/wireless', 'etc/config/system']:
             (self.root / rel).unlink(missing_ok=True)
+        self.put('tmp/sysinfo/board_name', b'example,other-router\n')
+        before_shadow=(self.root/'etc/shadow').read_bytes()
+        self.shell('C7 XR factory rejects unknown board before setup writes', bootstrap, 'prepare-boot', good=False)
+        if ((self.root/'etc/config/network').exists() or (self.root/'etc/dicttech-ap/bootstrap-identity.json').exists()
+                or (self.root/'etc/shadow').read_bytes()!=before_shadow):
+            raise RuntimeError('C7 unsupported factory adapter changed topology or authentication')
+        self.put('tmp/sysinfo/board_name', b'gemtek,xr1710g\n')
         self.shell('S04 fresh prepare', bootstrap, 'prepare-boot')
         key_helper = 'usr/libexec/dicttech-ap/bootstrap-key'
         if not (self.root / key_helper).is_file():
@@ -283,7 +293,7 @@ for row in rows:print('    inet '+row['address']+'/'+str(row['mask'])+' scope gl
         original_boot = '11111111-1111-4111-8111-111111111111'
         new_boot = '22222222-2222-4222-8222-222222222222'
         self.put('root/.openwrt-deploy/state/manifest.json', json.dumps({
-            'schema_version': 1, 'profile_ap': True, 'initialize': True,
+            'schema_version': 1, 'native_runtime': True, 'initialize': True,
             'token': token, 'boot_id': original_boot}).encode())
         self.put('root/.openwrt-deploy/state/lease', (original_boot + ' 600\n').encode())
         self.put('root/.openwrt-deploy/state/applied', b'fixture\n')
@@ -331,22 +341,45 @@ for row in rows:print('    inet '+row['address']+'/'+str(row['mask'])+' scope gl
         # ash/UCI/slimjq and the same boot acceptance path as a full AP profile.
         sys.path.insert(0,str(self.source/'scripts/dicttech'))
         sys.path.insert(0,str(self.source/'scripts/dicttech/tests'))
-        import ap_config
         from resource_fixture import document,PASSWORD_HASH
         value=document();node=value['devices']['node_0']
-        node.update(uci={},files={'etc/generic-plugin.bin':{'content_base64':'AP9iaW5hcnk=','mode':'755'}},ssids=[],peers={},services={},common={},resolver=None)
+        node.update(uci={},files={'etc/generic-plugin.bin':{'content_base64':'AP9iaW5hcnk=','mode':'755'},
+                                  'etc/generic-public.conf':{'content_base64':'cHVibGljIHNldHRpbmcK','mode':'644'}},
+                    ssids=[],peers={},services={},common={},resolver=None)
         node['identity'].update(ethernet={},radios={},mlds={},bssids={})
-        node['platform']={'board_names':['gemtek,xr1710g']}
-        resources=ap_config.render(ap_config.resolve(value,'node_0'))
-        for path,data in resources.items():self.put(path,data)
-        for entry in json.loads(resources['etc/dicttech-ap/managed-files.json'])['files']:
-            (self.root/entry['path']).chmod(int(entry['mode'],8))
+        node['platform']={'board_names':['example,other-router','gemtek,xr1710g']}
+        self.put('tmp/sysinfo/board_name',b'example,other-router\n')
+        (self.root/'tmp/dicttech-ap-bootstrap-isolated').unlink(missing_ok=True)
+        adapter=self.root/'usr/lib/dicttech-ap/factory/adapter.sh'
+        unavailable=adapter.with_suffix('.unavailable');adapter.rename(unavailable)
+        config=self.base/'preseed.json';config.write_text(json.dumps(value));config.chmod(0o600)
+        archive=self.base/'preseed.tar.gz'
+        exported=subprocess.run([sys.executable,str(self.source/'scripts/dicttech/ap-deploy.py'),'export',
+                                 '--config',str(config),'--device','node_0','--output',str(archive)],capture_output=True)
+        if exported.returncode or archive.stat().st_mode&0o777!=0o600:
+            raise RuntimeError('C7 actual private configuration export failed')
+        with tarfile.open(archive,'r:gz') as bundle:
+            for entry in bundle:
+                if not entry.isfile() or entry.name.startswith('/') or '..' in Path(entry.name).parts:
+                    raise RuntimeError('C7 exported archive contains an unsafe member')
+                self.put(entry.name,bundle.extractfile(entry).read())
+                (self.root/entry.name).chmod(entry.mode)
+        self.put('tmp/sysinfo/board_name',b'example,wrong-router\n')
+        self.shell('C7 producer board mismatch never accepts configured preseed',bootstrap,'prepare-boot',good=False)
+        if (self.root/'etc/dicttech-ap/accepted.json').exists():
+            raise RuntimeError('C7 accepted a producer preseed for another board')
+        self.put('tmp/sysinfo/board_name',b'example,other-router\n')
         self.shell('C7 generic zero-SSID binary755 resource prepare',bootstrap,'prepare-boot')
         self.shell('C7 generic resource post-normalization acceptance',bootstrap,'finalize-boot')
         if not (self.root/'etc/dicttech-ap/accepted.json').exists() or (self.root/'tmp/dicttech-ap-bootstrap-isolated').exists():
             raise RuntimeError('C7 generic resource record was not accepted')
-        if root_hash()!=PASSWORD_HASH or (self.root/'etc/generic-plugin.bin').read_bytes()!=b'\0\xffbinary' or (self.root/'etc/generic-plugin.bin').stat().st_mode&0o777!=0o755:
+        if (root_hash()!=PASSWORD_HASH or (self.root/'etc/generic-plugin.bin').read_bytes()!=b'\0\xffbinary'
+                or (self.root/'etc/generic-plugin.bin').stat().st_mode&0o777!=0o755
+                or (self.root/'etc/generic-public.conf').read_bytes()!=b'public setting\n'
+                or (self.root/'etc/generic-public.conf').stat().st_mode&0o777!=0o644):
             raise RuntimeError('C7 generic credentials, binary bytes or explicit mode differ')
+        unavailable.rename(adapter)
+        self.put('tmp/sysinfo/board_name',b'gemtek,xr1710g\n')
         marker_path=self.root/'etc/dicttech-ap/device.json'
         changed=json.loads(marker_path.read_text());changed['device']['hostname']='altered-with-original-fingerprint'
         self.put('etc/dicttech-ap/device.json',json.dumps(changed).encode())
@@ -359,6 +392,8 @@ for row in rows:print('    inet '+row['address']+'/'+str(row['mask'])+' scope gl
                 'initialization_password_fresh_pending_reboot_confirmed_retired_with_actual_c7_tools': True,
                 'legacy_initialization_key_stripped': True,
                 'generic_zero_ssid_binary_mode_preseed_and_immutable_metadata_proven': True,
+                'generic_configured_preseed_does_not_require_xr_factory_adapter': True,
+                'xr_factory_board_allowlist_proven': True,
                 'ash_sha256': hashlib.sha256(self.bb.read_bytes()).hexdigest(),
                 'jq_sha256': hashlib.sha256((self.rom / 'usr/bin/jq').read_bytes()).hexdigest()}
 
@@ -378,13 +413,22 @@ def main():
     rom, source = args.c7_rootfs.resolve(), args.source_root.resolve()
     if rom == Path('/') or not (rom / 'bin/busybox').is_file():
         parser.error('C7 rootfs must be an extracted ROM directory')
+    inputs = [source / 'scripts/dicttech' / name for name in
+              ['test-ap-bootstrap-c7.py', 'ap_config.py', 'ap-deploy.py', 'tests/resource_fixture.py']]
+    profile = source / 'package/dicttech/ap-profile/files'
+    for relative in ['usr/lib/dicttech-ap', 'usr/libexec/dicttech-ap', 'usr/share/dicttech-ap']:
+        inputs.extend(path for path in (profile / relative).rglob('*') if path.is_file())
+    pins = {str(path.relative_to(source)): hashlib.sha256(path.read_bytes()).hexdigest() for path in inputs}
     os.umask(0o077)
     directory = Path(tempfile.mkdtemp(prefix='dicttech-c7-bootstrap-'))
     report = {'schema_version': 1, 'offline_only': True, 'router_access': False,
-              'host_services_modified': False, 'passed': False}
+              'host_services_modified': False, 'source_sha256': pins, 'passed': False}
     try:
         report.update(Runtime(source, rom, args.qemu, directory).exercise())
+        if pins != {str(path.relative_to(source)): hashlib.sha256(path.read_bytes()).hexdigest() for path in inputs}:
+            raise RuntimeError('C7 source changed during the fixture run')
     except (RuntimeError, ValueError, OSError, KeyError) as error:
+        report['passed'] = False
         report['failure'] = str(error) if isinstance(error, RuntimeError) else type(error).__name__
     finally:
         if args.keep_fixture:

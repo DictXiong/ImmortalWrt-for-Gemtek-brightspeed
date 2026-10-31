@@ -18,9 +18,9 @@ dicttech_managed_path() {
   case "$rest" in */*) rest=${rest#*/};; *) rest=;; esac
  done
  case "$rel" in
-  etc/shadow|etc/passwd|etc/group|etc/resolv.conf|etc/ssh/*|etc/dropbear/dropbear_*|etc/rc.d/*|etc/openwrt-deploy/*|etc/dicttech-ap-bootstrap-key/*) return 1;;
+  etc/shadow|etc/passwd|etc/group|etc/gshadow|etc/resolv.conf|etc/ssh|etc/ssh/*|etc/dropbear/dropbear_*|etc/rc.d|etc/rc.d/*|etc/openwrt-deploy|etc/openwrt-deploy/*|etc/dicttech-ap-bootstrap-key|etc/dicttech-ap-bootstrap-key/*) return 1;;
   etc/dicttech-ap/device.json|etc/dicttech-ap/root-password-hash|etc/dropbear/authorized_keys) return 0;;
-  etc/dicttech-ap/*) return 1;;
+  etc/dicttech-ap|etc/dicttech-ap/*) return 1;;
   etc/init.d/openwrt-managed-*|usr/libexec/openwrt-managed/*) return 0;;
   etc/init.d/*) return 1;;
   etc/*) return 0;;

@@ -108,6 +108,17 @@ class ResourceTests(unittest.TestCase):
             value = document(2); value['devices']['node_1'][field] = value['devices']['node_0'][field]
             self.reject(value)
 
+    def test_non_mlo_platform_accepts_zero_mld_capacity(self):
+        value = single_band(document()); node = value['devices']['node_0']
+        node['platform']['max_mlds'] = 0
+        self.state(value)
+        value = document(); value['devices']['node_0']['platform']['max_mlds'] = 0
+        self.reject(value)
+        value = single_band(document()); value['devices']['node_0']['platform']['max_mlds'] = -1
+        self.reject(value)
+        value = single_band(document()); value['devices']['node_0']['platform']['max_ap_per_radio'] = 0
+        self.reject(value)
+
     def test_declared_hardware_prefix_constraint(self):
         value = document(); node=value['devices']['node_0']
         node['identity']['ethernet']['cpu'] = '02:00:01:00:00:01'
@@ -247,8 +258,9 @@ class ResourceTests(unittest.TestCase):
             with self.assertRaises(m.ConfigError):m.resource_path(path,'path')
 
     def test_forbidden_paths_and_non_text_files(self):
-        for name in ('/etc/absolute','etc/../shadow','etc//config','etc/shadow','etc/config/network','etc/dicttech-ap/device.json',
-                     'etc/dropbear/authorized_keys','etc/ssh/private','etc/rc.d/S90bad','tmp/file','etc/init.d/arbitrary'):
+        for name in ('/etc/absolute','etc/../shadow','etc//config','etc/shadow','etc/passwd','etc/group','etc/gshadow','etc/resolv.conf','etc/config/network','etc/dicttech-ap/device.json',
+                     'etc/openwrt-deploy','etc/openwrt-deploy/managed.json','etc/dicttech-ap','etc/dicttech-ap-bootstrap-key',
+                     'etc/dicttech-ap-bootstrap-key/state','etc/dropbear/authorized_keys','etc/ssh','etc/ssh/private','etc/rc.d','etc/rc.d/S90bad','tmp/file','etc/init.d/arbitrary'):
             value=document(); value['devices']['node_0']['files']={name:'payload'}
             self.reject(value)
         value=document(); value['devices']['node_0']['files']['etc/example.conf']='bad\0payload'
@@ -265,6 +277,32 @@ class ResourceTests(unittest.TestCase):
         self.assertEqual(modes['etc/example.bin'],'644')
         self.assertEqual(modes['usr/libexec/openwrt-managed/action'],'755')
         value['devices']['node_0']['files']['etc/example.bin']['mode']='777'
+        self.reject(value)
+
+    def test_non_eht_radios_need_no_eht_specific_hostapd_recipe(self):
+        for mode in ('HE80', 'VHT80', 'HT20', 'NOHT'):
+            with self.subTest(mode=mode):
+                value = single_band(document())
+                node = value['devices']['node_0']; profile = node['ssids'][0]
+                profile['eht'] = False
+                node['uci']['wireless'][profile['radios'][0]]['options']['htmode'] = mode
+                output = m.render(self.state(value))
+                self.assertNotIn(b'disable_11be', output['etc/config/wireless'])
+                profile['eht'] = True
+                self.reject(value)
+
+    def test_eht_metadata_and_per_bss_disable_match_selected_radios(self):
+        value = single_band(document()); node = value['devices']['node_0']; profile = node['ssids'][0]
+        profile['eht'] = False
+        self.reject(value)
+        node['uci']['wireless'][profile['section']]['options']['hostapd_bss_options'] = ['disable_11be=1']
+        self.state(value)
+        profile['eht'] = True
+        self.reject(value)
+        value = document(); node = value['devices']['node_0']
+        node['uci']['wireless']['phy5g']['options']['htmode'] = 'HE80'
+        self.reject(value)
+        node['uci']['wireless']['phy5g']['options']['htmode'] = ['EHT80']
         self.reject(value)
 
     def test_cipher_suffix_is_syntax_not_a_role_policy(self):

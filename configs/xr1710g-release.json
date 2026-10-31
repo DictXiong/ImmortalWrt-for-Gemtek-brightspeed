@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "version": "2.1.2",
+  "version": "2.2.0",
   "upstream_base": "8f92c5427fd902eb5c32006d1bc1ed9954055378",
   "fixes_commit": "c90e786e7d6d31ea93e1466374fefd47d9412b4d"
 }

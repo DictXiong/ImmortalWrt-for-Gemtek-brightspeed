@@ -23,9 +23,10 @@ class SetupFixture:
                     'sys/class/net/lan4', 'proc/sys/kernel/random', 'usr/libexec/dicttech-ap']:
             (self.root / rel).mkdir(parents=True, exist_ok=True)
         self.bin = self.base / 'setup-bin'; self.bin.mkdir()
-        for src, dest in [(SOURCE / 'setup', self.root / 'usr/lib/dicttech-ap/setup'),
+        for src, dest in [(SOURCE / 'platforms/xr1710g', self.root / 'usr/lib/dicttech-ap/factory'),
                           (SHARE, self.root / 'usr/share/dicttech-ap')]:
             shutil.copytree(src, dest, dirs_exist_ok=True)
+        self.write('tmp/sysinfo/board_name', b'gemtek,xr1710g\n')
         self.write('proc/sys/kernel/random/boot_id', b'00000000-0000-4000-8000-000000000001\n')
         self.write('etc/config/wireless', b"config wifi-device 'radio0'\n option disabled '0'\nconfig wifi-iface 'default_radio0'\n option disabled '0'\n")
         self.write('etc/config/network', b'# original fixture network\n')
@@ -104,18 +105,20 @@ print(stat.filemode(value.st_mode)+' 1 0 0 '+str(value.st_size)+' Jan 1 00:00 '+
         helper = helper.replace('BOOT=/proc/sys/kernel/random/boot_id', 'BOOT=' + shlex.quote(str(self.root / 'proc/sys/kernel/random/boot_id')))
         helper = helper.replace('JQ=/usr/bin/jq', 'JQ=' + shlex.quote(shutil.which('jq')))
         self.write('usr/libexec/dicttech-ap/bootstrap-key', helper.encode(), 0o700)
-        script = (SOURCE / 'bootstrap.sh').read_text()
-        script = re.sub(r'(?<!/proc)/(?:usr/share|usr/libexec|usr/lib|etc|root|tmp|sys)/',
-                        lambda m: str(self.root / m[0].strip('/')) + '/', script)
-        script = script.replace('PATH=/usr/sbin:/usr/bin:/sbin:/bin',
-                                'PATH=' + shlex.quote(str(self.bin) + ':' + os.environ['PATH']))
-        script = script.replace('-C / ', '-C ' + shlex.quote(str(self.root)) + ' ')
-        script = script.replace('"/$name"', '"' + str(self.root) + '/$name"')
-        script = script.replace('destination=/$name', 'destination=' + str(self.root) + '/$name')
-        script = script.replace('base=${2:-}', 'base=${2:-' + str(self.root) + '}')
-        script = script.replace('/proc/sys/kernel/random/boot_id', str(self.root / 'proc/sys/kernel/random/boot_id'))
         self.script = self.base / 'bootstrap-fixture.sh'
-        self.script.write_text(script); self.script.chmod(0o700)
+        for source, destination in ((SOURCE / 'bootstrap.sh', self.script),
+                (SOURCE / 'platforms/xr1710g/adapter.sh', self.root / 'usr/lib/dicttech-ap/factory/adapter.sh')):
+            script = source.read_text()
+            script = re.sub(r'(?<!/proc)/(?:usr/share|usr/libexec|usr/lib|etc|root|tmp|sys)/',
+                            lambda m: str(self.root / m[0].strip('/')) + '/', script)
+            script = script.replace('PATH=/usr/sbin:/usr/bin:/sbin:/bin',
+                                    'PATH=' + shlex.quote(str(self.bin) + ':' + os.environ['PATH']))
+            script = script.replace('-C / ', '-C ' + shlex.quote(str(self.root)) + ' ')
+            script = script.replace('"/$name"', '"' + str(self.root) + '/$name"')
+            script = script.replace('destination=/$name', 'destination=' + str(self.root) + '/$name')
+            script = script.replace('base=${2:-}', 'base=${2:-' + str(self.root) + '}')
+            script = script.replace('/proc/sys/kernel/random/boot_id', str(self.root / 'proc/sys/kernel/random/boot_id'))
+            destination.write_text(script); destination.chmod(0o700)
 
     def write(self, rel, value, mode=0o600):
         path = self.root / rel; path.parent.mkdir(parents=True, exist_ok=True)
@@ -186,6 +189,24 @@ def main():
         assert before == {str(p): p.read_bytes() for p in f.root.rglob('*') if p.is_file()}
     check('fresh_dhcp_plus_separate_offline_maintenance_and_readonly_proof', fresh)
 
+    def ubi_board(f):
+        f.write('tmp/sysinfo/board_name', b'gemtek,xr1710g-ubi\n')
+        f.call('prepare'); f.activate()
+        assert json.loads(f.call('check-setup').stdout)['mode'] == 'dhcp'
+    check('xr_ubi_board_uses_the_same_factory_topology_and_proof', ubi_board)
+
+    def unsupported_board(f):
+        f.write('tmp/sysinfo/board_name', b'example,other-router\n')
+        files = ['etc/config/network', 'etc/config/wireless', 'etc/shadow']
+        before = {path: (f.root / path).read_bytes() for path in files}
+        f.call('prepare', good=False)
+        assert before == {path: (f.root / path).read_bytes() for path in files}
+        assert not (f.root / 'etc/dicttech-ap/bootstrap-state.json').exists()
+        assert not (f.root / 'etc/dicttech-ap/bootstrap-identity.json').exists()
+        assert not (f.root / 'etc/dicttech-ap-bootstrap-key/state').exists()
+        f.call('check-setup', good=False)
+    check('xr_factory_adapter_rejects_unknown_board_before_network_or_authentication_writes', unsupported_board)
+
     def stable(f):
         f.call('prepare'); original = f.identity
         network = (f.root / 'etc/config/network').read_bytes()
@@ -213,7 +234,7 @@ def main():
         state = json.loads((f.root / 'etc/dicttech-ap/bootstrap-state.json').read_text())
         assert state['reason'] == 'invalid_marker' and state['mode'] == 'isolated'
         assert not (f.root / 'etc/dicttech-ap/bootstrap-identity.json').exists()
-        assert (f.root / 'etc/config/network').read_bytes() == (SOURCE / 'setup/network').read_bytes()
+        assert (f.root / 'etc/config/network').read_bytes() == (SOURCE / 'platforms/xr1710g/setup/network').read_bytes()
         f.call('check-setup', good=False)  # A quarantined marker is not a new-device enrollment.
     check('invalid_managed_marker_never_exposes_dhcp_or_initialization', invalid)
 
@@ -254,7 +275,7 @@ def main():
                     'RecvWindowSize': '0', 'mdns': '0', 'vrf': '', 'Interface': ''}
         for profile, section in [('dropbear', 'setup'), ('dropbear-dhcp', 'setup'), ('dropbear-dhcp', 'bootstrap')]:
             rows = {}; current = None
-            for line in (SOURCE / 'setup' / profile).read_text().splitlines():
+            for line in (SOURCE / 'platforms/xr1710g/setup' / profile).read_text().splitlines():
                 words = shlex.split(line, comments=True)
                 if not words: continue
                 if words[0] == 'config': current = words[2]; rows[current] = {}

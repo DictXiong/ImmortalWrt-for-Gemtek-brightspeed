@@ -136,7 +136,7 @@ def main():
         token = 'a' * 32
         f.write('proc/uptime', b'10.00 10.00\n')
         f.write('root/.openwrt-deploy/state/manifest.json', json.dumps({
-            'schema_version': 1, 'profile_ap': True, 'initialize': True, 'token': token, 'boot_id': boot}).encode())
+            'schema_version': 1, 'native_runtime': True, 'initialize': True, 'token': token, 'boot_id': boot}).encode())
         f.write('root/.openwrt-deploy/state/lease', (boot + ' 600\n').encode())
         f.write('root/.openwrt-deploy/state/applied', b'fixture\n')
         f.write('etc/dicttech-ap/root-password-hash', b'$6$owner$final-password-material\n')
@@ -166,7 +166,7 @@ def main():
         f.call('prepare')
         auth, state, owner, key = paths(f)
         boot = (f.root / 'proc/sys/kernel/random/boot_id').read_text().strip()
-        manifest = {'schema_version': 1, 'profile_ap': True, 'initialize': True,
+        manifest = {'schema_version': 1, 'native_runtime': True, 'initialize': True,
                     'token': 'a' * 32, 'boot_id': boot}
         f.write('proc/uptime', b'100.00 0.00\n')
         f.write('root/.openwrt-deploy/state/manifest.json', json.dumps(manifest).encode())
@@ -180,6 +180,9 @@ def main():
             f.write('root/.openwrt-deploy/state/rolled-back', b'fixture\n')
         elif mutation == 'not_init':
             manifest['initialize'] = False
+            f.write('root/.openwrt-deploy/state/manifest.json', json.dumps(manifest).encode())
+        elif mutation == 'legacy_flag':
+            del manifest['native_runtime']; manifest['profile_ap'] = True
             f.write('root/.openwrt-deploy/state/manifest.json', json.dumps(manifest).encode())
         elif mutation == 'symlink_manifest':
             path = f.root / 'root/.openwrt-deploy/state/manifest.json'
@@ -214,7 +217,7 @@ def main():
     check('custom_password_is_never_reset', custom_password_is_never_reset)
     check('generic_pending_password_survives_reboot_then_retires', generic_pending_password_survives_reboot_then_retires)
     check('shadow_symlink_is_not_followed', shadow_symlink_is_not_followed)
-    for mutation in ('expired', 'wrong_boot', 'closed', 'not_init', 'symlink_manifest'):
+    for mutation in ('expired', 'wrong_boot', 'closed', 'not_init', 'legacy_flag', 'symlink_manifest'):
         check('generic_invalid_lease_' + mutation + '_locks_and_never_reopens',
               lambda f, mutation=mutation: generic_invalid_lease_retires_default(f, mutation))
     check('other_shadow_accounts_and_private_mode_preserved', other_shadow_accounts_preserved)

@@ -6,7 +6,7 @@ export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 umask 077
 
 MARKER=/etc/dicttech-ap/device.json
-FACTORY=/usr/lib/dicttech-ap/setup/services.json
+FACTORY=/usr/lib/dicttech-ap/factory/setup/services.json
 CONTRACT=/usr/share/dicttech-ap/contract.json
 ENGINE_SERVICES=$(jq -er '[.reserved_services[]|select(type=="string")]|select(length>=1)|join(" ")' "$CONTRACT")
 
