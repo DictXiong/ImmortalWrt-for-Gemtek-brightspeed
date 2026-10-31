@@ -1,0 +1,227 @@
+{
+  "schema_version": 3,
+  "profile": "openwrt-config-v3",
+  "devices": {
+    "node_0": {
+      "hostname": "example-node-10",
+      "management_ipv4": "203.0.113.10",
+      "maintenance_ipv4": "198.51.100.10",
+      "ssh_port": 2222,
+      "identity": {
+        "bridge": "02:ad:be:0a:00:00",
+        "ethernet": {
+          "uplink": "02:ad:be:0a:00:10",
+          "desk": "02:ad:be:0a:00:11"
+        },
+        "radios": {
+          "phy2g": "02:ad:be:0a:00:80",
+          "phy5g": "02:ad:be:0a:00:90",
+          "phy6g": "02:ad:be:0a:00:a0"
+        },
+        "mlds": {
+          "office": "02:ad:be:0a:02:00"
+        },
+        "bssids": {
+          "office": [
+            "02:ad:be:0a:02:01",
+            "02:ad:be:0a:02:02",
+            "02:ad:be:0a:02:03"
+          ]
+        },
+        "duid": "0003000102adbe0a0000"
+      },
+      "platform": {
+        "board_names": [
+          "example,board"
+        ],
+        "ports": [
+          "uplink",
+          "desk"
+        ],
+        "bridge": "br-example",
+        "native_vlan": 137,
+        "guest_vlan": 345,
+        "radio_path": "platform/example",
+        "max_ap_per_radio": 16,
+        "max_mlds": 16,
+        "mac_prefix_groups": []
+      },
+      "common": {
+        "country": "DE"
+      },
+      "ssids": [
+        {
+          "key": "office",
+          "section": "bss_office",
+          "iface": "wifi-office",
+          "name": "Example-Office",
+          "bands": [
+            "2g",
+            "5g"
+          ],
+          "mlo": true,
+          "network": "trusted",
+          "encryption": "sae",
+          "pmf": 2,
+          "eht": true,
+          "hidden": false,
+          "roaming": true,
+          "radios": [
+            "phy2g",
+            "phy5g"
+          ],
+          "link_ids": [
+            0,
+            1
+          ],
+          "bssids": [
+            "02:ad:be:0a:02:01",
+            "02:ad:be:0a:02:02"
+          ],
+          "mld_mac": "02:ad:be:0a:02:00"
+        }
+      ],
+      "peers": {
+        "office": []
+      },
+      "services": {
+        "example-agent": {
+          "enable": true,
+          "running": true,
+          "reloadOn": {
+            "uci": [],
+            "files": [
+              "/etc/example.conf"
+            ]
+          }
+        }
+      },
+      "uci": {
+        "network": {
+          "bridge": {
+            "type": "device",
+            "order": 0,
+            "options": {
+              "name": "br-example",
+              "type": "bridge",
+              "macaddr": "02:ad:be:0a:00:00",
+              "ports": [
+                "uplink",
+                "desk"
+              ]
+            }
+          },
+          "trusted": {
+            "type": "interface",
+            "order": 1,
+            "options": {
+              "device": "br-example.137",
+              "proto": "dhcp"
+            }
+          },
+          "mac_uplink": {
+            "type": "device",
+            "order": 2,
+            "options": {
+              "name": "uplink",
+              "macaddr": "02:ad:be:0a:00:10"
+            }
+          },
+          "mac_desk": {
+            "type": "device",
+            "order": 3,
+            "options": {
+              "name": "desk",
+              "macaddr": "02:ad:be:0a:00:11"
+            }
+          }
+        },
+        "wireless": {
+          "phy2g": {
+            "type": "wifi-device",
+            "order": 0,
+            "options": {
+              "type": "mac80211",
+              "path": "platform/example",
+              "radio": "0",
+              "band": "2g",
+              "channel": "11",
+              "htmode": "EHT20",
+              "country": "DE",
+              "disabled": "0",
+              "macaddr_base": "02:ad:be:0a:00:80"
+            }
+          },
+          "phy5g": {
+            "type": "wifi-device",
+            "order": 1,
+            "options": {
+              "type": "mac80211",
+              "path": "platform/example",
+              "radio": "1",
+              "band": "5g",
+              "channel": "149",
+              "htmode": "EHT160",
+              "country": "DE",
+              "disabled": "0",
+              "macaddr_base": "02:ad:be:0a:00:90"
+            }
+          },
+          "phy6g": {
+            "type": "wifi-device",
+            "order": 2,
+            "options": {
+              "type": "mac80211",
+              "path": "platform/example",
+              "radio": "2",
+              "band": "6g",
+              "channel": "61",
+              "htmode": "EHT320",
+              "country": "DE",
+              "disabled": "0",
+              "macaddr_base": "02:ad:be:0a:00:a0"
+            }
+          },
+          "bss_office": {
+            "type": "wifi-iface",
+            "order": 10,
+            "options": {
+              "mode": "ap",
+              "ifname": "wifi-office",
+              "ssid": "Example-Office",
+              "encryption": "sae",
+              "key": "fixture-only-wireless-password",
+              "disabled": "0",
+              "ieee80211w": "2",
+              "hidden": "0",
+              "mlo": "1",
+              "ieee80211k": "1",
+              "bss_transition": "1",
+              "network": [
+                "trusted"
+              ],
+              "device": [
+                "phy2g",
+                "phy5g"
+              ],
+              "macaddr": "02:ad:be:0a:02:00",
+              "radio_macaddr": [
+                "02:ad:be:0a:02:01",
+                "02:ad:be:0a:02:02"
+              ]
+            }
+          }
+        }
+      },
+      "files": {
+        "etc/example.conf": "explicit producer content\n"
+      },
+      "resolver": {
+        "target": "/tmp/example-resolver.conf"
+      },
+      "credentials": {
+        "root_password_hash": "$6$fixture$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      }
+    }
+  }
+}

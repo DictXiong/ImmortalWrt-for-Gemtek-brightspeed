@@ -1,0 +1,19 @@
+{
+  "schema_version": 3,
+  "profile": "openwrt-config-v3",
+  "resource_model": "complete-producer-resources",
+  "identity_model": "complete-producer-address-table",
+  "managed_file_modes": [
+    "600",
+    "644",
+    "700",
+    "755"
+  ],
+  "resolver_model": "explicit-optional-symlink",
+  "reserved_services": [
+    "dicttech-ap-transaction",
+    "dicttech-ap-prepare",
+    "dicttech-ap-finalize",
+    "openwrt-deploy-guard"
+  ]
+}

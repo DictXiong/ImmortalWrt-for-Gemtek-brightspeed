@@ -35,8 +35,8 @@ jobs:
           python3 scripts/dicttech/tests/test_release.py
           python3 package/dicttech/cli-profile/tests/test_cli_profile.py
           sudo python3 scripts/dicttech/test-ap-config.py
-          sudo python3 scripts/dicttech/tests/test_ap_migrate.py
           sudo python3 scripts/dicttech/test-ap-bootstrap.py
+          sudo python3 scripts/dicttech/tests/test_managed_backup.py
           sudo python3 scripts/dicttech/tests/ap-deploy/test_transaction.py
           sudo python3 scripts/dicttech/tests/ap-deploy/test_export_identity.py
           sudo python3 scripts/dicttech/test-ap-verify.py

@@ -85,7 +85,7 @@ class IdentityExport(unittest.TestCase):
         capture = read.call_args.args[1]
         self.assertIn('set -o pipefail\n', capture)
         self.assertEqual(capture.count('cat /proc/sys/kernel/random/boot_id'), 2)
-        self.assertEqual(capture.count('cat /sys/class/net/br-lan/address'), 2)
+        self.assertEqual(capture.count('$(observed_bridge_mac)'), 2)
         self.assertEqual(set(report['preserved_identity_paths']), set(self.identity))
         self.assertNotIn('private fixture', json.dumps(report))
 

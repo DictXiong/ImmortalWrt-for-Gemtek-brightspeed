@@ -29,14 +29,18 @@ def case(name):
   if name in ['dynamic-extra','missing-extra-section','duplicate-ssid-section']:
    ssids.append({'key':'custom','section':'ssid_extra_custom','iface':'ap-mld2','mlo':True,'bands':['5g','6g']})
   ssids.append({'key':'iot','section':'ssid_iot','iface':'ap-iot','mlo':False,'bands':['2g']})
-  marker={'schema_version':2,'profile':'dicttech-ap-v2','device_id':'fixture','defaults_sha256':hashlib.sha256((SHARE/'defaults.json').read_bytes()).hexdigest(),'config_fingerprint':'a'*64,'ssids':ssids}
+  if name=='minimal':ssids=[]
+  if name=='one-arbitrary':ssids=[{'key':'cafe','section':'wifi_cafe','iface':'wifi-cafe','mlo':False,'bands':['5g']}]
+  marker={'schema_version':3,'profile':'openwrt-config-v3','device_id':'fixture','contract_sha256':hashlib.sha256((SHARE/'contract.json').read_bytes()).hexdigest(),'config_fingerprint':'a'*64,'ssids':ssids,'services':{}}
   if name!='fresh':(f/'etc/dicttech-ap/device.json').write_text(json.dumps(marker))
   def manifest():
    rels=['etc/config/'+n for n in CONFIGS]+['etc/sysctl.d/13-nf-bridge.conf','etc/xr-guest-vlan192.nft','etc/dicttech-ap/device.json','etc/dicttech-ap/root-password-hash']
+   if name=='minimal':rels=['etc/dicttech-ap/device.json','etc/dicttech-ap/root-password-hash']
    if name=='empty-authorized-keys':
     (f/'etc/dropbear/authorized_keys').write_text('');rels.append('etc/dropbear/authorized_keys')
-   value={'schema_version':2,'profile':'dicttech-ap-v2','files':[{'path':p,'sha256':hashlib.sha256((f/p).read_bytes()).hexdigest()}for p in rels]}
+   value={'schema_version':3,'profile':'openwrt-config-v3','files':[{'path':p,'mode':'600','sha256':hashlib.sha256((f/p).read_bytes()).hexdigest()}for p in rels]}
    (f/'etc/dicttech-ap/managed-files.json').write_text(json.dumps(value))
+   for path in rels+['etc/dicttech-ap/managed-files.json']:(f/path).chmod(0o600)
   if name!='fresh':manifest()
   def tool(n,text):
    p=f/'bin'/n;p.write_text('#!/bin/sh\n'+text);p.chmod(0o755)
@@ -49,23 +53,24 @@ def case(name):
   for k,v in values.items():text+=' "-q get '+k+'") printf "%s\\n" "'+v+'";;\n'
   text+=' *"show wireless"*) printf "%s\\n" "wireless.radio0=wifi-device" "wireless.radio1=wifi-device" "wireless.radio2=wifi-device" "wireless.main=wifi-iface";;\nesac\n'
   tool('uci',text)
+  tool('sysctl',f'printf "sysctl %s\\n" "$*" >>"{log}"\n')
   tool('nft',f'printf "nft %s\\n" "$*" >>"{log}"\ncase "$*" in "list table"*) exit 1;; esac\ncat >/dev/null\n')
   if name=='backup-failure':tool('tar','exit 1\n')
   p=f/'usr/libexec/dicttech-ap/transaction';p.write_text('#!/bin/sh\nprintf "sync-root-password\\n" >>"'+str(log)+'"\n');p.chmod(0o755)
   p=f/'usr/lib/dicttech-ap/services.sh';p.write_text('#!/bin/sh\nprintf "services %s\\n" "$*" >>"'+str(log)+'"\n');p.chmod(0o755)
   script=(SRC/'bootstrap.sh').read_text();script=re.sub(r'/(?:usr/share|usr/libexec|usr/lib|etc|root|tmp)/',lambda m:str(f/m.group(0).strip('/'))+'/',script)
-  script=script.replace('PATH=/usr/sbin:/usr/bin:/sbin:/bin','PATH='+shlex.quote(str(f/'bin')+':'+os.environ['PATH'])).replace('-C / ','-C '+str(f)+' ').replace('"/$name"','"'+str(f)+'/$name"').replace('destination=/$name','destination='+str(f)+'/$name').replace('base=${2:-}', 'base=${2:-'+str(f)+'}').replace('/proc/sys/kernel/random/boot_id',str(f/'proc/sys/kernel/random/boot_id'))
+  script=script.replace('PATH=/usr/sbin:/usr/bin:/sbin:/bin','PATH='+shlex.quote(str(f/'bin')+':'+os.environ['PATH'])).replace('-C / ','-C '+str(f)+' ').replace('"/$name"','"'+str(f)+'/$name"').replace('destination=/$name','destination='+str(f)+'/$name').replace('base=${2:-}', 'base=${2:-'+str(f)+'}').replace('next current=', 'next current='+shlex.quote(str(f))).replace('/proc/sys/kernel/random/boot_id',str(f/'proc/sys/kernel/random/boot_id'))
   p=f/'bootstrap.sh';p.write_text(script);p.chmod(0o755)
   def run(command):return subprocess.run([os.environ['DICTTECH_AP_TEST_SHELL'],str(p),command],text=True,capture_output=True)
   if name.startswith('boot-twice-'):
    persistent_boot_case(name,f,p,log)
    report.append({'case':name,'passed':True});return
-  if name in ['invalid','backup-failure']:(f/'etc/dicttech-ap/device.json').write_text(json.dumps(dict(marker,defaults_sha256='0'*64)))
+  if name in ['invalid','backup-failure']:(f/'etc/dicttech-ap/device.json').write_text(json.dumps(dict(marker,contract_sha256='0'*64)))
   if name=='missing-config':(f/'etc/config/wireless').unlink()
   if name=='truncated-config':(f/'etc/config/wireless').write_text('')
   if name=='tampered-config':(f/'etc/config/wireless').write_text('TAMPERED\n')
   out=run('prepare')
-  if name in ['valid','dynamic-extra','normalization','steady-gui','new-manifest','corrupt-snapshot','empty-authorized-keys','delta-clear-failure','restore-copy-failure']:
+  if name in ['valid','minimal','one-arbitrary','dynamic-extra','normalization','steady-gui','new-manifest','corrupt-snapshot','empty-authorized-keys','delta-clear-failure','restore-copy-failure']:
    assert out.returncode==0,out.stderr
    assert (f/'etc/config/network').read_text()=='ORIGINAL-network\n'
    if name=='normalization':(f/'etc/config/network').write_text('NORMALIZED-network\n')
@@ -93,6 +98,7 @@ def case(name):
     assert all(not (f/'tmp/.uci'/n).exists() for n in CONFIGS)
     assert (f/'tmp/.uci/unrelated').read_text()=='UNRELATED-PENDING-DELTA\n'
    assert log.read_text().count('sync-root-password')==1
+   if name=='minimal':rels=['etc/dicttech-ap/device.json','etc/dicttech-ap/root-password-hash']
    if name=='empty-authorized-keys':assert (f/'etc/dropbear/authorized_keys').read_bytes()==b''
    if name=='steady-gui':
     (f/'etc/config/wireless').write_text('GUI-CHANGED\n');(f/'etc/shadow').write_text('root:GUI-CHANGED:1:0:99999:7:::\n')
@@ -210,7 +216,10 @@ def persistent_boot_case(name,f,bootstrap,log):
  (f/'etc/shadow').write_text(shadow)
  if name=='boot-twice-gui':(f/'etc/config/wireless').write_text('GUI-CHANGED\n')
  elif name=='boot-twice-missing-config':(f/'etc/config/wireless').unlink()
- elif name=='boot-twice-corrupt-guard':(f/'etc/xr-guest-vlan192.nft').write_text('INVALID-GUARD\n')
+ elif name=='boot-twice-missing-asset':(f/'etc/xr-guest-vlan192.nft').unlink()
+ elif name=='boot-twice-marker-tamper':
+  changed=json.loads((f/'etc/dicttech-ap/device.json').read_text());changed['device']={'hostname':'altered-with-original-fingerprint'};(f/'etc/dicttech-ap/device.json').write_text(json.dumps(changed))
+ elif name=='boot-twice-root-material-tamper':(f/'etc/dicttech-ap/root-password-hash').write_text('$6$changed$shape-valid-material\n')
  else:raise AssertionError('unknown persistent boot fixture')
  boot_cycle(False)
  runtime_start_has_no_effect()
@@ -224,5 +233,5 @@ def persistent_boot_case(name,f,bootstrap,log):
   assert 'wireless.radio0.disabled=1' in log.read_text()
   assert len(list((f/'root/dicttech-ap-quarantine').glob('*.tar.gz')))==1
 
-for name in ['fresh','dynamic-extra','missing-extra-section','duplicate-ssid-section','valid','normalization','steady-gui','new-manifest','invalid','missing-config','truncated-config','tampered-config','backup-failure','corrupt-snapshot','empty-authorized-keys','delta-clear-failure','restore-copy-failure','boot-twice-gui','boot-twice-missing-config','boot-twice-corrupt-guard']:case(name)
+for name in ['fresh','minimal','one-arbitrary','dynamic-extra','missing-extra-section','duplicate-ssid-section','valid','normalization','steady-gui','new-manifest','invalid','missing-config','truncated-config','tampered-config','backup-failure','corrupt-snapshot','empty-authorized-keys','delta-clear-failure','restore-copy-failure','boot-twice-gui','boot-twice-missing-config','boot-twice-missing-asset','boot-twice-marker-tamper','boot-twice-root-material-tamper']:case(name)
 print(json.dumps(report,indent=2))

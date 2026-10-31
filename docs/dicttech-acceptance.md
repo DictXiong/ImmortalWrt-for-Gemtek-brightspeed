@@ -1,127 +1,71 @@
-# AP acceptance
+# Resource verification and acceptance limits
 
-`ap-verify.py` is the read-only baseline acceptance entry. It uses the same
-private structured configuration and defaults as `ap-deploy.py`, and the same
-SSH transport options. It never applies configuration, invokes neighbor writes,
-starts services, reloads Wi-Fi or reboots a router.
+`ap-verify.py` reads the same complete private v3 configuration as `ap-deploy.py`.
+It never applies resources, writes neighbors, starts services, reloads Wi-Fi or
+reboots a router. It has no fixed SSID, network, VLAN, guard-template or channel
+policy: expectations come from the producer's UCI and public metadata.
 
 ```sh
 python3 scripts/dicttech/ap-verify.py \
-  --config ../ap-deployment.json --device ap_example \
-  --host 192.168.250.3 --port 12022 \
-  --output ../ap-example-verification.json
+  --config ../configuration.private.json --device DEVICE_ID \
+  --host TARGET_IP --port SSH_PORT --output ../verification.private.json
 ```
 
-Optional `--control-socket` and `--jump-host` have the same meaning as in the
-deployment tool. The target identity is checked against the selected device;
-a reused SSH master does not by itself prove that the intended AP was reached.
-Reports are written privately (`0600`). Success output contains fixed check
-results, not root hashes, Wi-Fi keys, daemon argv or complete UCI configuration.
-Generated hostapd configuration is filtered on the AP to an explicit safe-field
-allowlist before transport.
+Use the same optional `--control-socket` and `--jump-host` transport settings as
+the deployer. Reports and bindings use mode `0600`. Output excludes passwords,
+root hashes, complete UCI, raw daemon argv and private resource digests.
+Hostapd responses are filtered to a safe-field allowlist on the target.
 
-The baseline checks cover:
+## Observed runtime checks
 
-- Desired configuration file hashes and private modes, defaults/profile, device
-  identity, root-password synchronization and resolver policy.
-- The boot ID and full private target contract are reread after collection;
-  observed changes fail acceptance instead of combining different boot/config
-  snapshots. Their private digests are not printed in the report.
-- Management DHCP, maintenance `/24`, IPv6 management and a guest bridge with no
-  AP-local IP addresses.
-- All four physical ports: only VLAN 1 untagged/PVID and VLAN 192 tagged; bridge
-  self-membership remains tagged for the `.1` and `.192` subinterfaces.
-- Four live SSIDs and expected per-link BSSIDs/frequencies; generated hostapd
-  key management, PMF and k/v flags. The main links' actual width is checked;
-  2.4 GHz 20/40 coexistence may legitimately report 20 MHz.
-  C7's `ssid2` accepts ordinary double-quoted literal strings and hexadecimal
-  bytes. The verifier follows hostapd's parser semantics rather than treating
-  quoted values as JSON. Its optional `P"..."` printf encoding is deliberately
-  unsupported and fails verification instead of guessing escape semantics.
-- Fresh roaming snapshots and every configured peer. A single-AP inventory has
-  an empty expected peer list and does not require a fictitious remote peer.
-- Guest bridge/inet local guards, the EAPOL exception and pinned bridge sysctls.
-  A matching drop expression in an unused or unrelated chain does not count:
-  the rule must belong to the expected family/table's actual input hook.
-- Required daemons and disabled unwanted services. Firewall is a oneshot
-  service, so its live fw4 table is checked instead of requiring a daemon PID.
-- Persistent early transaction/prepare and post-boot finalize links:
-  `S03dicttech-ap-transaction`, `S04dicttech-ap-prepare` and
-  `S13dicttech-ap-finalize`. Each must be an enabled link to its executable init
-  script. These boot-policy oneshots are not required to keep a daemon PID.
+- Backend schema/profile/contract hash, registered device, observed MAC and
+  allowed board; contract and boot stability across sequential collection.
+- Desired resource bytes, root ownership and each explicitly declared mode;
+  configured root password and explicit resolver target.
+- Declared UCI interfaces and their expected protocol/device/address behavior.
+- Declared service enable/running policy, including oneshots without a PID,
+  and persistent rollback/prepare/finalize boot hooks.
+- Exactly the declared radio/BSS inventory, active link BSSIDs/frequencies,
+  WPA/PMF/MLO/hidden/EHT/k-v configuration and actual channel/width. A supplied
+  2.4 GHz 20/40 coexistence policy may legitimately run at 20 MHz.
+- Fresh explicitly selected roaming peers. Disabled BSS roaming has no worker;
+  a single-device inventory does not require a fictitious peer.
 
-A changed radio frequency/width is reported as a failed policy check, not as a
-proven firmware bug. DFS, regulatory behavior or unfinished startup can require
-investigation or a later read-only rerun.
+These checks do not prove forwarding, VLAN isolation or hardware acceleration.
+Matching rendered firewall/guard files proves desired bytes were installed;
+actual packet behavior needs independent client evidence. Empty wireless and
+service inventories are valid and do not acquire invented AP expectations.
+C7 `ssid2` quoted strings are decoded literally or from strict hexadecimal;
+optional hostapd printf encoding is refused rather than guessed.
 
-## External client and hardware gates
+## Independent client and hardware evidence
 
-A running AP and matching configuration do not prove actual client behavior.
-The following tests are explicitly `NOT_TESTED` unless external evidence is
-provided:
+An otherwise clean runtime-only report has overall `NOT_TESTED`, while its
+observed checks are `PASS`. `PASS` requires applicable independent tests:
+management reachability, dual-stack networking, cold boot/link recovery and
+performance; wireless inventories additionally need client authentication and
+actual roaming where enabled. A declared guest-VLAN platform also requires
+client mutual communication, internal isolation, PPE-bound isolation/VLAN
+retention, and controlled source/VLAN-injection tests. Enabled 6 GHz requires an
+actual compatible client. These gates do not run merely by reading AP status.
 
-- Independent management reachability at the DHCP and maintenance addresses,
-  over the intended IPv4 and IPv6 paths. An address shown by ubus does not prove
-  that another host can connect to it. A reused SSH master can continue using
-  another address or address family, so it is not proof of new reachability.
-- Four-SSID client authentication, including forced WPA2 IoT compatibility.
-- IPv4/IPv6 Internet access and DNS/HTTPS from a real wireless client.
-- Guest-client mutual communication and internal-network isolation.
-- Isolation and VID 192 retention after the specific test flow is PPE-bound.
-- Source-address spoofing and VLAN-tag injection under the controlled test plan.
-- Actual cross-AP roaming, cold boot/link recovery, CPU and throughput.
-- A real 6 GHz client when the main ESS's 6 GHz link is enabled.
+Use `--require-production` to reject untested acceptance gates. A normal zero
+exit status means no observed check failed; it is not full production approval.
+The verifier consumes external evidence but does not rerun it or attest that
+reported tests were executed.
 
-`PASS` is reserved for all checks, including required external gates. A clean
-configuration-only run reports overall `NOT_TESTED` with its individual local
-checks marked `PASS`. Exit status is zero when no observed check failed; add
-`--require-production` to require every gate to be `PASS` and return nonzero on
-untested behavior. This prevents a configuration-only report from being used
-as an unrestricted production-acceptance certificate.
-
-The repository currently provides the AP-side reader and evidence aggregator,
-not a universal wireless-client or PPE traffic-test executor. Those external
-tests must actually run using the available test client/hardware and preserve
-their results. A zero exit status from the baseline command means that no
-observed baseline check failed; it does not mean all production gates ran.
-
-## Binding external evidence
-
-Use `--binding-output ../ap-example-binding.json` during verification to write
-a private binding containing schema/profile, device, observed boot ID and the
-hash of the full desired file map. The binding includes secret-derived hashes
-and must not be published. An external test runner can copy those fields into
-its private report and add:
+`--binding-output PATH` writes a private boot/device/full-resource binding. An
+external runner copies these fields into its report and adds a `tests` map:
 
 ```json
-{
-  "tests": {
-    "wifi_client_auth": {"status": "PASS", "evidence": "private-run-001/auth"},
-    "ipv4_ipv6_internet": {"status": "PASS", "evidence": "private-run-001/dualstack"}
-  }
-}
+{"tests":{"wifi_client_auth":{"status":"PASS"},"ipv4_ipv6_internet":{"status":"PASS"}}}
 ```
 
-This fragment is not a complete valid report: retain all binding fields and
-supply outcomes for the tests actually executed. `evidence` is an opaque local
-reference, not a password or raw packet payload. Feed the complete `0600`
-report to `--external-report PATH`. Missing tests remain `NOT_TESTED`; an old
-boot, another device or different desired configuration fails binding. The
-verifier consumes reported evidence but does not independently rerun those
-client tests, so preserve their underlying captures/results for review.
-The binding and a nonempty evidence reference prevent accidental reuse of a
-different boot/configuration report; they are not attestation of the report's
-truth. Filling a report with `PASS` without executing the named tests is not
-acceptance. No report is loaded automatically from a previous run.
+This fragment is not a complete report. Preserve all binding fields, record only
+tests actually executed, keep underlying local evidence, and pass the complete
+private report via `--external-report PATH`. A different boot, device or desired
+configuration fails binding. Missing outcomes remain `NOT_TESTED`; old evidence
+is never loaded automatically.
 
-External IDs are `management_reachability`, `wifi_client_auth`, `ipv4_ipv6_internet`,
-`guest_client_mutual`, `guest_internal_isolation`,
-`ppe_bound_isolation_and_vlan`, `spoof_and_vlan_injection`,
-`actual_client_roaming`, `cold_boot_and_link_recovery`, `cpu_and_throughput`,
-and, where enabled, `six_ghz_client_auth`.
-
-Local unit fixtures for the verifier are run with:
-
-```sh
-python3 scripts/dicttech/test-ap-verify.py
-```
+Offline fixtures run with `python3 scripts/dicttech/test-ap-verify.py`. They test
+the reader's logic, not a wireless client, RF compatibility or hardware datapath.

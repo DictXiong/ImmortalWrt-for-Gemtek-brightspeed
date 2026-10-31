@@ -224,12 +224,12 @@ GENERATOR_FILES = {
 
 def check_generators(source_root, rootfs):
     rows = []
-    guard = '[ ! -f /usr/share/dicttech-ap/defaults.json ] || exit 0'
+    guard = '[ ! -f /usr/share/dicttech-ap/contract.json ] || exit 0'
     for relative, source in GENERATOR_FILES.items():
         rows.append(compare(source_root / source, rootfs / relative, relative))
         content = (rootfs / relative).read_text()
         if relative == 'lib/wifi/mac80211.uc':
-            require(re.search(r'set \$\{si\}\.disabled=\x27\$\{readfile\("/usr/share/dicttech-ap/defaults\.json"\)\s*\?\s*"1"\s*:\s*"0"\}\x27', content) is not None,
+            require(re.search(r'set \$\{si\}\.disabled=\x27\$\{readfile\("/usr/share/dicttech-ap/contract\.json"\)\s*\?\s*"1"\s*:\s*"0"\}\x27', content) is not None,
                     'wireless generator no longer disables AP-profile interfaces by default')
         else:
             require(guard in '\n'.join(content.splitlines()[:8]), 'upstream defaults are not suppressed early: ' + relative)

@@ -1,55 +1,38 @@
-# DictTech XR1710G AP deployment
+# DictTech XR1710G configuration and deployment
 
-This personal branch supplies a no-secret image, a versioned configuration
-contract and deployment/verification tools. The three general datapath fixes
-remain separate from the personal AP policy. The v2 device profile owns three
-preset SSIDs and an optional ordered custom-SSID list, a wired backhaul, native
-VLAN 1, guest VLAN 192, DHCP management and a unique static maintenance address.
-Read [the configuration format](dicttech-config-format.md),
-[maintenance allocation](dicttech-maintenance.md) and
-[acceptance limits](dicttech-acceptance.md) before deployment.
+This branch supplies a no-secret firmware image and a guarded declarative
+resource runtime. Nix owns the current AP scenario: SSID defaults, complete MAC
+allocation, management/maintenance addresses, VLANs, forwarding policy, hardware
+settings and wired-backhaul roaming. The shared backend has no AP presets and
+can validate/render other complete OpenWrt resource configurations.
 
-The existing Glass page footer identifies this image as **DictTech AP · 定制版**.
-It is a dedicated configuration for this AP deployment, with its label using the
-theme's ordinary footer typography and colors.
+The source protocol is now **v3**, `profile: "openwrt-config-v3"`. Use matching
+host tools and firmware; the published v2 runtime cannot accept it. There is no
+automatic v1/v2 input migration or defaults merge. Read the
+[resource format](dicttech-config-format.md), [maintenance boundary](dicttech-maintenance.md)
+and [acceptance limits](dicttech-acceptance.md) before deployment.
 
-## Configuration inputs
+The existing Glass footer identifies the image as **DictTech AP · 定制版** using
+the theme's ordinary typography. Installed owner tools and the minimal factory
+enrollment contract are firmware features; configured network policy comes
+from the producer.
 
-Keep real input files outside this Git checkout. The current installation uses
-the following files in the parent working directory, all mode `0600`:
+## Configuration input
 
-* `ap-common.json`: schema/profile version and common overrides. An empty
-  `common` object uses the complete firmware defaults.
-* `ap-devices.json`: stable device IDs, hostnames, maintenance addresses and MAC
-  identities and optional per-device overrides, including a complete custom list.
-* `ap-secrets.json`: the three preset Wi-Fi passwords, any additional referenced
-  Wi-Fi secrets and each device's root password hash; optionally its intended
-  authorized public keys.
-
-Combine them from this checkout:
+The preferred producer is the Nix OpenWrt module and `openwrt-rebuild`. Keep
+secrets in encrypted configuration and decrypt only during deployment. Its
+resolved complete resource document is the same protocol consumed by
+`ap_config.py`; the backend itself never allocates policy or decrypts secrets.
+For standalone validation, provide a complete private JSON document:
 
 ```sh
-python3 scripts/dicttech/ap_config.py merge \
-  --common ../ap-common.json --devices ../ap-devices.json \
-  --secrets ../ap-secrets.json --output ../ap-deployment.json
-python3 scripts/dicttech/ap_config.py validate --config ../ap-deployment.json
+python3 scripts/dicttech/ap_config.py validate --config ../configuration.private.json
 ```
 
-The document uses `schema_version: 2` and `profile: "dicttech-ap-v2"`. An empty
-`common` object enables only Main, Guest and IoT. Custom entries under
-`common.extra_ssids` need only `id` and `name`; the public `extra_defaults` fills
-in their other settings. The list may be empty or contain multiple ordinary
-SSIDs. Main/Guest remain `ap-mld0/1`; custom MLOs follow list order from 2,
-while single-link entries do not consume an MLD number. See the
-[custom SSID contract](dicttech-config-format.md#presets-and-custom-defaults).
-
-The resulting JSON is also private. Nix and sops may later generate that same
-document directly; the deployment tool does not depend on how JSON was
-produced. Neither real input files nor rendered archives belong in a public
-firmware, Git commit, build log or CI artifact. The public
-`/usr/share/dicttech-ap/defaults.json` is the authoritative default policy; the
-local overrides are intentionally small. A local/target defaults hash mismatch
-is refused rather than silently deploying against another version's policy.
+Keep private input, rendered files, receipts and backups outside the public
+source tree and public build artifacts. The firmware's
+`/usr/share/dicttech-ap/contract.json` identifies the schema/capabilities only.
+Both transaction endpoints pin that exact contract hash.
 
 ## Build
 
@@ -72,7 +55,7 @@ and supports manual dispatch; it uses the same entry point and runs the public
 configuration/deployment/roaming checks first. Public builds refuse a root `files/` overlay.
 The source must be committed; `--allow-dirty` is reserved for local trials and
 marks their version as dirty. Finished-image checks extract the actual rootfs,
-compare managed executables/defaults against source and reject embedded device
+compare managed executables/contracts against source and reject embedded device
 credentials or unexpected packages.
 The build sets umask `022` and restores tracked public source permissions from
 Git, including pinned feeds. Previously polluted package/install caches need a
@@ -125,9 +108,8 @@ supplemented; an empty key list does not disable the initialization password.
 The private lifecycle stamp under `/etc/dicttech-ap-bootstrap-key/` is separate
 from the managed profile, retained by package upgrades and sysupgrade, and
 backed up/restored with initialization transactions. Configured exports carry a
-retired stamp and filter out the legacy initialization public key. The helper
-and stamp retain their historical `bootstrap-key` names for upgrade compatibility;
-fresh images no longer grant that key. Ordinary reboot, a missing/quarantined
+retired stamp and filter out the legacy initialization public key. The helper and stamp use the `bootstrap-key` lifecycle namespace; the old public
+key is a revoked credential tombstone, not a granted initialization key. Ordinary reboot, a missing/quarantined
 profile, or an existing user password never re-enables the default password.
 A full factory reset erases this stamp and intentionally begins a new
 initialization. Failed/unconfirmed initialization restores the original
@@ -159,133 +141,86 @@ Add `--control-socket /tmp/dicttech-ap-setup` to commands targeting that session
 After provisioning changes the address, establish a new authenticated session
 at the assigned address rather than reusing the old socket as identity proof.
 
-On the running v2 image, first read the target identity and boot ID:
+On a matching running image, read the target and its boot identity:
 
 ```sh
-python3 scripts/dicttech/ap-deploy.py check --host 192.168.250.1
+python3 scripts/dicttech/ap-deploy.py check --host DHCP_OR_MAINTENANCE_IP
 ```
 
-Use the device ID registered in the JSON and the boot ID just observed:
+The Nix deployment wrapper supports initial password enrollment through
+`openwrt-rebuild ... switch --device DEVICE_ID --target-host root@DHCP_IP --init`.
+For standalone deployment, establish a trusted authenticated SSH master first
+and pass `--control-socket` to these commands:
 
 ```sh
 python3 scripts/dicttech/ap-deploy.py plan \
-  --config ../ap-deployment.json --device ap_new --host 192.168.250.1 \
+  --config ../configuration.private.json --device DEVICE_ID --host TARGET_IP \
   --initialize --expect-boot-id BOOT_ID
 python3 scripts/dicttech/ap-deploy.py apply \
-  --config ../ap-deployment.json --device ap_new --host 192.168.250.1 \
-  --initialize --expect-boot-id BOOT_ID \
-  --receipt ../ap_new-receipt.private.json
+  --config ../configuration.private.json --device DEVICE_ID --host TARGET_IP \
+  --initialize --expect-boot-id BOOT_ID --receipt ../receipt.private.json
 ```
 
-`ap_new` and `BOOT_ID` are placeholders, not preconfigured identities. Initial
-provisioning requires the exact generated setup state and an explicit boot pin.
-A configured device with another ID is always refused. A control socket is
-not proof of target identity: both controller and target check the identity.
-
-The default rollback lease is 600 seconds. Apply does not confirm itself. If
-the maintenance address changes, reconnect at the device's registered address;
-normal management subsequently follows DHCP. Use the same private receipt to
-query status, confirm or roll back:
+`DEVICE_ID`, `TARGET_IP` and `BOOT_ID` are placeholders. The exact setup proof,
+SSH host identity and boot pin authorize initialization; a reused master is not
+proof of the target. For an already configured device, omit the initialization
+flags. The default rollback lease is 600 seconds. Apply does not confirm itself;
+reconnect at the declared access address and inspect the result before confirming:
 
 ```sh
-python3 scripts/dicttech/ap-deploy.py status --host MAINTENANCE_IP
 python3 scripts/dicttech/ap-verify.py \
-  --config ../ap-deployment.json --device ap_new --host MAINTENANCE_IP \
-  --output ../ap_new-verification.private.json
+  --config ../configuration.private.json --device DEVICE_ID --host TARGET_IP \
+  --output ../verification.private.json
 python3 scripts/dicttech/ap-deploy.py confirm \
-  --host MAINTENANCE_IP --receipt ../ap_new-receipt.private.json
+  --host TARGET_IP --receipt ../receipt.private.json
 ```
 
-Confirm only after actual readback and the applicable acceptance checks. A
-lost controller/SSH connection does not cancel rollback. Pending unrelated UCI
-edits, changed baseline files, a wrong device, incomplete reload or altered
-candidate files block the transaction/confirmation. Live SSH-port changes are
-refused; choose a non-default port through offline provisioning instead.
+The guard survives loss of SSH/controller connectivity. Pending UCI changes,
+baseline drift, another device, incomplete reload, unsafe permissions or altered
+candidate files block staging/confirmation. Live SSH-port changes require offline
+provisioning. The Nix wrapper separately supports its one guarded MAC reboot.
 
 ## Existing devices and image upgrades
 
-V2 uses a different schema/profile/default fingerprint from v1. Do not simply
-retain an old v1 configuration when flashing a v2 image: its boot policy cannot
-accept the old marker/default binding. First back up the old site configuration
-and firmware, [migrate the private JSON](dicttech-config-format.md#explicit-v1-migration),
-and export a new archive with the matching v2 tool/defaults. Prove this workflow
-on a test AP before changing production. Reordering MLD names recreates BSS
-interfaces and can temporarily disconnect wireless clients.
-
-An existing matching v2 profile can use `plan` and `apply` with its current DHCP
-or maintenance address, without `--initialize`. The tool sends secrets over
-SSH stdin and prints changed paths, not credential values. An identical
-configuration is a no-op. Preserve the receipt and private backups until the
-result is confirmed.
-
-To preseed a matching image upgrade, export only that device's configuration.
-
-The export contains data files only. Persistent firmware services run prepare
-at S04 and finalize at S13; no one-time `uci-defaults` provisioning script is
-added to the archive. Runtime configuration transactions retain their explicit
-finalize step.
+Back up firmware and configuration first. Schema-v3 configuration is a breaking
+source-contract change: retain neither an unconverted v2 marker nor v2 generated
+archives when upgrading to this runtime. Generate an explicit v3 configuration
+and export it with matching tools:
 
 ```sh
 python3 scripts/dicttech/ap-deploy.py export \
-  --config ../ap-deployment.json --device ap_test \
+  --config ../configuration.private.json --device DEVICE_ID \
   --preserve-host-identity --host CURRENT_AP_ADDRESS \
-  --output ../ap_test-config.private.tar.gz
+  --output ../configuration.private.tar.gz
 ```
 
-The preservation flag performs a read-only same-device identity check before
-capturing existing SSH host keys, HTTPS identity and any authorized keys not
-explicitly set in the desired configuration, excluding the one-time
-initialization identity even if its comment/options changed. Exports also carry
-a retired initialization-key stamp. Use it for existing-device
-upgrades, so SSH identity and access survive the custom configuration archive.
-Its read-only identity probe also supports the old v1/other installed firmware;
-it does not require the source to already implement the v2 transaction contract.
-The supplied JSON and resulting archive must still be v2 and match the new image.
-Omit it for a fresh device: another AP's host identity must never be cloned.
+The optional preservation flag verifies the selected device and boot, then
+captures only that device's SSH/HTTPS identity and permanent keys not explicitly
+replaced by the producer. Do not use it to clone another router's host identity.
+The archive is private, contains rendered data, and marks initialization retired;
+it is a normal `sysupgrade -f` input, not a firmware image or a rollback slot.
 
-The gzip tar is a private `sysupgrade -f` input, not a public image. Check the
-image/layout with the platform's upgrade test, back up the current system, then
-supply this archive to the normal sysupgrade process. The export is suitable
-for bootstrapping the new profile; it does not itself provide a firmware-slot
-rollback or flash the image. The XR1710G's single firmware slot cannot recover
-an unbootable kernel through a userspace configuration guard.
-
-On the already identified target, validate the exact image and private archive
-before starting its separately guarded upgrade:
+Validate image layout and archive with the ordinary upgrade test before flashing:
 
 ```sh
-sysupgrade --no-provisioning -T -f /tmp/ap-config.private.tar.gz /tmp/image.itb
+sysupgrade --no-provisioning -T -f /tmp/configuration.private.tar.gz /tmp/image.itb
 ```
 
-Do not force a rejected compatibility check. Follow the
-[finished-image gate](dicttech-image-checks.md) and preserve a known recovery
-path before running the corresponding upgrade without `-T`.
+Do not force a rejected compatibility check. Follow the [finished-image gate](dicttech-image-checks.md).
+The XR1710G has one firmware slot: a configuration guard cannot repair a kernel
+that never boots. Preserve a physical Recovery path.
 
-The initial preseed is checked against a private managed-files manifest before
-network services are accepted. The root hash is applied to root's field only;
-other accounts and device SSH host keys are retained. Existing device host
-keys are not copied into a new device's exported configuration.
+Prepare runs at S04 and finalize at S13, after stock UCI normalization and before
+management/network startup. Dynamic private ledgers replace fixed role and file
+inventories. Accepted GUI password/channel edits survive normal reboot; explicit
+redeployment detects drift. Missing or unsafe owned resources are quarantined
+and fail closed. The generic sysupgrade hook backs up the producer's validated
+resource list, including plugin binaries and explicit modes, without assuming
+an AP topology or replacing the user's backup list.
 
-The accepted marker allows later GUI password/channel edits to survive normal
-boots. `plan` reports that drift before a subsequent explicit deployment.
-Missing critical policy material fails closed into setup; invalid material is
-preserved in a private quarantine. If firmware default policy changes, export
-a new configuration with the matching tool/defaults rather than carrying an
-unrecognized old policy forward.
-
-The old manually deployed roaming helper kept its runtime files in sysupgrade
-lists. Retire those old code/CLI/UI overrides during the guarded transition:
-configuration is preserved, while executable code must come from the new
-image. Do not restore a whole old `/etc` or runtime script directory over the
-new firmware. The new profile does not contain the old test-only
-`192.168.50.1` fallback.
-
-When adding or renaming an AP, regenerate the document and deploy to every
-affected AP so their explicit peer lists remain consistent. Only matching
-profile IDs and SSID names with roaming enabled exchange candidates; custom
-entries can be absent or differently named on another AP. The AP tool does
-not modify pi1 reservations or deploy NixOS; those are separate upstream
-network prerequisites.
+For new/renamed devices or changed SSID identities, regenerate and deploy each
+affected peer's final address/roaming list. Gateway reservations are a separate
+NixOS deployment prerequisite; the router tool does not switch its gateway.
 
 ## Owner tools and status pages
 

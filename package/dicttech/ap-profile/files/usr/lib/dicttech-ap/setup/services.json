@@ -1,0 +1,184 @@
+{
+  "services": {
+    "network": {
+      "enable": true,
+      "running": true,
+      "oneshot": false
+    },
+    "sysntpd": {
+      "enable": true,
+      "running": true,
+      "oneshot": false
+    },
+    "firewall": {
+      "enable": true,
+      "running": null,
+      "oneshot": true
+    },
+    "dropbear": {
+      "enable": true,
+      "running": true,
+      "oneshot": false
+    },
+    "uhttpd": {
+      "enable": true,
+      "running": true,
+      "oneshot": false
+    },
+    "xr_roaming": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "wifihistory": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "dnsmasq": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "odhcpd": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "dawn": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "usteer": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "ttyd": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "watchcat": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "umdns": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "npu-jitter": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "zerotier": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "miniupnpd": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "ddns": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "microsocks": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "adguardhome": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "AdGuardHome": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "openclash": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "passwall": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "passwall2": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "shadowsocksr": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "lucky": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "autoreboot": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "nlbwmon": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "bandix": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "pushbot": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "radius": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "3proxy": {
+      "enable": false,
+      "running": false,
+      "oneshot": false
+    },
+    "sysctl": {
+      "enable": true,
+      "running": null,
+      "oneshot": true
+    },
+    "cpufreq": {
+      "enable": true,
+      "running": null,
+      "oneshot": true
+    },
+    "airoha-npu": {
+      "enable": true,
+      "running": null,
+      "oneshot": true
+    },
+    "fan": {
+      "enable": true,
+      "running": null,
+      "oneshot": true
+    }
+  }
+}

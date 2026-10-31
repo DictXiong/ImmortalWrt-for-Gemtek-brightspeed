@@ -28,7 +28,7 @@ def main():
     package = source / 'package/dicttech/ap-profile/files'
     inputs = [package / 'usr/lib/dicttech-ap/bootstrap.sh',
               package / 'usr/lib/dicttech-ap/services.sh',
-              package / 'usr/share/dicttech-ap/defaults.json',
+              package / 'usr/share/dicttech-ap/contract.json',
               package / 'etc/init.d/dicttech-ap-prepare',
               package / 'etc/init.d/dicttech-ap-finalize']
     inputs += [package / 'usr/libexec/dicttech-ap/bootstrap-key',

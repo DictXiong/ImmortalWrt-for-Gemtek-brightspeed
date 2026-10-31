@@ -1,3 +1,2 @@
+/etc/dicttech-ap/
 /etc/dicttech-ap-bootstrap-key/
-/etc/sysctl.d/13-nf-bridge.conf
-/etc/xr-guest-vlan192.nft

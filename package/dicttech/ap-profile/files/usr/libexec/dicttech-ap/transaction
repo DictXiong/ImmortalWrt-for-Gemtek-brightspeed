@@ -22,6 +22,7 @@ p() { printf '%s%s' "$SYSROOT" "$1"; }
 fail() { printf 'dicttech-ap: %s\n' "$1" >&2; exit 1; }
 plain() { test -f "$1" && test ! -L "$1"; }
 sha() { sha256sum "$1" | cut -d' ' -f1; }
+security() { ls -nd "$1" | awk '{print $1 ":" $3}'; }
 now() { cut -d. -f1 "$UPTIME"; }
 boot() { cat "$BOOT"; }
 record() { printf '%s\n' "$2" > "$STATE/$1.new.$$"; mv "$STATE/$1.new.$$" "$STATE/$1"; }
@@ -94,9 +95,25 @@ active() { secure_dir "$STATE" && plain "$STATE/manifest.json" && plain "$STATE/
 no_pending() { test -z "$("$UCI" -q changes)"; }
 no_flash() { for x in /tmp/sysupgrade /tmp/sysupgrade.tgz /tmp/sysupgrade-trigger; do test ! -e "$(p "$x")" || return 1; done; }
 allowed() {
- case "$1" in
- etc/config/network|etc/config/wireless|etc/config/firewall|etc/config/dhcp|etc/config/system|etc/config/dropbear|etc/config/uhttpd|etc/config/fan|etc/config/cpufreq|etc/config/airoha_npu|etc/config/xr_roaming|etc/sysctl.d/13-nf-bridge.conf|etc/xr-guest-vlan192.nft|etc/dicttech-ap/root-password-hash|etc/dicttech-ap/device.json|etc/dicttech-ap/managed-files.json|etc/dicttech-ap/accepted.json|etc/dropbear/authorized_keys|etc/dicttech-ap-bootstrap-key/state) return 0;; *) return 1;; esac
+ local rel=$1 rest next
+ test "${#rel}" -le 4096 || return 1
+ case "$rel" in ''|/*|*/|*//*|*[!A-Za-z0-9_./+-]*) return 1;; esac
+ rest=$rel
+ while test -n "$rest"; do
+  next=${rest%%/*}; test "${#next}" -le 255 || return 1; case "$next" in .|..) return 1;; esac
+  case "$rest" in */*) rest=${rest#*/};; *) rest=;; esac
+ done
+ case "$rel" in
+  etc/shadow|etc/passwd|etc/group|etc/resolv.conf|etc/ssh/*|etc/dropbear/dropbear_*|etc/rc.d/*|etc/openwrt-deploy/*) return 1;;
+  etc/dicttech-ap/device.json|etc/dicttech-ap/root-password-hash|etc/dicttech-ap/managed-files.json|etc/dicttech-ap/accepted.json|etc/dropbear/authorized_keys|etc/dicttech-ap-bootstrap-key/state) return 0;;
+  etc/dicttech-ap/*|etc/dicttech-ap-bootstrap-key/*) return 1;;
+  etc/init.d/openwrt-managed-*|usr/libexec/openwrt-managed/*) return 0;;
+  etc/init.d/*) return 1;;
+  etc/*) return 0;;
+  *) return 1;;
+ esac
 }
+
 retire_initialization_key() {
  if test -x "$KEYLIFE" && "$JQ" -e '.approved_target.initialize==true' "$STATE/manifest.json" >/dev/null; then
   "$KEYLIFE" retire || fail initialization_key_retirement_failed
@@ -116,25 +133,25 @@ path_safe() {
  done
 }
 check_contract() {
- local defaults
- defaults=$(p /usr/share/dicttech-ap/defaults.json)
- plain "$defaults" || fail missing_firmware_profile
- "$JQ" -e '(.profile == "dicttech-ap-v2") and (.schema_version == 2)' "$defaults" >/dev/null || fail incompatible_firmware_profile
- printf '{"profile":"dicttech-ap-v2","schema_version":2,"defaults_sha256":"%s","boot_id":"%s"}\n' "$(sha "$defaults")" "$(boot)"
+ local contract
+ contract=$(p /usr/share/dicttech-ap/contract.json)
+ plain "$contract" || fail missing_firmware_profile
+ "$JQ" -e '(.profile == "openwrt-config-v3") and (.schema_version == 3)' "$contract" >/dev/null || fail incompatible_firmware_profile
+ printf '{"profile":"openwrt-config-v3","schema_version":3,"contract_sha256":"%s","boot_id":"%s"}\n' "$(sha "$contract")" "$(boot)"
 }
 validate_manifest() {
  "$JQ" -e '
  def hex: type=="string" and (explode|all(.[]; (.>=48 and .<=57) or (.>=97 and .<=102)));
- type=="object" and .schema_version==2 and .profile=="dicttech-ap-v2" and
+ type=="object" and .schema_version==3 and .profile=="openwrt-config-v3" and
  (.device_id|type=="string" and length>=1 and length<=64) and
  (.token|hex and length==32) and (.boot_id|type=="string" and length==36) and
- (.defaults_sha256|hex and length==64) and
+ (.contract_sha256|hex and length==64) and
  (.ttl_seconds|type=="number" and floor==. and .>=120 and .<=3600) and
  (.baseline|type=="object" and (.files|type=="object") and (.modes|type=="object") and (.shadow_sha256|hex and length==64) and (.resolver_state|type=="object")) and
  (.changed_paths|type=="array" and all(.[];type=="string")) and
- (.files|type=="array" and length>=1 and length<=32 and
+ (.files|type=="array" and length>=1 and length<=128 and
    all(.[]; type=="object" and (.path|type=="string") and
-     .mode=="600" and (.sha256|hex and length==64) and
+     (.mode as $mode|["600","644","700","755"]|index($mode))!=null and (.sha256|hex and length==64) and
      (.size|type=="number" and floor==. and .>=0 and .<=131072) and
      (.payload|type=="string")) and
    ([.[].path]|unique|length)==length and ([.[].payload]|unique|length)==length)
@@ -148,16 +165,16 @@ load() {
  case "$DEADLINE" in ''|*[!0-9]*) fail invalid_lease;; esac
 }
 verify_candidate() {
- local rel digest bytes index
- while IFS=' ' read -r rel digest bytes index; do
+ local rel digest bytes index mode
+ while IFS=' ' read -r rel digest bytes index mode; do
   allowed "$rel" && path_safe "$rel" && plain "$STATE/candidate/$index" || return 1
   test "$(sha "$STATE/candidate/$index")" = "$digest" && test "$(wc -c < "$STATE/candidate/$index" | tr -d ' ')" = "$bytes" || return 1
  done < "$STATE/files"
 }
 current_matches() {
- local rel digest bytes index
- while IFS=' ' read -r rel digest bytes index; do
-  plain "$(p /$rel)" && file_private "$(p /$rel)" && test "$(sha "$(p /$rel)")" = "$digest" || return 1
+ local rel digest bytes index mode
+ while IFS=' ' read -r rel digest bytes index mode; do
+  plain "$(p /$rel)" && file_mode "$(p /$rel)" "$mode" && test "$(sha "$(p /$rel)")" = "$digest" || return 1
  done < "$STATE/files"
  resolver_correct || return 1
  if test -f "$STATE/root-hash-required"; then
@@ -196,23 +213,23 @@ sync_root_password() {
  chmod 600 "$shadow.dicttech-new.$$"; mv "$shadow.dicttech-new.$$" "$shadow"
 }
 restore_locked() {
- local reason=$1 rel state digest index rest
+ local reason=$1 rel state digest index security rest
  stop_reloader || fail reload_worker_would_not_stop
  if test ! -f "$STATE/applying" && test ! -f "$STATE/applied"; then
   record rolled-back "${reason}_before_apply"
   sync; return 0
  fi
- while IFS=' ' read -r rel state digest index; do
+ while IFS=' ' read -r rel state digest index security; do
   test "$rel" = etc/shadow || path_safe "$rel" || fail unsafe_restore_path
   if test "$state" = present; then
-   plain "$STATE/backup/$index" && test "$(sha "$STATE/backup/$index")" = "$digest" || fail backup_corrupt
+   plain "$STATE/backup/$index" && test "$(sha "$STATE/backup/$index")" = "$digest" && test "$(security "$STATE/backup/$index")" = "$security" || fail backup_corrupt
   fi
  done < "$STATE/before"
  if test "$("$JQ" -r .type "$STATE/resolver.before")" = file; then
-  plain "$STATE/resolver.data" && test "$(sha "$STATE/resolver.data")" = "$("$JQ" -r .sha256 "$STATE/resolver.before")" || fail resolver_backup_corrupt
+  plain "$STATE/resolver.data" && test "$(sha "$STATE/resolver.data")" = "$("$JQ" -r .sha256 "$STATE/resolver.before")" && test "$(security "$STATE/resolver.data")" = "$("$JQ" -r .security "$STATE/resolver.before")" || fail resolver_backup_corrupt
  fi
  # All backups are validated before the first mutation.
- while IFS=' ' read -r rel state digest index; do
+ while IFS=' ' read -r rel state digest index security; do
   if test "$state" = present; then
    dest=$(p /$rel); mkdir -p "${dest%/*}"
    test ! -L "$dest" || fail unsafe_restore_path
@@ -242,23 +259,34 @@ on_reload_term() {
  exit 0
 }
 reload_services() {
- local svc
- # Fixed names only; JSON never supplies shell commands.
+ local svc action rows specification trigger path matched
  if ! test -f "$STATE/rolled-back"; then
   if test -x "$BOOTSTRAP"; then reload_step 15 "$BOOTSTRAP" finalize || { record reload-error profile_finalize_failed; return 1; }; fi
   reload_step 60 "$SERVICES" apply || { record reload-error service_policy_failed; return 1; }
  else
   reload_step 15 "$SERVICES" restore "$STATE/services.before" links || { record rollback-incomplete service_links_failed; return 1; }
  fi
- for svc in system network sysntpd firewall uhttpd dropbear xr_roaming; do
-  if test -x "$(p /etc/init.d/$svc)"; then
-   reload_step 20 "$(p /etc/init.d/$svc)" reload || { record reload-error "$svc"; return 1; }
-  fi
- done
- if test -x "$(p /etc/init.d/sysctl)"; then
-  reload_step 20 "$(p /etc/init.d/sysctl)" restart || { record reload-error sysctl; return 1; }
+ # Service names, actions and reload triggers are producer-owned data. They
+ # are validated before interpolation and can never provide a shell command.
+ if plain "$(p /etc/dicttech-ap/device.json)"; then
+  rows=$("$JQ" -r '.services|to_entries|sort_by(.key)[]|select(.value.enable)|[.key,(.value.action // "reload")]|@tsv' "$(p /etc/dicttech-ap/device.json)") || { record reload-error invalid_service_policy; return 1; }
+  while IFS="$(printf '\t')" read -r svc action; do
+   test -n "$svc" || continue
+   case "$svc" in *[!A-Za-z0-9_.+-]*|.*) record reload-error invalid_service_name; return 1;; esac
+   case "$action" in reload|restart) ;; *) record reload-error invalid_service_action; return 1;; esac
+   matched=false
+   specification=$("$JQ" -r --arg name "$svc" '.services[$name].reloadOn|((.uci // [])[]|"etc/config/"+.),((.files // [])[]|ltrimstr("/"))' "$(p /etc/dicttech-ap/device.json)") || { record reload-error invalid_service_triggers; return 1; }
+   for trigger in $specification; do
+    while IFS=' ' read -r path rest; do test "$path" != "$trigger" || matched=true; done < "$STATE/files"
+   done
+   if test "$matched" = true && test -x "$(p /etc/init.d/$svc)"; then
+    reload_step 20 "$(p /etc/init.d/$svc)" "$action" || { record reload-error "$svc"; return 1; }
+   fi
+  done <<SERVICE_ROWS
+$rows
+SERVICE_ROWS
  fi
- if test -x "$(p /sbin/wifi)"; then
+ if grep -q '^etc/config/wireless ' "$STATE/files" && test -x "$(p /sbin/wifi)"; then
   reload_step 30 "$(p /sbin/wifi)" reload || { record reload-error wireless; return 1; }
  fi
  if test -f "$STATE/rolled-back"; then
@@ -267,6 +295,7 @@ reload_services() {
  record reload-complete "$(boot) $TOKEN"
  if test -f "$STATE/rolled-back"; then rm -f "$STATE/services-restore-pending" "$STATE/rollback-incomplete"; fi
 }
+
 finish_rollback() {
  local attempts=0
  TOKEN=$("$JQ" -r .token "$STATE/manifest.json")
@@ -295,12 +324,24 @@ status() {
   '{state:$state,reload_complete:$reload_complete,deadline:$deadline,device_id:$m[0].device_id,token:$m[0].token,boot_id:$m[0].boot_id,now:($now|tonumber),changed_paths:$m[0].changed_paths}'
 }
 target_identity() {
- local device_id= board= bridge= isolated=false dhcp=false ready=false ssh_port= proof= mode= section
+ local device_id= board= bridge= isolated=false dhcp=false ready=false ssh_port= proof= mode= section interface= expected= entry=
  if plain "$(p /etc/dicttech-ap/device.json)"; then
-  device_id=$("$JQ" -r 'if .profile=="dicttech-ap-v2" and .schema_version==2 and (.device_id|type)=="string" then .device_id else "" end' "$(p /etc/dicttech-ap/device.json)" 2>/dev/null || true)
+  device_id=$("$JQ" -r 'if .profile=="openwrt-config-v3" and .schema_version==3 and (.device_id|type)=="string" then .device_id else "" end' "$(p /etc/dicttech-ap/device.json)" 2>/dev/null || true)
  fi
  test ! -f "$(p /tmp/sysinfo/board_name)" || board=$(cat "$(p /tmp/sysinfo/board_name)")
- if test -r "$(p /sys/class/net/br-lan/address)"; then bridge=$("$TIMEOUT" 3 cat "$(p /sys/class/net/br-lan/address)" 2>/dev/null || true); fi
+ if test -n "$device_id"; then
+  interface=$("$JQ" -r '.platform.bridge // ""' "$(p /etc/dicttech-ap/device.json)") || return 1
+  expected=$("$JQ" -r '.device.identity.bridge // ""' "$(p /etc/dicttech-ap/device.json)") || return 1
+  if test -n "$interface"; then
+   case "$interface" in *[!A-Za-z0-9_.:-]*) return 1;; esac
+   if test -r "$(p /sys/class/net/$interface/address)"; then bridge=$("$TIMEOUT" 3 cat "$(p /sys/class/net/$interface/address)" 2>/dev/null || true); fi
+  elif test -n "$expected"; then
+   for entry in "$(p /sys/class/net)"/*/address; do
+    test -r "$entry" || continue
+    if test "$(cat "$entry")" = "$expected"; then bridge=$expected; break; fi
+   done
+  fi
+ fi
  ssh_port=$("$UCI" -q get dropbear.main.Port 2>/dev/null || true)
  if test -z "$ssh_port"; then
   for section in $("$UCI" -q show dropbear 2>/dev/null | sed -n 's/^dropbear\.\([^.=]*\)=dropbear$/\1/p'); do
@@ -332,7 +373,6 @@ target_identity() {
 validate_target_approval() {
  local current expected proposed id bridge allow_init
  current=$(target_identity)
- "$JQ" -e --arg board "$(printf '%s' "$current" | "$JQ" -r .board_name)" '.platform.board_names|index($board)!=null' "$(p /usr/share/dicttech-ap/defaults.json)" >/dev/null || fail unsupported_target_board
  expected=$("$JQ" -c .baseline.identity "$STATE/manifest.json")
  printf '%s' "$current" | "$JQ" -e --argjson expected "$expected" '.==$expected' >/dev/null || fail target_identity_changed
  proposed=$("$JQ" -c .approved_target "$STATE/manifest.json")
@@ -354,18 +394,33 @@ resolver_state() {
   target=$(readlink "$dest")
   "$JQ" -cn --arg target "$target" '{type:"symlink",target:$target}'
  elif plain "$dest"; then
-  "$JQ" -cn --arg digest "$(sha "$dest")" '{type:"file",sha256:$digest}'
+  "$JQ" -cn --arg digest "$(sha "$dest")" --arg security "$(security "$dest")" '{type:"file",sha256:$digest,security:$security}'
  elif test ! -e "$dest"; then printf '{"type":"absent"}\n'
  else fail unsafe_resolver_type; fi
 }
-resolver_correct() { test -L "$(p /etc/resolv.conf)" && test "$(readlink "$(p /etc/resolv.conf)")" = /tmp/resolv.conf.d/resolv.conf.auto; }
+resolver_target() {
+ local marker
+ marker=$(p /etc/dicttech-ap/device.json)
+ if plain "$marker"; then "$JQ" -er 'if .resolver==null then "" else .resolver.target end|select(type=="string")' "$marker"
+ else printf '\n'; fi
+}
+resolver_correct() {
+ local target actual
+ target=$(resolver_target) || return 1
+ if test -z "$target"; then
+  if plain "$STATE/manifest.json" && ! terminal; then
+   actual=$(resolver_state) || return 1
+   printf '%s' "$actual" | "$JQ" -e --slurpfile manifest "$STATE/manifest.json" '.==$manifest[0].baseline.resolver_state' >/dev/null
+  else return 0; fi
+ else test -L "$(p /etc/resolv.conf)" && test "$(readlink "$(p /etc/resolv.conf)")" = "$target"; fi
+}
 resolver_backup() {
  local incoming=$1 state target
  state=$(resolver_state)
  case "$(printf '%s' "$state" | "$JQ" -r .type)" in
  symlink)
   target=$(printf '%s' "$state" | "$JQ" -r .target)
-  case "$target" in /tmp/resolv.conf|/tmp/resolv.conf.d/resolv.conf.auto) :;; *) fail unsupported_resolver_symlink;; esac;;
+  case "$target" in ''|*[!A-Za-z0-9_./+-]*) fail unsupported_resolver_symlink;; esac;;
  file) cp -p "$(p /etc/resolv.conf)" "$incoming/resolver.data";;
  absent) :;; *) fail unsafe_resolver_type;; esac
  printf '%s\n' "$state" > "$incoming/resolver.before"
@@ -376,36 +431,58 @@ resolver_restore() {
  test ! -d "$dest" || fail unsafe_resolver_type
  case "$kind" in
  file)
-  test "$(sha "$STATE/resolver.data")" = "$("$JQ" -r .sha256 "$STATE/resolver.before")" || fail resolver_backup_corrupt
+  test "$(sha "$STATE/resolver.data")" = "$("$JQ" -r .sha256 "$STATE/resolver.before")" && test "$(security "$STATE/resolver.data")" = "$("$JQ" -r .security "$STATE/resolver.before")" || fail resolver_backup_corrupt
   cp -p "$STATE/resolver.data" "$dest.dicttech-restore.$$"; mv -f "$dest.dicttech-restore.$$" "$dest";;
  symlink)
   target=$("$JQ" -r .target "$STATE/resolver.before")
-  case "$target" in /tmp/resolv.conf|/tmp/resolv.conf.d/resolv.conf.auto) :;; *) fail invalid_resolver_backup;; esac
-  ln -s "$target" "$dest.dicttech-restore.$$"; mv -f "$dest.dicttech-restore.$$" "$dest";;
+  case "$target" in ''|*[!A-Za-z0-9_./+-]*) fail invalid_resolver_backup;; esac
+  ln -s -- "$target" "$dest.dicttech-restore.$$"; mv -f "$dest.dicttech-restore.$$" "$dest";;
  absent) rm -f "$dest";; *) fail invalid_resolver_backup;; esac
 }
 resolver_install() {
- local dest
+ local dest target
+ target=$(resolver_target) || fail invalid_resolver_policy
+ test -n "$target" || return 0
+ case "$target" in /*) ;; *) fail invalid_resolver_policy;; esac
+ case "$target" in *[!A-Za-z0-9_./+-]*) fail invalid_resolver_policy;; esac
  resolver_correct && return 0
  dest=$(p /etc/resolv.conf)
  test ! -d "$dest" || fail unsafe_resolver_type
- ln -s /tmp/resolv.conf.d/resolv.conf.auto "$dest.dicttech-new.$$"
+ ln -s -- "$target" "$dest.dicttech-new.$$"
  mv -f "$dest.dicttech-new.$$" "$dest"
 }
-file_private() { test "$(ls -nd "$1" | awk '{print $1 ":" $3}')" = '-rw-------:0'; }
+
+file_mode() {
+ local expected
+ case "$2" in 600) expected=-rw-------:0;; 644) expected=-rw-r--r--:0;; 700) expected=-rwx------:0;; 755) expected=-rwxr-xr-x:0;; *) return 1;; esac
+ test "$(ls -nd "$1" | awk '{print $1 ":" $3}')" = "$expected"
+}
+file_private() { file_mode "$1" 600; }
 inventory() {
- local rel dest rows
- rows=$(mktemp)
- for rel in etc/config/network etc/config/wireless etc/config/firewall etc/config/dhcp etc/config/system etc/config/dropbear etc/config/uhttpd etc/config/fan etc/config/cpufreq etc/config/airoha_npu etc/config/xr_roaming etc/sysctl.d/13-nf-bridge.conf etc/xr-guest-vlan192.nft etc/dicttech-ap/root-password-hash etc/dicttech-ap/device.json etc/dicttech-ap/managed-files.json etc/dicttech-ap/accepted.json etc/dropbear/authorized_keys etc/dicttech-ap-bootstrap-key/state; do
+ local rel dest rows paths extra=${1:-} ledger
+ rows=$(mktemp); paths=$(mktemp)
+ # Runtime resources are described by the last accepted producer ledger.
+ ledger=$(p /etc/dicttech-ap/managed-files.json)
+ if plain "$ledger"; then
+  "$JQ" -er '.files|select(type=="array")|.[].path' "$ledger" > "$paths" || { rm -f "$rows" "$paths"; return 1; }
+ fi
+ printf '%s\n' etc/dicttech-ap/root-password-hash etc/dicttech-ap/device.json etc/dicttech-ap/managed-files.json etc/dicttech-ap/accepted.json etc/dropbear/authorized_keys etc/dicttech-ap-bootstrap-key/state >> "$paths"
+ if test -n "$extra"; then
+  "$JQ" -r '(.paths // [] )[],(.baseline.files // {}|keys[]),(.files // []|.[]|.path)' "$extra" >> "$paths" || { rm -f "$rows" "$paths"; return 1; }
+ fi
+ sort -u "$paths" > "$paths.sorted"
+ while IFS= read -r rel; do
+  allowed "$rel" && path_safe "$rel" || { rm -f "$rows" "$paths" "$paths.sorted"; return 1; }
   dest=$(p /$rel)
   if plain "$dest"; then printf '%s %s %s\n' "$rel" "$(sha "$dest")" "$(ls -nd "$dest" | awk '{print $1 " " $3}')" >> "$rows"; fi
- done
+ done < "$paths.sorted"
  "$JQ" -Rn 'reduce (inputs|split(" ")) as $r ({files:{},modes:{}};.files[$r[0]]=$r[1]|.modes[$r[0]]=[$r[2],$r[3]])' < "$rows"
- rm -f "$rows"
+ rm -f "$rows" "$paths" "$paths.sorted"
 }
+
 baseline_matches() {
  local actual expected
- actual=$(inventory); expected=$("$JQ" -c .baseline "$STATE/manifest.json")
+ actual=$(inventory "$STATE/manifest.json"); expected=$("$JQ" -c .baseline "$STATE/manifest.json")
  printf '%s' "$actual" | "$JQ" -e --argjson expected "$expected" '.files==$expected.files and .modes==$expected.modes' >/dev/null || return 1
  actual=$(target_identity)
  printf '%s' "$actual" | "$JQ" -e --argjson expected "$expected" '.==$expected.identity' >/dev/null || return 1
@@ -419,7 +496,13 @@ test "$(id -u)" = 0 || fail root_required
 command=${1:-}
 case "$command" in
  check)
-  contract=$(check_contract); hashes=$(inventory); identity=$(target_identity); resolver=$(resolver_state); resolver_ok=false; resolver_correct && resolver_ok=true; password_synced=false
+  request=
+  if test "${2:-}" = request; then
+   request=$(mktemp); head -c 65537 > "$request"
+   test "$(wc -c < "$request" | tr -d ' ')" -le 65536 || fail inventory_request_too_large
+   "$JQ" -e 'type=="object" and (keys==["paths"]) and (.paths|type=="array" and length<=128 and all(.[];type=="string") and length==(unique|length))' "$request" >/dev/null || fail invalid_inventory_request
+  elif test -n "${2:-}"; then fail invalid_inventory_request; fi
+  contract=$(check_contract); hashes=$(inventory "$request"); test -z "$request" || rm -f "$request"; identity=$(target_identity); resolver=$(resolver_state); resolver_ok=false; resolver_correct && resolver_ok=true; password_synced=false
   if plain "$(p /etc/dicttech-ap/root-password-hash)" && plain "$(p /etc/shadow)"; then
    test "$(awk -F: '$1=="root" {print $2}' "$(p /etc/shadow)")" != "$(cat "$(p /etc/dicttech-ap/root-password-hash)")" || password_synced=true
   fi
@@ -448,14 +531,14 @@ case "$command" in
   test "$(sort "$incoming/members" | uniq -d | wc -l | tr -d ' ')" = 0 || fail duplicate_archive_members
   tar -xOf "$incoming/bundle.tar" manifest.json > "$incoming/manifest.json"
   validate_manifest "$incoming/manifest.json"
-  "$JQ" -r '.files|to_entries[]|[.value.path,.value.sha256,(.value.size|tostring),(.key|tostring)]|join(" ")' "$incoming/manifest.json" > "$incoming/files"
+  "$JQ" -r '.files|to_entries[]|[.value.path,.value.sha256,(.value.size|tostring),(.key|tostring),.value.mode]|join(" ")' "$incoming/manifest.json" > "$incoming/files"
   printf 'manifest.json\n' > "$incoming/expected"
   "$JQ" -r '.files|to_entries[]|"payload/"+(.key|tostring)' "$incoming/manifest.json" >> "$incoming/expected"
   test "$("$JQ" -r '.files|to_entries|all(.[];.value.payload==("payload/"+(.key|tostring)))' "$incoming/manifest.json")" = true || fail invalid_payload_name
   sort "$incoming/members" > "$incoming/members.sorted"; sort "$incoming/expected" > "$incoming/expected.sorted"
   cmp -s "$incoming/members.sorted" "$incoming/expected.sorted" || fail unexpected_archive_member
   test "$("$JQ" -r .boot_id "$incoming/manifest.json")" = "$(boot)" || fail boot_changed
-  test "$("$JQ" -r .defaults_sha256 "$incoming/manifest.json")" = "$(sha "$(p /usr/share/dicttech-ap/defaults.json)")" || fail firmware_defaults_changed
+  test "$("$JQ" -r .contract_sha256 "$incoming/manifest.json")" = "$(sha "$(p /usr/share/dicttech-ap/contract.json)")" || fail firmware_contract_changed
   mkdir "$incoming/candidate" "$incoming/backup"; : > "$incoming/before"
   # The check-to-stage baseline is supplied by the authenticated controller.
   saved_state=$STATE; STATE=$incoming
@@ -463,17 +546,18 @@ case "$command" in
   validate_target_approval
   STATE=$saved_state
   resolver_backup "$incoming"
-  while IFS=' ' read -r rel digest bytes index; do
+  while IFS=' ' read -r rel digest bytes index mode; do
    path_safe "$rel" || fail unsafe_managed_path
    tar -xOf "$incoming/bundle.tar" "payload/$index" > "$incoming/candidate/$index"
    test "$(sha "$incoming/candidate/$index")" = "$digest" && test "$(wc -c < "$incoming/candidate/$index" | tr -d ' ')" = "$bytes" || fail payload_digest_or_size_mismatch
    dest=$(p /$rel)
    if test -e "$dest"; then
     plain "$dest" || fail nonregular_managed_path
+    test "$(ls -nd "$dest" | awk '{print $3}')" = 0 || fail unsafe_backup_owner
     oldsha=$(sha "$dest"); cp -p "$dest" "$incoming/backup/$index"
     test "$(sha "$incoming/backup/$index")" = "$oldsha" || fail configuration_changed_during_backup
-    printf '%s present %s %s\n' "$rel" "$oldsha" "$index" >> "$incoming/before"
-   else printf '%s absent - %s\n' "$rel" "$index" >> "$incoming/before"; fi
+    printf '%s present %s %s %s\n' "$rel" "$oldsha" "$index" "$(security "$dest")" >> "$incoming/before"
+   else printf '%s absent - %s -\n' "$rel" "$index" >> "$incoming/before"; fi
    if test "$rel" = etc/dicttech-ap/root-password-hash; then validate_root_hash "$incoming/candidate/$index"; : > "$incoming/root-hash-required"; fi
   done < "$incoming/files"
   # Even omitted authorization is touched when initialization confirms. Keep
@@ -485,26 +569,27 @@ case "$command" in
     index=bootstrap-key-${rel##*/}; dest=$(p /$rel)
     if test -e "$dest" || test -L "$dest"; then
      plain "$dest" && file_private "$dest" || fail unsafe_initialization_key_state
-     oldsha=$(sha "$dest"); cp -p "$dest" "$incoming/backup/$index"
+     test "$(ls -nd "$dest" | awk '{print $3}')" = 0 || fail unsafe_backup_owner
+    oldsha=$(sha "$dest"); cp -p "$dest" "$incoming/backup/$index"
      test "$(sha "$incoming/backup/$index")" = "$oldsha" || fail initialization_key_changed_during_backup
-     printf '%s present %s %s\n' "$rel" "$oldsha" "$index" >> "$incoming/before"
-    else printf '%s absent - %s\n' "$rel" "$index" >> "$incoming/before"; fi
+     printf '%s present %s %s %s\n' "$rel" "$oldsha" "$index" "$(security "$dest")" >> "$incoming/before"
+    else printf '%s absent - %s -\n' "$rel" "$index" >> "$incoming/before"; fi
    done
   fi
   if test -f "$incoming/root-hash-required"; then
    plain "$(p /etc/shadow)" || fail unsafe_shadow
    oldsha=$(sha "$(p /etc/shadow)"); cp -p "$(p /etc/shadow)" "$incoming/backup/shadow"
    test "$(sha "$incoming/backup/shadow")" = "$oldsha" || fail shadow_changed_during_backup
-   printf 'etc/shadow present %s shadow\n' "$oldsha" >> "$incoming/before"
+   printf 'etc/shadow present %s shadow %s\n' "$oldsha" "$(security "$(p /etc/shadow)")" >> "$incoming/before"
   fi
   if plain "$(p /tmp/dicttech-ap-bootstrap-isolated)"; then : > "$incoming/was-isolated"; fi
   accepted=$(p /etc/dicttech-ap/accepted.json)
   if plain "$accepted"; then
    oldsha=$(sha "$accepted"); cp -p "$accepted" "$incoming/backup/accepted"
    test "$(sha "$incoming/backup/accepted")" = "$oldsha" || fail accepted_stamp_changed_during_backup
-   printf 'etc/dicttech-ap/accepted.json present %s accepted\n' "$oldsha" >> "$incoming/before"
+   printf 'etc/dicttech-ap/accepted.json present %s accepted %s\n' "$oldsha" "$(security "$accepted")" >> "$incoming/before"
   elif test ! -e "$accepted" && test ! -L "$accepted"; then
-   printf 'etc/dicttech-ap/accepted.json absent - accepted\n' >> "$incoming/before"
+   printf 'etc/dicttech-ap/accepted.json absent - accepted -\n' >> "$incoming/before"
   else fail unsafe_accepted_stamp; fi
   "$TIMEOUT" -s TERM -k 2 15 "$SERVICES" snapshot "$incoming/services.before" || fail service_snapshot_failed
   saved_state=$STATE; STATE=$incoming
@@ -527,7 +612,7 @@ case "$command" in
   no_pending && no_flash && verify_candidate || fail preapply_validation_failed
   baseline_matches || fail configuration_changed_after_stage
   watcher_alive || fail rollback_guard_not_ready
-  while IFS=' ' read -r rel state digest index; do
+  while IFS=' ' read -r rel state digest index security; do
    if test "$state" = present; then plain "$(p /$rel)" && test "$(sha "$(p /$rel)")" = "$digest" || fail configuration_changed_after_stage
    else test ! -e "$(p /$rel)" || fail configuration_changed_after_stage; fi
   done < "$STATE/before"
@@ -539,8 +624,8 @@ case "$command" in
    record confirmed noop; sync; unlock; status; exit 0
   fi
   record applying "$(boot)"
-  while IFS=' ' read -r rel digest bytes index; do
-   atomic_install "$STATE/candidate/$index" "$(p /$rel)" 600
+  while IFS=' ' read -r rel digest bytes index mode; do
+   atomic_install "$STATE/candidate/$index" "$(p /$rel)" "$mode"
   done < "$STATE/files"
   test ! -f "$STATE/root-hash-required" || sync_root_password
   resolver_install

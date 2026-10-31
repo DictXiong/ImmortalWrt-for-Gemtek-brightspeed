@@ -104,7 +104,7 @@ class RootfsChecks(unittest.TestCase):
                 dest = source / original; dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(check.REPO / original, dest)
             relative = 'lib/wifi/mac80211.uc'; source_path = source / check.GENERATOR_FILES[relative]
-            broken = source_path.read_text().replace('readfile("/usr/share/dicttech-ap/defaults.json") ? "1" : "0"', '"0"')
+            broken = source_path.read_text().replace('readfile("/usr/share/dicttech-ap/contract.json") ? "1" : "0"', '"0"')
             source_path.write_text(broken); (self.root / relative).write_text(broken)
             with self.assertRaisesRegex(check.RootfsError, 'no longer disables'):
                 check.check_rootfs(self.root, source)

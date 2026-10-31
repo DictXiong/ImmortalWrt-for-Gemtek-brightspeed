@@ -1,9 +1,0 @@
-{
-  "devices": {
-    "ap_example": {
-      "hostname": "ap-example",
-      "maintenance_ipv4": "192.168.250.3",
-      "mac_base": "02:aa:bb:10:00:00"
-    }
-  }
-}

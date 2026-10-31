@@ -31,6 +31,7 @@ class SetupFixture:
         self.write('etc/config/network', b'# original fixture network\n')
         if not (self.root / 'etc/shadow').exists():
             self.write('etc/shadow', b'root:!:20000:0:99999:7:::\n')
+        self.shell_tool('sysctl', 'exit 0\n')
         self.runtime = self.base / 'setup-runtime.json'
         self.runtime.write_text('{}')
         self.tool('uci', '''import pathlib,shlex,sys

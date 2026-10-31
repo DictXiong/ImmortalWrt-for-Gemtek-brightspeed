@@ -108,22 +108,30 @@ class Transaction(unittest.TestCase):
         self.script.write_text(text); self.script.chmod(0o700)
         self.put('tmp/sysinfo/board_name', b'gemtek,xr1710g\n')
         self.put('sys/class/net/br-lan/address', b'02:00:00:00:01:00\n')
-        self.put('usr/share/dicttech-ap/defaults.json', b'{"profile":"dicttech-ap-v2","schema_version":2,"platform":{"board_names":["gemtek,xr1710g"]}}\n')
+        self.put('usr/share/dicttech-ap/contract.json', b'{"profile":"openwrt-config-v3","schema_version":3,"platform":{"board_names":["gemtek,xr1710g"]}}\n')
         self.put('etc/config/network', b'original network\n', 0o644)
         self.put('etc/shadow', b'root:oldhash:20000:0:99999:7:::\nservice:locked:20000:0:99999:7:::\n')
         self.put('etc/dropbear/dropbear_ed25519_host_key', b'fixture-host-key\n')
+        self.marker = {'profile':'openwrt-config-v3','schema_version':3,'device_id':'fixture_ap',
+                       'resolver':{'target':'/tmp/resolv.conf.d/resolv.conf.auto'}, 'platform':{'bridge':'br-lan'}, 'device':{'identity':{'bridge':'02:00:00:00:01:00'}}, 'services':{}}
+        self.put('etc/dicttech-ap/device.json', json.dumps(self.marker).encode()+b'\n')
+        self.put('etc/dicttech-ap/managed-files.json', json.dumps({'schema_version':3,'profile':'openwrt-config-v3',
+                 'files':[{'path':name,'mode':'644' if name=='etc/config/network' else '600','sha256':hashlib.sha256((self.root/name).read_bytes()).hexdigest()}
+                          for name in ['etc/config/network','etc/dicttech-ap/device.json']]}).encode()+b'\n')
         self.before = {str(p.relative_to(self.root)): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
         self.files = {
             'etc/config/network': b'candidate network\n',
             'etc/config/wireless': b'candidate wireless with confidential fixture key\n',
             'etc/dicttech-ap/root-password-hash': b'$6$fixture$newhash\n',
-            'etc/dicttech-ap/device.json': b'{"profile":"dicttech-ap-v2","schema_version":2,"device_id":"fixture_ap"}\n',
+            'etc/dicttech-ap/device.json': json.dumps(self.marker).encode()+b'\n',
         }
 
     def put(self, path, value, mode=0o600):
         p = self.root / path; p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(value); p.chmod(mode)
 
     def call(self, command, token=None, data=None, good=True):
+        if command == 'check' and token is None and hasattr(self, 'files'):
+            token='request'; data=json.dumps({'paths':list(self.files)}).encode()
         result = subprocess.run(self.shell + [str(self.script), command] + ([token] if token else []), input=data,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20,
                                 env=self.env, start_new_session=True)
@@ -131,7 +139,7 @@ class Transaction(unittest.TestCase):
         return json.loads(result.stdout) if good and result.stdout else result
 
     def stage(self, files=None, mutate=None):
-        contract = self.call('check')
+        contract = self.call('check', 'request', data=json.dumps({'paths':list(files or self.files)}).encode())
         manifest, payload = deploy.bundle(files or self.files, contract, 'fixture_ap', 120)
         if mutate:
             mutate(manifest)
@@ -259,6 +267,11 @@ class Transaction(unittest.TestCase):
         self.put('etc/config/system', original)
         self.before['etc/config/system'] = original
         self.files['etc/config/system'] = candidate
+        self.marker['services'] = {name:{'enable':True,'running':None,'reloadOn':{'uci':['system'],'files':[]},'action':'reload'} for name in ['system','network','sysntpd']}
+        encoded=json.dumps(self.marker).encode()+b'\n'
+        self.put('etc/dicttech-ap/device.json',encoded)
+        self.before['etc/dicttech-ap/device.json']=encoded
+        self.files['etc/dicttech-ap/device.json']=encoded
         events = self.base / 'reload-events'
         for service in ['system', 'network', 'sysntpd']:
             runtime = self.base / ('effective-' + service)
@@ -272,14 +285,14 @@ class Transaction(unittest.TestCase):
         self.stage(); self.call('apply', self.token)
         wait(lambda: (self.state / 'reload-complete').exists())
         applied = [json.loads(line) for line in events.read_text().splitlines()]
-        self.assertEqual([row['service'] for row in applied], ['system', 'network', 'sysntpd'])
+        self.assertEqual([row['service'] for row in applied], ['network', 'sysntpd', 'system'])
         self.assertTrue(all(row['config'] == candidate.decode() for row in applied))
         self.assertEqual((self.base / 'effective-system').read_bytes(), candidate)
         self.assertEqual((self.base / 'effective-sysntpd').read_bytes(), candidate)
         self.call('rollback', self.token)
         wait(lambda: not (self.state / 'services-restore-pending').exists())
         restored = [json.loads(line) for line in events.read_text().splitlines()][len(applied):]
-        self.assertEqual([row['service'] for row in restored], ['system', 'network', 'sysntpd'])
+        self.assertEqual([row['service'] for row in restored], ['network', 'sysntpd', 'system'])
         self.assertTrue(all(row['config'] == original.decode() for row in restored))
         self.assertEqual((self.base / 'effective-system').read_bytes(), original)
         self.assertEqual((self.base / 'effective-sysntpd').read_bytes(), original)
@@ -362,7 +375,7 @@ class Transaction(unittest.TestCase):
         contract = self.call('check'); manifest, _ = deploy.bundle(self.files, contract, 'fixture_ap', 120)
         manifest['boot_id'] = '22222222-2222-4222-8222-222222222222'
         self.call('stage', data=deploy.tar_bytes(self.files, manifest), good=False)
-        manifest['boot_id'] = contract['boot_id']; manifest['defaults_sha256'] = '0' * 64
+        manifest['boot_id'] = contract['boot_id']; manifest['contract_sha256'] = '0' * 64
         self.call('stage', data=deploy.tar_bytes(self.files, manifest), good=False); self.assertOriginal()
 
     def test_target_rejects_wrong_registered_identity_and_unapproved_initialization(self):
@@ -382,6 +395,7 @@ class Transaction(unittest.TestCase):
         fixture_source = CONTROLLER.parent / 'tests/bootstrap/setup.py'
         spec = importlib.util.spec_from_file_location('bootstrap_setup_fixture', fixture_source)
         module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        for rel in ['etc/dicttech-ap/device.json','etc/dicttech-ap/managed-files.json']:(self.root/rel).unlink(missing_ok=True)
         setup = module.SetupFixture(self.base, self.root)
         setup.write('proc/sys/kernel/random/boot_id', self.boot.read_bytes())
         if mode == 'isolated': setup.shell_tool('hexdump', 'exit 1\n')
@@ -573,9 +587,9 @@ class Transaction(unittest.TestCase):
         import contextlib
         from unittest.mock import patch
         contract = self.call('check')
-        resolved = {'defaults_sha256': contract['defaults_sha256'],
-                    'device': {'identity': {'bridge': '02:00:00:00:99:00'}},
-                    'platform': {'board_names': ['gemtek,xr1710g']}, 'common': {'ssh_port': 12022}}
+        resolved = {'contract_sha256': contract['contract_sha256'],
+                    'device': {'identity': {'bridge': '02:00:00:00:99:00'}, 'ssh_port':12022},
+                    'platform': {'board_names': ['gemtek,xr1710g']}, 'common': {}}
         argv = [str(CONTROLLER), 'plan', '--config', 'unused.json', '--device', 'fixture_ap', '--host', 'ap.example.invalid']
         for mode in ['isolated', 'dhcp']:
             contract['identity'].update(device_id='', bootstrap_isolated=mode == 'isolated', bootstrap_dhcp=mode == 'dhcp')
@@ -594,12 +608,28 @@ class Transaction(unittest.TestCase):
                  patch.object(deploy.sys, 'argv', argv + ['--initialize', '--expect-boot-id', contract['boot_id']]):
                 with self.assertRaisesRegex(RuntimeError, 'target bridge MAC differs'): deploy.main()
 
+    def test_controller_uses_explicit_device_ssh_port_without_common_defaults(self):
+        import contextlib
+        from unittest.mock import patch
+        contract=self.call('check');contract['identity']['ssh_port']='2222'
+        resolved={'contract_sha256':contract['contract_sha256'], 'common':{},
+                  'device':{'identity':{'bridge':contract['identity']['bridge_mac']},'ssh_port':2222,'maintenance_ipv4':'198.51.100.10'},
+                  'platform':{'board_names':['gemtek,xr1710g']}}
+        token='a'*32
+        def remote(args,command,*unused,**kwargs):
+            if command=='check':return contract
+            return {'token':token,'state':{'stage':'staged','apply':'applied'}[command]}
+        argv=[str(CONTROLLER),'apply','--config','unused.json','--device','fixture_ap','--host','ap.example.invalid','--port','2222','--receipt',str(self.base/'receipt')]
+        with patch.object(deploy,'model',return_value=(resolved,self.files)),patch.object(deploy,'remote',side_effect=remote),patch.object(deploy.secrets,'token_hex',return_value=token),patch.object(deploy.sys,'argv',argv),contextlib.redirect_stdout(io.StringIO()):
+            deploy.main()
+        self.assertEqual(json.loads((self.base/'receipt').read_text())['state'],'applied')
+
     def test_controller_refuses_wrong_master_device_before_any_stage(self):
         from unittest.mock import patch
         import contextlib
         contract = self.call('check')
-        resolved = {'defaults_sha256': contract['defaults_sha256'], 'device': {'identity': {'bridge': '02:00:00:00:01:00'}},
-                    'platform': {'board_names': ['gemtek,xr1710g']}, 'common': {'ssh_port': 12022}}
+        resolved = {'contract_sha256': contract['contract_sha256'], 'device': {'identity': {'bridge': '02:00:00:00:01:00'}, 'ssh_port':12022},
+                    'platform': {'board_names': ['gemtek,xr1710g']}, 'common': {}}
         contract['identity']['device_id'] = 'other_fixture_ap'
         argv = [str(CONTROLLER), 'apply', '--config', 'unused.json', '--device', 'fixture_ap', '--host', 'ap.example.invalid', '--receipt', str(self.base / 'receipt')]
         with patch.object(deploy, 'model', return_value=(resolved, self.files)), patch.object(deploy, 'remote', return_value=contract) as remote, patch.object(deploy.sys, 'argv', argv):
@@ -820,9 +850,66 @@ class Transaction(unittest.TestCase):
         self.stage(); self.call('apply', '0' * 32, good=False)
         self.call('rollback', self.token)
         target = self.root / 'etc/config/network'; target.unlink(); target.symlink_to(self.base / 'unowned')
-        contract = self.call('check'); _, payload = deploy.bundle(self.files, contract, 'fixture_ap', 120)
-        self.call('stage', data=payload, good=False)
+        self.call('check', good=False)
         self.assertFalse((self.base / 'unowned').exists())
+
+    def test_backup_permission_tampering_is_rejected_before_any_restore(self):
+        self.stage();self.call('apply',self.token);wait(lambda:(self.state/'reload-complete').exists())
+        before={str(path.relative_to(self.root)):path.read_bytes() for path in self.root.rglob('*') if path.is_file() and str(path.relative_to(self.root)).startswith('etc/')}
+        (self.state/'backup/shadow').chmod(0o777)
+        self.call('rollback',self.token,good=False)
+        self.assertFalse((self.state/'rolled-back').exists())
+        for name,value in before.items():self.assertEqual((self.root/name).read_bytes(),value)
+        self.assertEqual((self.root/'etc/shadow').stat().st_mode & 0o777,0o600)
+
+    def test_resolver_backup_permission_tampering_is_rejected_before_any_restore(self):
+        self.put('etc/resolv.conf',b'nameserver 192.0.2.53\n',0o644)
+        self.stage();self.call('apply',self.token);wait(lambda:(self.state/'reload-complete').exists())
+        current=(self.root/'etc/config/network').read_bytes()
+        (self.state/'resolver.data').chmod(0o777)
+        self.call('rollback',self.token,good=False)
+        self.assertEqual((self.root/'etc/config/network').read_bytes(),current)
+        self.assertTrue((self.root/'etc/resolv.conf').is_symlink())
+        self.assertFalse((self.state/'rolled-back').exists())
+
+    def test_executable_backup_mode_is_bound_to_the_original_metadata(self):
+        self.put('usr/libexec/openwrt-managed/plugin',b'old executable\n',0o755)
+        self.files['usr/libexec/openwrt-managed/plugin']=b'new executable\n'
+        self.stage();self.call('apply',self.token);wait(lambda:(self.state/'reload-complete').exists())
+        row=next(line.split() for line in (self.state/'before').read_text().splitlines() if line.startswith('usr/libexec/openwrt-managed/plugin '))
+        (self.state/'backup'/row[3]).chmod(0o644)
+        current=(self.root/'etc/config/network').read_bytes()
+        self.call('rollback',self.token,good=False)
+        self.assertEqual((self.root/'etc/config/network').read_bytes(),current)
+        self.assertFalse((self.state/'rolled-back').exists())
+
+    def test_explicit_binary_resource_modes_apply_and_restore(self):
+        self.files['usr/libexec/openwrt-managed/plugin'] = b'\0binary\xff\n'
+        ledger={'schema_version':3,'profile':'openwrt-config-v3','files':[{'path':path,'mode':'755' if path.startswith('usr/') else '600','sha256':hashlib.sha256(value).hexdigest()} for path,value in self.files.items()]}
+        self.files['etc/dicttech-ap/managed-files.json']=json.dumps(ledger).encode()+b'\n'
+        manifest=self.stage()
+        self.assertEqual(next(item['mode'] for item in manifest['files'] if item['path'].startswith('usr/')),'755')
+        self.call('apply',self.token);wait(lambda:(self.state/'reload-complete').exists())
+        target=self.root/'usr/libexec/openwrt-managed/plugin'
+        self.assertEqual(target.read_bytes(),b'\0binary\xff\n');self.assertEqual(target.stat().st_mode & 0o777,0o755)
+        self.call('rollback',self.token);wait(lambda:not(self.state/'services-restore-pending').exists())
+        self.assertFalse(target.exists());self.assertOriginal()
+
+    def test_null_resolver_preserves_an_existing_relative_symlink(self):
+        target=self.root/'etc/resolv.conf';target.symlink_to('../run/example-resolver.conf')
+        marker=dict(self.marker,resolver=None)
+        self.files['etc/dicttech-ap/device.json']=json.dumps(marker).encode()+b'\n'
+        self.stage();self.call('apply',self.token);wait(lambda:(self.state/'reload-complete').exists())
+        self.assertEqual(os.readlink(target),'../run/example-resolver.conf')
+        self.assertEqual(self.call('confirm',self.token)['state'],'confirmed')
+        self.assertEqual(os.readlink(target),'../run/example-resolver.conf')
+
+    def test_explicit_nondefault_resolver_target_is_applied(self):
+        marker=dict(self.marker,resolver={'target':'/run/custom/resolv.conf'})
+        self.files['etc/dicttech-ap/device.json']=json.dumps(marker).encode()+b'\n'
+        self.stage();self.call('apply',self.token);wait(lambda:(self.state/'reload-complete').exists())
+        self.assertEqual(os.readlink(self.root/'etc/resolv.conf'),'/run/custom/resolv.conf')
+        self.assertEqual(self.call('confirm',self.token)['state'],'confirmed')
 
     def test_export_is_private_tar_and_never_contains_ssh_host_keys(self):
         payload = deploy.tar_bytes(self.files)

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Read-only AP acceptance. Distinguish configuration checks from client tests."""
+"""Read-only resource verification; runtime checks never imply client acceptance."""
 from __future__ import annotations
 import argparse
 import hashlib
 import importlib.util
+import ipaddress
 import json
 from pathlib import Path
 import re
@@ -13,90 +14,78 @@ import sys
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from ap_config import DEFAULTS, canonical, load_document, render, resolve, ssid_profiles, write_private
+from ap_config import canonical, load_document, render, resolve, ssid_profiles, write_private
 spec = importlib.util.spec_from_file_location('dicttech_ap_deploy', HERE / 'ap-deploy.py')
 deploy = importlib.util.module_from_spec(spec); spec.loader.exec_module(deploy)
-EXTERNAL = ('management_reachability', 'wifi_client_auth', 'ipv4_ipv6_internet', 'guest_client_mutual',
-            'guest_internal_isolation', 'ppe_bound_isolation_and_vlan',
-            'spoof_and_vlan_injection', 'actual_client_roaming',
-            'cold_boot_and_link_recovery', 'cpu_and_throughput')
-BANDS = {'2g': (0, 2407), '5g': (1, 5000), '6g': (2, 5950)}
+EXTERNAL = ('management_reachability', 'ipv4_ipv6_internet', 'cold_boot_and_link_recovery', 'cpu_and_throughput')
+BANDS = {'2g': 2407, '5g': 5000, '6g': 5950}
 
 
 def radio_probes(state):
-    """One real control socket per enabled radio; link IDs are physical radios."""
     probes = {}
     for profile in ssid_profiles(state):
-        for band, link_id in zip(profile['bands'], profile['link_ids']):
-            index = BANDS[band][0]
-            iface = profile['iface'] + '_link' + str(link_id) if profile['mlo'] else profile['iface']
-            probes.setdefault(index, (band, iface))
+        for radio, band, link in zip(profile['radios'], profile['bands'], profile['link_ids']):
+            iface = profile['iface'] + '_link' + str(link) if profile['mlo'] else profile['iface']
+            probes.setdefault(radio, (band, iface))
     return dict(sorted(probes.items()))
 
 
-def frequency(state, band):
-    index, base = BANDS[band]
-    return base + 5 * state['common']['radios']['radio' + str(index)]['channel']
+def frequency(state, band, radio=None):
+    if radio is None:
+        radio = next(name for name, spec in state['uci'].get('wireless', {}).items()
+                     if spec['type'] == 'wifi-device' and spec['options'].get('band') == band)
+    configured = str(state['uci']['wireless'][radio]['options'].get('channel', 'auto'))
+    if not configured.isdecimal():
+        return None
+    channel = int(configured)
+    if band == '2g' and channel == 14:
+        return 2484
+    return BANDS[band] + 5 * channel
 
 
 def read_command(args, words, parse=True):
-    q = subprocess.run(deploy.ssh_base(args) + [shlex.join(words)], capture_output=True, timeout=20)
-    if q.returncode:
+    result = subprocess.run(deploy.ssh_base(args) + [shlex.join(words)], capture_output=True, timeout=20)
+    if result.returncode:
         raise RuntimeError('read-only command unavailable')
-    return json.loads(q.stdout) if parse else q.stdout.decode('utf-8')
+    return json.loads(result.stdout) if parse else result.stdout.decode('utf-8')
 
 
 def collect(args, state):
     data, errors = {}, {}
     queries = {
         'contract': ['check'],
-        **{name: ['ubus', '-t', '5', 'call', 'network.interface.' + interface, 'status']
-           for name, interface in [('lan', 'lan'), ('lan6', 'lan6'), ('maintenance', 'ap_maintenance'), ('guest', 'guest')]},
-        'guest_addresses': ['ip', '-j', 'address', 'show', 'dev', 'br-lan.192'],
-        'vlans': ['bridge', '-j', 'vlan', 'show'],
-        # Filter before returning: network.wireless status includes Wi-Fi keys.
-        'radio_inventory': ['sh', '-c', "ubus -t 5 call network.wireless status | jq 'with_entries(.value |= {up,disabled,interfaces:[(.interfaces // [])[] | {section,ifname}]})'"],
-        'hostapd_objects': ['ubus', 'list', 'hostapd.*'],
-        'bridge_guard': ['nft', '-j', 'list', 'table', 'bridge', 'xr_guest_guard'],
-        'inet_guard': ['nft', '-j', 'list', 'table', 'inet', 'xr_guest_local'],
-        'fw4': ['nft', '-j', 'list', 'table', 'inet', 'fw4'],
-        'sysctls': ['sysctl', '-n', 'net.bridge.bridge-nf-call-iptables', 'net.bridge.bridge-nf-call-ip6tables',
-                    'net.bridge.bridge-nf-filter-vlan-tagged', 'net.bridge.bridge-nf-pass-vlan-input-dev',
-                    'net.bridge.bridge-nf-call-arptables', 'net.bridge.bridge-nf-filter-pppoe-tagged'],
         'service_links': ['ls', '-1', '/etc/rc.d'],
         'boot_hooks': ['sh', '-c', 'for n in S03dicttech-ap-transaction S04dicttech-ap-prepare S13dicttech-ap-finalize; do p=/etc/rc.d/$n; [ -L "$p" ] && [ -x "$p" ] || continue; t=$(readlink "$p"); s=${n#S??}; case "$t" in "../init.d/$s"|"/etc/init.d/$s") printf "%s\\n" "$n";; esac; done'],
-        'luci_features': ['ubus', '-t', '5', 'call', 'luci', 'getFeatures'],
-        # Filter on the AP: daemon argv can contain secrets and is never returned.
         'services': ['sh', '-c', "ubus -t 5 call service list | jq 'map_values({instances:(.instances // {} | map_values({running:.running}))})'"],
-        # Deliberate field allowlist excludes passphrases, PSKs, SAE passwords.
-        'security': ['sh', '-c', "for f in /var/run/hostapd-phy*.conf; do [ -f \"$f\" ] || continue; awk '/^(interface|bss|ssid|ssid2|bssid|bridge|wpa|wpa_key_mgmt|ieee80211w|rrm_neighbor_report|rrm_beacon_report|bss_transition|ap_isolate|ignore_broadcast_ssid|mld_ap|mld_link_id|disable_11be|beacon_prot)=/ { print }' \"$f\"; done"],
     }
-    for profile in ssid_profiles(state):
+    for name, section in state['uci'].get('network', {}).items():
+        if section['type'] == 'interface':
+            queries['interface_' + name] = ['ubus', '-t', '5', 'call', 'network.interface.' + name, 'status']
+    if state['ssids']:
+        queries.update({
+            'radio_inventory': ['sh', '-c', "ubus -t 5 call network.wireless status | jq 'with_entries(.value |= {up,disabled,interfaces:[(.interfaces // [])[] | {section,ifname}]})'"],
+            'hostapd_objects': ['ubus', 'list', 'hostapd.*'],
+            'security': ['sh', '-c', "for f in /var/run/hostapd-*.conf; do [ -f \"$f\" ] || continue; awk '/^(interface|bss|ssid|ssid2|bssid|bridge|wpa|wpa_key_mgmt|ieee80211w|rrm_neighbor_report|rrm_beacon_report|bss_transition|ap_isolate|ignore_broadcast_ssid|mld_ap|mld_link_id|disable_11be|beacon_prot)=/ { print }' \"$f\"; done"],
+        })
+    for profile in state['ssids']:
         key = profile['key']
         queries['hostapd_' + key] = ['ubus', '-t', '5', 'call', 'hostapd.' + profile['iface'], 'get_status']
-        queries['roaming_' + key] = ['/usr/lib/xr-roaming/helper.sh', 'status', key]
-    probes = radio_probes(state)
-    for index, (_, iface) in probes.items():
-        queries['radio_' + str(index)] = ['hostapd_cli', '-p', '/var/run/hostapd', '-i', iface, 'status']
-    text = {'sysctls', 'service_links', 'boot_hooks', 'security', 'hostapd_objects', *('radio_' + str(i) for i in probes)}
+        if profile['roaming']:
+            queries['roaming_' + key] = ['/usr/lib/xr-roaming/helper.sh', 'status', key]
+    for radio, (_, iface) in radio_probes(state).items():
+        queries['radio_' + radio] = ['hostapd_cli', '-p', '/var/run/hostapd', '-i', iface, 'status']
+    text = {'service_links', 'boot_hooks', 'security', 'hostapd_objects', *('radio_' + radio for radio in radio_probes(state))}
     for name, words in queries.items():
         try:
             data[name] = deploy.remote(args, 'check') if name == 'contract' else read_command(args, words, name not in text)
         except (ValueError, RuntimeError, OSError, subprocess.TimeoutExpired):
             errors[name] = 'unavailable or malformed read-only response'
-    # Sequential reads are not an atomic AP snapshot. Reject observed changes
-    # to the boot or full private contract while collecting live evidence.
     try:
-        final_contract = deploy.remote(args, 'check')
-        initial = data.get('contract', {})
-        data['snapshot_stable'] = bool(initial.get('boot_id')) and (
-            hashlib.sha256(canonical(initial)).digest() ==
-            hashlib.sha256(canonical(final_contract)).digest())
+        final = deploy.remote(args, 'check')
+        data['stable_snapshot'] = final == data.get('contract')
     except (ValueError, RuntimeError, OSError, subprocess.TimeoutExpired):
-        data['snapshot_stable'] = False
-    if not data['snapshot_stable']:
-        errors['snapshot'] = 'boot or full contract changed/unavailable during collection'
-    data['errors'] = errors
+        data['stable_snapshot'] = False
+    data['collection_errors'] = errors
     return data
 
 
@@ -141,195 +130,156 @@ def security_blocks(value):
     return blocks
 
 
-def matches(expr, protocol, field, right, op='=='):
-    match = expr.get('match', {}) if isinstance(expr, dict) else {}
-    return match.get('op') == op and match.get('left') == {'payload': {'protocol': protocol, 'field': field}} and match.get('right') == right
-
-
-def guard_valid(value, family):
-    rows = value.get('nftables', [])
-    table = 'xr_guest_guard' if family == 'bridge' else 'xr_guest_local'
-    if not any(row.get('table', {}).get('family') == family and row.get('table', {}).get('name') == table for row in rows):
-        return False
-    chains = [row['chain'] for row in rows if 'chain' in row]
-    hooks = {c.get('name') for c in chains if isinstance(c.get('name'), str) and c['name'] and c.get('family') == family and c.get('table') == table and c.get('type') == 'filter' and c.get('hook') == 'input' and c.get('prio') == -10 and c.get('policy') == 'accept'}
-    if not hooks:
-        return False
-    for row in rows:
-        rule = row.get('rule', {})
-        if rule.get('family') != family or rule.get('table') != table or rule.get('chain') not in hooks:
-            continue
-        expr = rule.get('expr', [])
-        if not any(isinstance(item, dict) and 'drop' in item for item in expr):
-            continue
-        if family == 'bridge':
-            vid = any(matches(item, 'vlan', 'id', 192) for item in expr)
-            eapol = any(matches(item, 'vlan', 'type', kind, '!=') for item in expr for kind in (34958, '0x888e', '8021x', 'eapol'))
-            if vid and eapol:
-                return True
-        elif any(item.get('match', {}).get('left') == {'meta': {'key': 'iifname'}} and item.get('match', {}).get('right') == 'br-lan.192' and item.get('match', {}).get('op') == '==' for item in expr if isinstance(item, dict)):
-            return True
-    return False
-
 
 def evaluate(state, files, data, external=None):
     tests = []
     def test(name, okay, detail):
-        tests.append({'id': name, 'status': 'PASS' if okay else 'FAIL', 'detail': detail})
+        tests.append({'id': name, 'status': 'NOT_TESTED' if okay is None else 'PASS' if okay else 'FAIL', 'detail': detail})
     contract = data.get('contract', {})
-    test('snapshot_stability', data.get('snapshot_stable') is True, 'Boot ID and full contract unchanged across read-only collection')
-    expected = {path: hashlib.sha256(value).hexdigest() for path, value in files.items()}
-    mismatch = [path for path, value in expected.items() if contract.get('files', {}).get(path) != value or contract.get('modes', {}).get(path) != ['-rw-------', '0']]
-    test('desired_configuration', not mismatch and bool(contract) and contract.get('root_password_synced') is True and contract.get('resolver_correct') is True,
-         'Desired file hashes/private modes, root hash and resolver match' if not mismatch else 'Changed/missing paths: ' + ', '.join(mismatch))
     identity = contract.get('identity', {})
-    test('target_identity', contract.get('schema_version') == state['schema_version'] and contract.get('profile') == state['profile'] and contract.get('defaults_sha256') == state['defaults_sha256'] and identity.get('device_id') == state['device_id'] and identity.get('bridge_mac') == state['device']['identity']['bridge'] and identity.get('board_name') in state['platform']['board_names'], 'Profile/schema, defaults, registered device, bridge identity and board')
-    features = data.get('luci_features')
-    hostapd = features.get('hostapd') if isinstance(features, dict) else None
-    test('luci_rpc_features', isinstance(hostapd, dict) and all(hostapd.get(name) is True for name in ('cli', '11be', 'sae')),
-         'Live LuCI getFeatures RPC is registered and exposes the required hostapd CLI/Wi-Fi 7/SAE capabilities')
-    for name, proto, device in [('lan', 'dhcp', 'br-lan.1'), ('lan6', 'dhcpv6', 'br-lan.1'), ('maintenance', 'static', 'br-lan.1'), ('guest', 'none', 'br-lan.192')]:
-        item = data.get(name, {})
-        okay = item.get('up') is True and item.get('proto') == proto and item.get('l3_device') == device
-        if name == 'lan':
+    test('stable_snapshot', data.get('stable_snapshot') is True, 'Boot and complete resource contract stayed unchanged during collection')
+    test('target_identity', contract.get('schema_version') == state['schema_version'] and
+         contract.get('profile') == state['profile'] and contract.get('contract_sha256') == state['contract_sha256'] and
+         identity.get('device_id') == state['device_id'] and identity.get('bridge_mac') == state['device']['identity']['bridge'] and
+         identity.get('board_name') in state['platform']['board_names'], 'Backend contract, device identity and allowed board match')
+    modes = deploy.file_modes(files)
+    test('managed_resources', all(contract.get('files', {}).get(path) == hashlib.sha256(value).hexdigest() and
+         contract.get('modes', {}).get(path) == [deploy.mode_security(modes[path]), '0'] for path, value in files.items()),
+         'Every explicitly managed resource has its desired bytes, owner and mode')
+    test('root_password', contract.get('root_password_synced') is True, 'Configured root password is active')
+    if state['resolver'] is not None:
+        test('resolver_policy', contract.get('resolver_state') == {'type':'symlink','target':state['resolver']['target']}, 'Resolver follows the explicit producer-supplied target')
+    # Network expectations come from explicit UCI, never a built-in topology.
+    for name, section in state['uci'].get('network', {}).items():
+        if section['type'] != 'interface':
+            continue
+        options = section['options']; item = data.get('interface_' + name, {})
+        needed = str(options.get('auto', '1')) != '0'
+        okay = item.get('up') is needed and item.get('proto') == str(options['proto'])
+        if options.get('device') is not None:
+            okay = okay and item.get('l3_device', item.get('device')) == str(options['device'])
+        if needed and options['proto'] == 'dhcp':
             okay = okay and bool(item.get('ipv4-address'))
-        elif name == 'lan6':
+        if needed and options['proto'] == 'dhcpv6' and options.get('reqaddress', 'try') != 'none':
             okay = okay and bool(item.get('ipv6-address'))
-        elif name == 'maintenance':
-            okay = okay and any(a.get('address') == state['device']['maintenance_ipv4'] and a.get('mask') == 24 for a in item.get('ipv4-address', []))
-        else:
-            okay = okay and not item.get('ipv4-address') and not item.get('ipv6-address') and bool(data.get('guest_addresses')) and not any(a.get('addr_info') for a in data.get('guest_addresses', []))
-        test('interface_' + name, okay, 'Expected protocol/device/address policy')
-    members = {row.get('ifname'): row.get('vlans', []) for row in data.get('vlans', [])}
-    for port in state['platform']['ports']:
-        values = members.get(port, [])
-        native = next((row for row in values if row.get('vlan') == 1), {})
-        guest = next((row for row in values if row.get('vlan') == 192), {})
-        flags = native.get('flags', [])
-        test('vlan_' + port, {row.get('vlan') for row in values} == {1, 192} and bool(native) and bool(guest) and 'PVID' in flags and 'Egress Untagged' in flags and not guest.get('flags'), 'Only native VLAN1 untagged/PVID and guest VLAN192 tagged')
-    local_vlans = members.get('br-lan', [])
-    test('vlan_bridge_self', {row.get('vlan') for row in local_vlans} == {1, 192} and all(not row.get('flags') for row in local_vlans), 'Bridge-local VLAN1/192 stay tagged for their subinterfaces')
-    profiles = ssid_profiles(state)
-    inventory = data.get('radio_inventory', {})
-    inventory_ok = isinstance(inventory, dict) and set(inventory) == {'radio' + str(index) for index in range(3)}
-    for band, (index, _) in BANDS.items():
-        expected_ifaces = {(profile['section'], profile['iface']) for profile in profiles if band in profile['bands']}
-        item = inventory.get('radio' + str(index), {}) if isinstance(inventory, dict) else {}
-        item = item if isinstance(item, dict) else {}
-        rows = item.get('interfaces', [])
-        valid = isinstance(rows, list) and all(isinstance(row, dict) and isinstance(row.get('section'), str) and isinstance(row.get('ifname'), str) for row in rows)
-        actual = {(row['section'], row['ifname']) for row in rows} if valid else set()
-        needed = bool(expected_ifaces)
-        inventory_ok = (inventory_ok and valid and len(actual) == len(rows) and actual == expected_ifaces and
-                        item.get('up') is needed and item.get('disabled') is (not needed))
-    objects = data.get('hostapd_objects', '').splitlines()
-    inventory_ok = inventory_ok and len(set(objects)) == len(objects) and set(objects) == {'hostapd.' + profile['iface'] for profile in profiles}
-    test('wireless_inventory', inventory_ok, 'Exactly the configured SSIDs/radio assignments and live hostapd BSS objects; no removed or unexpected AP remains')
+        if needed and options['proto'] == 'static':
+            values = options.get('ipaddr', [])
+            values = values if isinstance(values, list) else [values]
+            addresses = {row.get('address') for row in item.get('ipv4-address', [])}
+            okay = okay and all(str(ipaddress.ip_interface(value).ip) in addresses for value in values)
+        test('interface_' + name, okay, 'Live interface follows the explicitly configured protocol/device/address')
+    running = {name: any(row.get('running') is True for row in value.get('instances', {}).values())
+               for name, value in data.get('services', {}).items()}
+    links = data.get('service_links', '').splitlines()
+    for name, policy in state['services'].items():
+        enabled = any(link.startswith('S') and link[1:3].isdigit() and link[3:] == name for link in links)
+        okay = enabled is policy['enable']
+        if not policy['enable'] or policy.get('running') is False:
+            okay = okay and not running.get(name, False)
+        elif policy.get('running') is True and not policy.get('oneshot', False):
+            okay = okay and running.get(name, False)
+        test('service_' + name, okay, 'Live enable/running state follows the explicit service policy')
+    test('boot_policy_hooks', set(data.get('boot_hooks', '').splitlines()) ==
+         {'S03dicttech-ap-transaction', 'S04dicttech-ap-prepare', 'S13dicttech-ap-finalize'},
+         'Persistent rollback, resource prepare and finalize hooks are enabled')
+    profiles = state['ssids']
+    if profiles:
+        inventory = data.get('radio_inventory', {})
+        wanted_radios = {name for name, spec in state['uci'].get('wireless', {}).items() if spec['type'] == 'wifi-device'}
+        okay = isinstance(inventory, dict) and set(inventory) == wanted_radios
+        for radio in wanted_radios:
+            expected = {(profile['section'], profile['iface']) for profile in profiles if radio in profile['radios']}
+            item = inventory.get(radio, {})
+            rows = item.get('interfaces', [])
+            actual = {(row.get('section'), row.get('ifname')) for row in rows}
+            okay = okay and actual == expected and len(actual) == len(rows)
+            if expected:
+                okay = okay and item.get('up') is True and item.get('disabled') is False
+        objects = data.get('hostapd_objects', '').splitlines()
+        okay = okay and len(set(objects)) == len(objects) and set(objects) == {'hostapd.' + profile['iface'] for profile in profiles}
+        test('wireless_inventory', okay, 'Exactly the producer-selected BSS and radio assignments are present')
     blocks = security_blocks(data.get('security', ''))
-    instances = data.get('services', {}).get('xr_roaming', {}).get('instances', {})
-    live_workers = {name for name, row in instances.items() if row.get('running') is True}
+    workers = {name for name, spec in data.get('services', {}).get('xr_roaming', {}).get('instances', {}).items() if spec.get('running') is True}
     for profile in profiles:
-        key = profile['key']
-        status = data.get('hostapd_' + key, {})
-        status = status if isinstance(status, dict) else {}
-        expected_links = {bssid: frequency(state, band) for bssid, band in zip(profile['bssids'], profile['bands'])}
+        key = profile['key']; status = data.get('hostapd_' + key, {})
+        expected_links = {bssid: frequency(state, band, radio) for bssid, band, radio in zip(profile['bssids'], profile['bands'], profile['radios'])}
         observed = status.get('links') if profile['mlo'] else [status]
-        valid_links = isinstance(observed, list) and len(observed) == len(expected_links) and all(
-            isinstance(item, dict) and isinstance(item.get('bssid'), str) and type(item.get('freq')) is int for item in observed)
-        actual = {item['bssid'].lower(): item['freq'] for item in observed} if valid_links else {}
-        test('wireless_' + key, valid_links and status.get('status') == 'ENABLED' and status.get('ssid') == profile['name'] and actual == expected_links,
-             'Live SSID, BSSIDs and every configured band frequency')
-        # C7 binds every BSS to br-lan. netifd assigns its access VLAN on the
-        # master netdev, rather than writing bridge=br-lan.192 in hostapd.
-        vid = state['platform']['guest_vlan'] if profile['network'] == 'guest' else state['platform']['native_vlan']
-        values = members.get(profile['iface'], [])
-        vlan_ok = len(values) == 1 and values[0].get('vlan') == vid and values[0].get('vlanEnd', vid) == vid and set(values[0].get('flags', [])) == {'PVID', 'Egress Untagged'}
-        test('vlan_ssid_' + key, vlan_ok, 'The live SSID master has only its configured native/guest access VLAN')
-        configs = [b for b in blocks if b.get('ssid') == profile['name']]
+        valid = isinstance(observed, list) and len(observed) == len(expected_links) and all(isinstance(row, dict) and isinstance(row.get('bssid'), str) for row in observed)
+        actual = {row['bssid'].lower(): row.get('freq') for row in observed} if valid else {}
+        test('wireless_' + key, status.get('status') == 'ENABLED' and status.get('ssid') == profile['name'] and set(actual) == set(expected_links) and all(type(actual[address]) is int and (wanted is None or actual[address] == wanted) for address,wanted in expected_links.items()),
+             'Live BSSIDs, SSID and link frequencies match producer metadata')
+        configs = [block for block in blocks if block.get('ssid') == profile['name']]
+        options = state['uci']['wireless'][profile['section']]['options']
+        encryption = profile['encryption'].split('+', 1)[0]
+        supported = encryption in {'none','psk','psk2','psk-mixed','sae','sae-mixed','owe','wpa','wpa2','wpa-mixed','wpa3','wpa3-192'}
         link_ids = dict(zip(profile['bssids'], profile['link_ids']))
         def secure(block):
-            modes = set(block.get('wpa_key_mgmt', '').split())
-            allowed = {'SAE', 'SAE-EXT-KEY', 'WPA-PSK', 'WPA-PSK-SHA256'}
-            psk = bool(modes & {'WPA-PSK', 'WPA-PSK-SHA256'})
-            akm = (modes and modes <= allowed and
-                   {'sae': 'SAE' in modes and not psk,
-                    'sae-mixed': 'SAE' in modes and psk,
-                    'psk2': psk and not modes & {'SAE', 'SAE-EXT-KEY'}}.get(profile['encryption'], False))
+            modes = set(block.get('wpa_key_mgmt', '').split()); psk = bool(modes & {'WPA-PSK', 'WPA-PSK-SHA256'})
+            required = {
+                'none': set(), 'psk': {'WPA-PSK'}, 'psk2': {'WPA-PSK','WPA-PSK-SHA256'},
+                'psk-mixed': {'WPA-PSK'}, 'sae': {'SAE','SAE-EXT-KEY'}, 'sae-mixed': {'SAE','SAE-EXT-KEY','WPA-PSK','WPA-PSK-SHA256'},
+                'owe': {'OWE'}, 'wpa': {'WPA-EAP'}, 'wpa2': {'WPA-EAP','WPA-EAP-SHA256'},
+                'wpa-mixed': {'WPA-EAP'}, 'wpa3': {'WPA-EAP-SHA256'}, 'wpa3-192': {'WPA-EAP-SUITE-B-192'},
+            }.get(encryption)
+            akm = True if required is None else not modes if encryption == 'none' else bool(modes) and modes <= required
+            if encryption == 'sae-mixed': akm = akm and psk and bool(modes & {'SAE','SAE-EXT-KEY'})
             bssid = block.get('bssid', '').lower()
-            # MLO config blocks use the master interface. Only the CLI control
-            # socket has a _linkN suffix; mld_link_id identifies this radio.
-            mlo = (block.get('mld_ap') == '1' and block.get('mld_link_id') == str(link_ids.get(bssid))) if profile['mlo'] else block.get('mld_ap', '0') == '0'
-            wanted_roaming = '1' if profile['roaming'] else '0'
-            return bool(akm and block.get('wpa') == '2' and
-                        block.get('ieee80211w', '0') == str(profile['pmf']) and
-                        block.get('interface', block.get('bss')) == profile['iface'] and bssid in expected_links and mlo and
-                        block.get('bridge') == state['platform']['bridge'] and
-                        block.get('disable_11be', '0') == ('0' if profile.get('eht', True) else '1') and
-                        (profile.get('eht', True) or block.get('beacon_prot') == '1') and
-                        block.get('ignore_broadcast_ssid', '0') == ('1' if profile['hidden'] else '0') and
-                        all(block.get(field, '0') == wanted_roaming for field in ('rrm_neighbor_report', 'rrm_beacon_report', 'bss_transition')) and
-                        (profile['network'] != 'guest' or block.get('ap_isolate', '0') == '0'))
-        config_bssids = {block.get('bssid', '').lower() for block in configs}
-        test('security_' + key, config_bssids == set(expected_links) and all(secure(block) for block in configs),
-             'Per-link generated hostapd WPA/PMF/network/hidden/k-v/EHT/beacon-protection policy; no secret fields collected')
-        roaming = data.get('roaming_' + key, {})
-        roaming = roaming if isinstance(roaming, dict) else {}
-        peers = state['peers'][key]
-        observed_peers = {p.get('id'): p for p in roaming.get('peers', [])}
-        okay = roaming.get('state') == 'ok' and roaming.get('snapshot_fresh') is True and set(observed_peers) == {p['id'] for p in peers} and all(p.get('fresh') is True for p in observed_peers.values())
-        if not profile['roaming']:
-            stopped = roaming.get('state') in ('stopped', 'unavailable', None) or (
-                roaming.get('state') == 'stale' and roaming.get('sample_state') == 'stopped')
-            okay = key not in live_workers and stopped
-        test('roaming_' + key, okay, 'Fresh configured peer metadata, or no worker for a disabled profile; no steering claimed')
-    for index, (band, _) in radio_probes(state).items():
-        status = dict(line.split('=', 1) for line in data.get('radio_' + str(index), '').splitlines() if '=' in line)
-        width_code = status.get('eht_oper_chwidth')
+            mlo = block.get('mld_ap') == '1' and block.get('mld_link_id') == str(link_ids.get(bssid)) if profile['mlo'] else block.get('mld_ap', '0') == '0'
+            wanted_wpa = {'none':'0','psk':'1','wpa':'1','psk-mixed':'3','wpa-mixed':'3'}.get(encryption,'2')
+            result = bool(akm and (not supported or block.get('wpa','0') == wanted_wpa) and block.get('ieee80211w', '0') == str(profile['pmf']) and
+                          block.get('interface', block.get('bss')) == profile['iface'] and bssid in expected_links and mlo and
+                          block.get('disable_11be', '0') == ('0' if profile['eht'] else '1') and
+                          block.get('ignore_broadcast_ssid', '0') == ('1' if profile['hidden'] else '0'))
+            return result and all(block.get(field, '0') == str(options.get(field,options.get('ieee80211k','0') if field.startswith('rrm_') else '0')) for field in ('rrm_neighbor_report','rrm_beacon_report','bss_transition'))
+        test('security_' + key, {block.get('bssid', '').lower() for block in configs} == set(expected_links) and all(secure(block) for block in configs),
+             'Live WPA/PMF/MLO/hidden/EHT/roaming configuration follows explicit BSS metadata')
+        if not supported:
+            test('akm_' + key, None, 'This AKM needs independent runtime verification; resource rendering remains supported')
+        if profile['roaming']:
+            observed = data.get('roaming_' + key, {})
+            peers = {item.get('id'): item for item in observed.get('peers', [])}
+            wanted = {item['id'] for item in state['peers'][key]}
+            test('roaming_' + key, observed.get('state') == 'ok' and observed.get('snapshot_fresh') is True and set(peers) == wanted and all(item.get('fresh') is True for item in peers.values()),
+                 'Only explicit peer metadata is present and fresh')
+        else:
+            test('roaming_' + key, key not in workers, 'Disabled BSS roaming has no worker')
+    for radio, (band, _) in radio_probes(state).items():
+        status = dict(line.split('=', 1) for line in data.get('radio_' + radio, '').splitlines() if '=' in line)
+        options = state['uci']['wireless'][radio]['options']
+        width_code = status.get('eht_oper_chwidth',status.get('he_oper_chwidth',status.get('vht_oper_chwidth')))
         secondary = status.get('secondary_channel')
-        width = (40 if secondary in ('-1', '1') else 20 if secondary == '0' else None) if width_code == '0' else {'1': 80, '2': 160, '4': 320}.get(width_code)
-        wanted = int(state['common']['radios']['radio' + str(index)]['htmode'][3:])
-        allowed = {20, 40} if index == 0 and wanted == 40 and not state['common']['radios']['radio0']['force_40'] else {wanted}
-        channel = str(state['common']['radios']['radio' + str(index)]['channel'])
-        test('width_radio' + str(index), status.get('state') == 'ENABLED' and status.get('freq') == str(frequency(state, band)) and status.get('channel') == channel and width in allowed,
-             'Actual band/channel/width obey policy; 2.4GHz coexistence may use20MHz')
-    test('guest_local_guards', guard_valid(data.get('bridge_guard', {}), 'bridge') and guard_valid(data.get('inet_guard', {}), 'inet'), 'Bridge-local VLAN192 drop with EAPOL exception and inet-local drop')
-    test('bridge_sysctls', data.get('sysctls', '').split() == ['1', '1', '0', '0', '0', '0'], 'Pinned bridge-nf policy')
-    running = {name: any(row.get('running') is True for row in value.get('instances', {}).values()) for name, value in data.get('services', {}).items()}
-    links = data.get('service_links', '').splitlines()
-    enabled = lambda service: any(name.startswith('S') and name[1:3].isdigit() and name[3:] == service for name in links)
-    core = state['services']['enabled']
-    fw4 = any(row.get('table', {}).get('family') == 'inet' and row.get('table', {}).get('name') == 'fw4' for row in data.get('fw4', {}).get('nftables', []))
-    wanted_workers = {profile['key'] for profile in profiles if profile['roaming']}
-    healthy = {**running, 'firewall': fw4, 'xr_roaming': live_workers == wanted_workers}
-    test('required_services', all(enabled(name) and healthy.get(name) for name in core),
-         'Required services and exactly the enabled per-SSID roaming workers; live fw4 table')
-    disabled = state['services']['disabled']
-    test('unwanted_services', all(not running.get(name, False) and not enabled(name) for name in disabled), 'Unwanted services neither enabled nor running')
-    test('boot_policy_hooks', set(data.get('boot_hooks', '').splitlines()) == {'S03dicttech-ap-transaction', 'S04dicttech-ap-prepare', 'S13dicttech-ap-finalize'}, 'Executable enabled early rollback/prepare and post-boot finalize links; oneshots need no PID')
-    binding = {'schema_version': 1, 'profile': state['profile'], 'device_id': state['device_id'], 'boot_id': contract.get('boot_id'), 'desired_sha256': hashlib.sha256(canonical(expected)).hexdigest()}
-    valid_external = isinstance(external, dict) and all(external.get(k) == v for k, v in binding.items())
+        width = (40 if secondary in ('-1','1') else 20 if secondary=='0' else None) if width_code in ('0',None) else {'1':80,'2':160,'4':320}.get(width_code)
+        mode = re.fullmatch(r'(?:EHT|HE|VHT|HT)(20|40|80|160|320)(?:[+-])?',str(options.get('htmode','')))
+        wanted = int(mode[1]) if mode else None
+        allowed = {20,40} if band=='2g' and wanted==40 and str(options.get('noscan','0'))=='0' else {wanted}
+        configured_frequency = frequency(state,band,radio)
+        okay = status.get('state')=='ENABLED'
+        if configured_frequency is not None:
+            okay = okay and status.get('freq')==str(configured_frequency) and status.get('channel')==str(options['channel'])
+        if wanted is not None:
+            okay = okay and width in allowed
+        test('width_' + radio, okay, 'Live channel and width follow explicitly supplied radio constraints')
+    binding = {'schema_version': 1, 'profile': state['profile'], 'device_id': state['device_id'], 'boot_id': contract.get('boot_id'),
+               'desired_sha256': hashlib.sha256(canonical({path: hashlib.sha256(value).hexdigest() for path, value in sorted(files.items())})).hexdigest()}
+    valid_external = isinstance(external, dict) and all(external.get(key) == value for key, value in binding.items())
     if external is not None:
-        test('external_report_binding', valid_external, 'External evidence belongs to this boot/device/desired configuration')
-    gates = EXTERNAL + (('six_ghz_client_auth',) if any('6g' in profile['bands'] for profile in profiles) else ())
+        test('external_report_binding', valid_external, 'External evidence belongs to this boot/device/full desired configuration')
+    configuration = 'FAIL' if any(item['status']=='FAIL' for item in tests) else 'NOT_TESTED' if any(item['status']=='NOT_TESTED' for item in tests) else 'PASS'
+    guest_gates = ('guest_client_mutual','guest_internal_isolation','ppe_bound_isolation_and_vlan','spoof_and_vlan_injection') if 'guest_vlan' in state['platform'] else ()
+    gates = EXTERNAL + guest_gates + (('wifi_client_auth',) if profiles else ()) + (('actual_client_roaming',) if any(profile['roaming'] for profile in profiles) else ()) + (('six_ghz_client_auth',) if any('6g' in profile['bands'] for profile in profiles) else ())
     for name in gates:
-        external_tests = external.get('tests', {}) if valid_external else {}
-        item = external_tests.get(name, {}) if isinstance(external_tests, dict) else {}
-        item = item if isinstance(item, dict) else {}
-        status = item.get('status', 'NOT_TESTED')
-        if status not in ('PASS', 'FAIL', 'NOT_TESTED') or status == 'PASS' and not isinstance(item.get('evidence'), str) or status == 'PASS' and not item.get('evidence'):
-            status = 'FAIL'
-        tests.append({'id': name, 'status': status, 'detail': 'External client/hardware evidence required; configuration checks do not prove this behavior'})
-    fail = any(t['status'] == 'FAIL' for t in tests)
-    missing = any(t['status'] == 'NOT_TESTED' for t in tests)
+        item = external.get('tests', {}).get(name, {}) if valid_external else {}
+        status = item.get('status') if item.get('status') in ('PASS', 'FAIL') else 'NOT_TESTED'
+        tests.append({'id': name, 'status': status, 'detail': 'Independent client or hardware evidence is required'})
+    status = 'FAIL' if any(item['status'] == 'FAIL' for item in tests) else 'NOT_TESTED' if any(item['status'] == 'NOT_TESTED' for item in tests) else 'PASS'
     return {'schema_version': 1, 'profile': state['profile'], 'device_id': state['device_id'], 'boot_id': contract.get('boot_id'),
-            'status': 'FAIL' if fail else 'NOT_TESTED' if missing else 'PASS', 'tests': tests}, binding
+            'status': status, 'configuration_status': configuration, 'tests': tests}, binding
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for name in ('config', 'device', 'host'):
         p.add_argument('--' + name, required=True)
-    p.add_argument('--defaults', default=str(DEFAULTS))
     p.add_argument('--port', type=int, default=12022)
     p.add_argument('--control-socket'); p.add_argument('--jump-host')
     p.add_argument('--external-report', type=Path); p.add_argument('--binding-output', type=Path)
@@ -338,8 +288,8 @@ def main():
     if not 1 <= args.port <= 65535:
         p.error('invalid SSH port')
     try:
-        state = resolve(load_document(args.config), args.device, args.defaults)
-        files = render(state, args.defaults)
+        state = resolve(load_document(args.config), args.device)
+        files = render(state)
         external = None
         if args.external_report:
             if args.external_report.stat().st_mode & 0o077:

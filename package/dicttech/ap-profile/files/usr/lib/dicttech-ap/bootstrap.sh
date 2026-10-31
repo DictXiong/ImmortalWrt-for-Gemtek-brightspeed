@@ -4,7 +4,7 @@
 set -eu
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
-DEFAULTS=/usr/share/dicttech-ap/defaults.json
+CONTRACT=/usr/share/dicttech-ap/contract.json
 MARKER=/etc/dicttech-ap/device.json
 STATE=/etc/dicttech-ap/bootstrap-state.json
 IDENTITY=/etc/dicttech-ap/bootstrap-identity.json
@@ -57,59 +57,79 @@ finalize_boot() {
  finalize
 }
 
+managed_path() {
+ local rel=$1 rest next current=
+ [ "${#rel}" -le 4096 ] || return 1
+ case "$rel" in ''|/*|*/|*//*|*[!A-Za-z0-9_./+-]*) return 1;; esac
+ rest=$rel
+ while [ -n "$rest" ]; do
+  next=${rest%%/*}; [ "${#next}" -le 255 ] || return 1; case "$next" in .|..) return 1;; esac
+  current=$current/$next; [ ! -L "$current" ] || return 1
+  case "$rest" in */*) rest=${rest#*/};; *) rest=;; esac
+ done
+ case "$rel" in
+  etc/shadow|etc/passwd|etc/group|etc/resolv.conf|etc/ssh/*|etc/dropbear/dropbear_*|etc/rc.d/*|etc/openwrt-deploy/*|etc/dicttech-ap-bootstrap-key/*) return 1;;
+  etc/dicttech-ap/device.json|etc/dicttech-ap/root-password-hash|etc/dropbear/authorized_keys) return 0;;
+  etc/dicttech-ap/*) return 1;;
+  etc/init.d/openwrt-managed-*|usr/libexec/openwrt-managed/*) return 0;;
+  etc/init.d/*) return 1;;
+  etc/*) return 0;;
+  *) return 1;;
+ esac
+}
 valid_marker() {
- local hash name section material ssid_rows iface
- [ -f "$MARKER" ] && [ ! -L "$MARKER" ] && [ -f "$DEFAULTS" ] || return 1
- hash=$(sha256sum "$DEFAULTS"); hash=${hash%% *}
+ local hash section material ssid_rows iface rows name expected actual
+ private_file "$MARKER" && [ -f "$CONTRACT" ] && [ ! -L "$CONTRACT" ] || return 1
+ hash=$(sha256sum "$CONTRACT"); hash=${hash%% *}
  jq -e --arg hash "$hash" '
-   type=="object" and .schema_version==2 and .profile=="dicttech-ap-v2" and
-   .defaults_sha256==$hash and
+   type=="object" and .schema_version==3 and .profile=="openwrt-config-v3" and
+   .contract_sha256==$hash and
    (.device_id|type=="string" and length>=1 and length<=64) and
    (.config_fingerprint|type=="string" and length==64) and
-   (.ssids|type=="array" and length>=3 and length<=17) and
-   .ssids[0].key=="main" and .ssids[1].key=="guest" and .ssids[-1].key=="iot" and
+   (.ssids|type=="array" and length<=256) and
    ([.ssids[].key]|length==(unique|length)) and
    ([.ssids[].section]|length==(unique|length)) and
    ([.ssids[].iface]|length==(unique|length)) and
+   (.services|type=="object") and
    (.ssids|all(.[];
       (.key|type=="string" and length>=1 and length<=48) and
-      (.section|type=="string" and length>=1 and length<=48 and
+      (.section|type=="string" and length>=1 and length<=255 and
         (explode|all(.[]; (.>=48 and .<=57) or (.>=65 and .<=90) or (.>=97 and .<=122) or .==95))) and
       (.iface|type=="string" and length>=1 and length<=15 and
-        (explode|all(.[]; (.>=48 and .<=57) or (.>=65 and .<=90) or (.>=97 and .<=122) or .==95 or .==45))) and
+        (explode|all(.[]; (.>=48 and .<=57) or (.>=65 and .<=90) or (.>=97 and .<=122) or .==95 or .==45 or .==46 or .==58))) and
       (.mlo|type=="boolean") and
       (.bands|type=="array" and length>=1 and length<=3 and length==(unique|length) and
         all(.[]; .=="2g" or .=="5g" or .=="6g")) and
       (if .mlo then (.bands|length)>=2 else (.bands|length)==1 end)))
  ' "$MARKER" >/dev/null 2>&1 || return 1
- # A marker alone is not a complete deployment. Missing/truncated config must
- # never fall through to upstream router defaults on the next boot.
- for name in network wireless firewall dhcp system dropbear uhttpd xr_roaming fan cpufreq airoha_npu; do
-  [ -s "/etc/config/$name" ] && [ ! -L "/etc/config/$name" ] || return 1
- done
- for name in /etc/dicttech-ap/root-password-hash /etc/xr-guest-vlan192.nft /etc/sysctl.d/13-nf-bridge.conf; do
-  [ -s "$name" ] && [ ! -L "$name" ] || return 1
- done
+ # A producer ledger defines the resource set. No SSID role, VLAN, template,
+ # service list or minimum file inventory is implied by the firmware.
+ validate_manifest_shape "$MANIFEST" || return 1
+ # Lifecycle metadata is immutable even when accepted UCI/content drift is
+ # allowed. A copied fingerprint string cannot authenticate changed policy.
+ rows=$(jq -r '.files[]|select(.path=="etc/dicttech-ap/device.json" or .path=="etc/dicttech-ap/root-password-hash")|[.path,.sha256]|@tsv' "$MANIFEST") || return 1
+ while IFS="$(printf '\t')" read -r name expected; do
+  actual=$(sha256sum "/$name"); actual=${actual%% *}
+  [ "$actual" = "$expected" ] || return 1
+ done <<IMMUTABLE_ROWS
+$rows
+IMMUTABLE_ROWS
+ private_file /etc/dicttech-ap/root-password-hash || return 1
  [ "$(wc -l < /etc/dicttech-ap/root-password-hash | tr -d ' ')" = 1 ] || return 1
  material=$(cat /etc/dicttech-ap/root-password-hash)
  case "$material" in '$6$'*|'$5$'*|'$y$'*) ;; *) return 1;; esac
  case "$material" in *:*|*' '*|*"$(printf '\t')"*) return 1;; esac
- cmp -s /etc/xr-guest-vlan192.nft /usr/share/dicttech-ap/templates/guest-guard.nft || return 1
- cmp -s /etc/sysctl.d/13-nf-bridge.conf /usr/share/dicttech-ap/templates/13-nf-bridge.conf || return 1
- [ "$(uci -q get network.lan.proto)" = dhcp ] || return 1
- [ "$(uci -q get network.lan.device)" = br-lan.1 ] || return 1
- [ "$(uci -q get network.bridge.vlan_filtering)" = 1 ] || return 1
- [ "$(uci -q get network.guest_vlan.vlan)" = 192 ] || return 1
- [ "$(uci -q get network.guest.proto)" = none ] || return 1
- [ "$(uci -q get network.ap_maintenance.proto)" = static ] || return 1
- [ "$(uci -q get firewall.guest.input)" = DROP ] || return 1
  ssid_rows=$(jq -r '.ssids[]|[.section,.iface]|@tsv' "$MARKER") || return 1
  while IFS="$(printf '\t')" read -r section iface; do
+  [ -n "$section" ] || continue
   [ "$(uci -q get "wireless.$section")" = wifi-iface ] || return 1
   [ "$(uci -q get "wireless.$section.ifname")" = "$iface" ] || return 1
  done <<SSID_ROWS
 $ssid_rows
 SSID_ROWS
+ # A factory fallback must never become accepted merely because it recreated
+ # a missing file. Existing acceptance grants apply only outside setup state.
+ if [ -f /tmp/dicttech-ap-bootstrap-isolated ]; then validate_manifest; return; fi
  binding_matches "$ACCEPTED" || binding_matches "$BOOT_VALIDATED" || validate_manifest
 }
 
@@ -121,9 +141,9 @@ binding_matches() {
  IFS= read -r boot < /proc/sys/kernel/random/boot_id
  [ "$1" != "$BOOT_VALIDATED" ] || require_boot=true
  jq -e --slurpfile marker "$MARKER" --arg manifest "$digest" --arg boot "$boot" --argjson require_boot "$require_boot" '
-   .schema_version==2 and .profile=="dicttech-ap-v2" and
+   .schema_version==3 and .profile=="openwrt-config-v3" and
    .device_id==$marker[0].device_id and
-   .defaults_sha256==$marker[0].defaults_sha256 and
+   .contract_sha256==$marker[0].contract_sha256 and
    .config_fingerprint==$marker[0].config_fingerprint and
    .manifest_sha256==$manifest and
    ($require_boot==false or .validated_boot_id==$boot)
@@ -137,35 +157,38 @@ write_binding() {
  digest=$(sha256sum "$MANIFEST"); digest=${digest%% *}
  IFS= read -r boot < /proc/sys/kernel/random/boot_id
  jq --arg manifest "$digest" --arg boot "$boot" \
-  '{schema_version,profile,device_id,defaults_sha256,config_fingerprint,manifest_sha256:$manifest,validated_boot_id:$boot}' "$MARKER" > "$tmp"
+  '{schema_version,profile,device_id,contract_sha256,config_fingerprint,manifest_sha256:$manifest,validated_boot_id:$boot}' "$MARKER" > "$tmp"
  chmod 600 "$tmp"
  mv "$tmp" "$dest"
 }
 
+validate_manifest_shape() {
+ local manifest=$1 base=${2:-} rows name mode expected actual
+ private_file "$manifest" || return 1
+ jq -e '
+   .schema_version==3 and .profile=="openwrt-config-v3" and
+   (.files|type=="array" and length>=2 and length<=128) and
+   (.files|all(.[]; (.path|type=="string" and length>=1 and length<=4096) and (.mode as $mode|["600","644","700","755"]|index($mode))!=null and
+      (.sha256|type=="string" and length==64 and (explode|all(.[];(.>=48 and .<=57) or (.>=97 and .<=102)))))) and
+   ([.files[].path]|length==(unique|length)) and
+   (["etc/dicttech-ap/device.json","etc/dicttech-ap/root-password-hash"]-[.files[].path]|length==0)
+ ' "$manifest" >/dev/null || return 1
+ rows=$(jq -r '.files[]|[.path,.mode]|@tsv' "$manifest") || return 1
+ while IFS="$(printf '\t')" read -r name mode; do
+  managed_path "$name" || return 1
+  [ -f "$base/$name" ] && [ ! -L "$base/$name" ] || return 1
+  case "$mode" in 600) expected=-rw-------:0;; 644) expected=-rw-r--r--:0;; 700) expected=-rwx------:0;; 755) expected=-rwxr-xr-x:0;; *) return 1;; esac
+  actual=$(ls -nd "$base/$name" | awk '{print $1 ":" $3}') || return 1
+  [ "$actual" = "$expected" ] || return 1
+ done <<RESOURCE_ROWS
+$rows
+RESOURCE_ROWS
+}
 validate_manifest() {
  local manifest=${1:-$MANIFEST} base=${2:-} rows name expected actual
- [ -s "$manifest" ] && [ ! -L "$manifest" ] || return 1
- jq -e '
-   .schema_version==2 and .profile=="dicttech-ap-v2" and
-   (.files|type=="array" and length>=15 and length<=16) and
-   (.files|all(.[]; (.path|type=="string") and (.sha256|type=="string" and length==64))) and
-   ([.files[].path]|length==(unique|length)) and
-   (["etc/config/network","etc/config/wireless","etc/config/firewall","etc/config/dhcp",
-     "etc/config/system","etc/config/dropbear","etc/config/uhttpd","etc/config/xr_roaming",
-     "etc/config/fan","etc/config/cpufreq","etc/config/airoha_npu",
-     "etc/sysctl.d/13-nf-bridge.conf","etc/xr-guest-vlan192.nft",
-     "etc/dicttech-ap/device.json","etc/dicttech-ap/root-password-hash"]-[.files[].path]|length==0)
- ' "$manifest" >/dev/null || return 1
+ validate_manifest_shape "$manifest" "$base" || return 1
  rows=$(jq -r '.files[]|[.path,.sha256]|@tsv' "$manifest") || return 1
  printf '%s\n' "$rows" | while IFS="$(printf '\t')" read -r name expected; do
-  case "$name" in
-   etc/config/network|etc/config/wireless|etc/config/firewall|etc/config/dhcp|etc/config/system|etc/config/dropbear|etc/config/uhttpd|etc/config/xr_roaming|etc/config/fan|etc/config/cpufreq|etc/config/airoha_npu|etc/sysctl.d/13-nf-bridge.conf|etc/xr-guest-vlan192.nft|etc/dicttech-ap/device.json|etc/dicttech-ap/root-password-hash|etc/dropbear/authorized_keys) ;;
-   *) return 1;;
-  esac
-  case "$expected" in *[!0-9a-f]*) return 1;; esac
-  [ -f "$base/$name" ] && [ ! -L "$base/$name" ] || return 1
-  # An explicitly empty authorized_keys file revokes key access by intent.
-  [ "$name" = etc/dropbear/authorized_keys ] || [ -s "$base/$name" ] || return 1
   actual=$(sha256sum "$base/$name"); actual=${actual%% *}
   [ "$actual" = "$expected" ] || return 1
  done
@@ -218,14 +241,21 @@ restore_boot_snapshot() {
 }
 
 clear_managed_deltas() {
- local directory=/tmp/.uci name
+ local directory=/tmp/.uci name paths
  [ ! -L "$directory" ] || return 1
  [ -e "$directory" ] || return 0
  [ -d "$directory" ] || return 1
- # C7 uci revert can return success after an internal I/O error. Clear only
- # the default savedir files that the final boot-time global commit consumes.
- # No alternate savedir or unrelated package is touched.
- for name in network wireless firewall dhcp system dropbear uhttpd xr_roaming fan cpufreq airoha_npu; do
+ # Only packages named by the producer ledger are cleared. Unrelated saved
+ # UCI deltas never become part of a managed boot commit.
+ if [ -f "$MANIFEST" ] && [ ! -L "$MANIFEST" ]; then
+  paths=$(jq -r '.files[]?.path|select(startswith("etc/config/"))' "$MANIFEST") || return 1
+ else
+  # Factory bootstrap is a separate, fixed uninitialized recovery contract.
+  paths='etc/config/network etc/config/wireless etc/config/firewall etc/config/dhcp etc/config/dropbear etc/config/uhttpd'
+ fi
+ for name in $paths; do
+  managed_path "$name" || return 1
+  name=${name#etc/config/}; case "$name" in ''|*/*) return 1;; esac
   rm -f "$directory/$name" || return 1
   [ ! -e "$directory/$name" ] && [ ! -L "$directory/$name" ] || return 1
  done
@@ -416,6 +446,7 @@ isolate() {
   mv "$tmp" "/etc/config/$name" || { emergency_lock; return 1; }
  done
  disable_wireless || { emergency_lock; return 1; }
+ sysctl -p "$SETUP/arp.conf" >/dev/null || { emergency_lock; return 1; }
  /usr/lib/dicttech-ap/services.sh setup || { emergency_lock; return 1; }
  tmp=$STATE.$$.tmp
  [ ! -L "$STATE" ] && [ ! -e "$tmp" ] && [ ! -L "$tmp" ] || { emergency_lock; return 1; }

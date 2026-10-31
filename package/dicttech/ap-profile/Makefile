@@ -3,7 +3,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=ap-profile
 PKG_VERSION:=2.1.2
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 PKG_LICENSE:=GPL-2.0-only
 PKGARCH:=all
 
@@ -12,14 +12,14 @@ include $(INCLUDE_DIR)/package.mk
 define Package/ap-profile
   SECTION:=net
   CATEGORY:=Network
-  TITLE:=DictTech versioned wired-backhaul AP profile
+  TITLE:=DictTech declarative configuration and enrollment runtime
   DEPENDS:=@TARGET_airoha_an7581 +cli-profile +xr-roaming +jq +uci +ubus +firewall4 +nftables-json +dropbear +uhttpd +ip-full +cpufreq +kmod-nf-conntrack-bridge +kmod-nft-bridge +kmod-nft-offload
 endef
 
 define Package/ap-profile/description
- Versioned no-secret AP defaults, DHCP and wired setup, provisioning guard and
- device-specific configuration support. Requires separately supplied local
- device and credential data. Fresh setup accepts root/password until the
+ Policy-free configuration contract, guarded resource transactions, DHCP and
+ wired factory enrollment. Configured resources and policy come from an external
+ producer such as Nix; no AP presets are resolved by this package. Fresh setup accepts root/password until the
  enrollment transaction confirms and activates the configured credentials.
 endef
 
@@ -36,14 +36,14 @@ define Package/ap-profile/install
 	chmod 0700 $(1)/etc/dicttech-ap
 	$(INSTALL_DIR) $(1)/etc/dicttech-ap-bootstrap-key
 	chmod 0700 $(1)/etc/dicttech-ap-bootstrap-key
-	$(INSTALL_DIR) $(1)/etc/init.d $(1)/etc/dropbear $(1)/etc/sysctl.d
+	$(INSTALL_DIR) $(1)/etc/init.d $(1)/etc/dropbear
 	$(CP) ./files/usr/share/dicttech-ap/. $(1)/usr/share/dicttech-ap/
 	$(CP) ./files/usr/libexec/dicttech-ap/. $(1)/usr/libexec/dicttech-ap/
 	$(CP) ./files/usr/lib/dicttech-ap/. $(1)/usr/lib/dicttech-ap/
 	$(INSTALL_BIN) ./files/etc/init.d/* $(1)/etc/init.d/
 	$(INSTALL_CONF) $(TOPDIR)/package/dicttech/cli-profile/files/usr/share/dicttech-cli/authorized_keys $(1)/etc/dropbear/authorized_keys
-	$(INSTALL_DATA) ./files/etc/sysctl.d/12-dicttech-ap-arp.conf $(1)/etc/sysctl.d/
 	$(INSTALL_DIR) $(1)/lib/upgrade/keep.d
+	$(INSTALL_DATA) ./files/lib/upgrade/dicttech-managed.sh $(1)/lib/upgrade/
 	$(INSTALL_DATA) ./files/lib/upgrade/keep.d/dicttech-ap-bootstrap-key $(1)/lib/upgrade/keep.d/
 endef
 

@@ -21,7 +21,6 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 TARGET = '/usr/libexec/dicttech-ap/transaction'
 from ap_config import PROFILE, SCHEMA_VERSION, without_bootstrap_key
-DEFAULTS = HERE.parents[1] / 'package/dicttech/ap-profile/files/usr/share/dicttech-ap/defaults.json'
 
 
 def digest(data: bytes) -> str:
@@ -34,8 +33,8 @@ def out(value):
 
 def model(args):
     from ap_config import load_document, resolve, render
-    resolved = resolve(load_document(Path(args.config)), args.device, Path(args.defaults))
-    files = render(resolved, Path(args.defaults))
+    resolved = resolve(load_document(Path(args.config)), args.device)
+    files = render(resolved)
     if not files or any(not isinstance(k, str) or not isinstance(v, bytes) for k, v in files.items()):
         raise ValueError('renderer returned an invalid file map')
     return resolved, files
@@ -63,6 +62,8 @@ def remote(args, command, token=None, data=None, host=None, timeout=45):
     if command not in {'check', 'stage', 'apply', 'status', 'confirm', 'rollback'}:
         raise ValueError('invalid transaction command')
     words = [TARGET, command]
+    if command == 'check' and data is not None:
+        words.append('request')
     if token is not None:
         if not re.fullmatch('[0-9a-f]{32}', token):
             raise ValueError('invalid transaction token')
@@ -88,7 +89,7 @@ LEGACY_PROBE = r"""set -eu
 [ "$(id -u)" = 0 ]
 board=$(cat /tmp/sysinfo/board_name)
 boot=$(cat /proc/sys/kernel/random/boot_id)
-mac=$(cat /sys/class/net/br-lan/address)
+mac=$(observed_bridge_mac)
 device_id=
 if [ -e /etc/dicttech-ap/device.json ] || [ -L /etc/dicttech-ap/device.json ]; then
  [ -f /etc/dicttech-ap/device.json ] && [ ! -L /etc/dicttech-ap/device.json ]
@@ -106,11 +107,27 @@ def legacy_read(args, script, timeout=30):
     return proc.stdout
 
 
+def identity_reader(resolved):
+    interface = resolved['platform'].get('bridge', '')
+    if interface and not re.fullmatch('[A-Za-z0-9_.:-]{1,15}', interface):
+        raise ValueError('invalid identity observation interface')
+    bridge = resolved['device']['identity']['bridge']
+    return ('identity_interface=' + shlex.quote(interface) + '\nidentity_mac=' + shlex.quote(bridge) + '\n' +
+            'observed_bridge_mac() {\n'
+            ' if [ -n "$identity_interface" ]; then cat "/sys/class/net/$identity_interface/address"; return; fi\n'
+            ' for identity_path in /sys/class/net/*/address; do\n'
+            '  [ -r "$identity_path" ] || continue\n'
+            '  identity_actual=$(cat "$identity_path")\n'
+            '  if [ "$identity_actual" = "$identity_mac" ]; then printf "%s\\n" "$identity_actual"; return; fi\n'
+            ' done\n return 1\n}\n')
+
+
 def preserve_host_identity(args, resolved, files):
     """Read identity only from an existing, explicitly selected same-device AP."""
-    lines = legacy_read(args, LEGACY_PROBE).decode('ascii').splitlines()
+    reader = identity_reader(resolved)
+    lines = legacy_read(args, 'set -eu\n' + reader + LEGACY_PROBE).decode('ascii').splitlines()
     if len(lines) != 4:
-        raise RuntimeError('invalid legacy identity probe')
+        raise RuntimeError('invalid identity probe')
     board, boot, mac, device_id = lines
     if (board not in resolved['platform']['board_names'] or
             mac != resolved['device']['identity']['bridge'] or
@@ -125,8 +142,8 @@ def preserve_host_identity(args, resolved, files):
     # Every inserted value has passed the strict token checks above; file names
     # come exclusively from this fixed allowlist, never from JSON or shell text.
     guard = ('[ "$(cat /proc/sys/kernel/random/boot_id)" = ' + shlex.quote(boot) + ' ]\n'
-             '[ "$(cat /sys/class/net/br-lan/address)" = ' + shlex.quote(mac) + ' ]\n')
-    script = ('set -eu\nset -o pipefail\n' + guard + 'set --\n'
+             '[ "$(observed_bridge_mac)" = ' + shlex.quote(mac) + ' ]\n')
+    script = ('set -eu\nset -o pipefail\n' + reader + guard + 'set --\n'
               'for path in ' + ' '.join(sorted(allowed)) + '; do\n'
               ' if [ -e "/$path" ] || [ -L "/$path" ]; then\n'
               '  [ -f "/$path" ] && [ ! -L "/$path" ]\n'
@@ -176,18 +193,32 @@ def tar_bytes(files: dict[str, bytes], manifest=None):
     return buf.getvalue()
 
 
+def file_modes(files):
+    modes = {path: '600' for path in files}
+    ledger = files.get('etc/dicttech-ap/managed-files.json')
+    if ledger is not None:
+        for item in json.loads(ledger)['files']:
+            modes[item['path']] = item['mode']
+    return modes
+
+
+def mode_security(mode):
+    return {'600': '-rw-------', '644': '-rw-r--r--', '700': '-rwx------', '755': '-rwxr-xr-x'}[mode]
+
+
 def bundle(files, contract, device_id, ttl, approved_target=None):
     if contract.get('profile') != PROFILE or contract.get('schema_version') != SCHEMA_VERSION:
         raise ValueError('incompatible target firmware profile')
+    modes = file_modes(files)
     manifest = {
         'schema_version': SCHEMA_VERSION, 'profile': PROFILE, 'device_id': device_id,
         'token': secrets.token_hex(16), 'boot_id': contract['boot_id'],
-        'defaults_sha256': contract['defaults_sha256'], 'ttl_seconds': ttl,
+        'contract_sha256': contract['contract_sha256'], 'ttl_seconds': ttl,
         'approved_target': approved_target or {'device_id': device_id, 'bridge_mac': contract['identity'].get('bridge_mac', ''), 'allowed_boards': [contract['identity'].get('board_name', '')], 'initialize': False},
         'baseline': {key: contract[key] for key in ('files', 'modes', 'shadow_sha256', 'shadow_security', 'resolver_state', 'identity')},
-        'changed_paths': [path for path, data in files.items() if contract['files'].get(path) != digest(data) or contract['modes'].get(path) != ['-rw-------', '0'] or (path == 'etc/dicttech-ap/root-password-hash' and not contract.get('root_password_synced'))] + ([] if contract.get('resolver_correct') else ['etc/resolv.conf']),
+        'changed_paths': [path for path, data in files.items() if contract['files'].get(path) != digest(data) or contract['modes'].get(path) != [mode_security(modes[path]), '0'] or (path == 'etc/dicttech-ap/root-password-hash' and not contract.get('root_password_synced'))] + ([] if contract.get('resolver_correct') else ['etc/resolv.conf']),
         'files': [{'path': path, 'sha256': digest(data), 'size': len(data),
-                   'mode': '600', 'payload': 'payload/' + str(i)}
+                   'mode': modes[path], 'payload': 'payload/' + str(i)}
                   for i, (path, data) in enumerate(files.items())],
     }
     return manifest, tar_bytes(files, manifest)
@@ -258,7 +289,6 @@ def main():
     parser.add_argument('command', choices=['plan', 'export', 'apply', 'check', 'status', 'confirm', 'rollback'])
     parser.add_argument('--config')
     parser.add_argument('--device')
-    parser.add_argument('--defaults', default=str(DEFAULTS))
     parser.add_argument('--host')
     parser.add_argument('--port', type=int, default=12022)
     parser.add_argument('--control-socket')
@@ -299,7 +329,7 @@ def main():
             out({'state': 'exported', 'device_id': args.device, 'output': str(dest),
                  'secret_material': True, 'paths': list(files), 'preserved_identity_paths': preserved_paths, 'format': 'private-sysupgrade-tar.gz'})
             return
-        contract = remote(args, 'check') if args.host else None
+        contract = remote(args, 'check', data=json.dumps({'paths': list(files)}).encode()) if args.host else None
         if contract is not None:
             identity = contract.get('identity', {})
             if identity.get('device_id') and identity['device_id'] != args.device:
@@ -312,13 +342,14 @@ def main():
                         and (identity.get('bootstrap_isolated') is True or identity.get('bootstrap_dhcp') is True)
                         and args.expect_boot_id == contract.get('boot_id')):
                     raise RuntimeError('target bridge MAC differs; first provisioning requires an identified bootstrap device and pinned boot ID')
-            if args.command == 'apply' and identity.get('ssh_port') != str(resolved['common']['ssh_port']):
+            if args.command == 'apply' and identity.get('ssh_port') != str(resolved['device']['ssh_port']):
                 raise RuntimeError('live SSH port changes are unsupported; use offline provisioning')
-        if contract is not None and contract.get('defaults_sha256') != resolved['defaults_sha256']:
-            raise RuntimeError('target firmware defaults differ from the selected local defaults')
+        if contract is not None and contract.get('contract_sha256') != resolved['contract_sha256']:
+            raise RuntimeError('target firmware backend contract differs from the selected renderer')
+        modes = file_modes(files)
         changed = {path: data for path, data in files.items()
                    if contract is None or contract.get('files', {}).get(path) != digest(data)
-                   or contract.get('modes', {}).get(path) != ['-rw-------', '0']
+                   or contract.get('modes', {}).get(path) != [mode_security(modes[path]), '0']
                    or (path == 'etc/dicttech-ap/root-password-hash' and not contract.get('root_password_synced'))}
         if args.command == 'plan':
             result = {'device_id': args.device, 'profile': PROFILE,

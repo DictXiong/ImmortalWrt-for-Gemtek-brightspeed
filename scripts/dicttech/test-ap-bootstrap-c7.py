@@ -78,13 +78,14 @@ class Runtime:
                 text = text.replace('"/$name"', '"' + str(self.root) + '/$name"')
                 text = text.replace('destination=/$name', 'destination=' + str(self.root) + '/$name')
                 text = text.replace('base=${2:-}', 'base=${2:-' + str(self.root) + '}')
+                text = text.replace('next current=', 'next current=' + shlex.quote(str(self.root)))
                 text = re.sub(r'^(?:export )?PATH=.*$', 'export PATH=' + shlex.quote(str(self.tools)), text, flags=re.M)
                 if path.parent == self.root / 'etc/init.d':
                     text = re.sub(r'^#!.*', '#!' + str(self.rc), text, count=1)
                 elif text.startswith('#!'):
                     text = re.sub(r'^#!.*', '#!' + str(self.ash), text, count=1)
                 path.write_text(text)
-        for name in ('awk basename cat chmod cmp cp cut echo env find grep head hexdump id ln ls mkdir '
+        for name in ('awk basename cat chmod cmp cp cut echo env find grep gzip head hexdump id ln ls mkdir '
                      'mktemp mv printf readlink rm sed sha256sum sort sync tail tar touch tr uname uniq wc').split():
             self.command(name, self.bb, [name])
         for name, rel, args in [
@@ -112,6 +113,7 @@ for row in rows:print('    inet '+row['address']+'/'+str(row['mask'])+' scope gl
         for name, rel in [('nft', 'usr/sbin/nft'), ('wifi', 'sbin/wifi'), ('netifd', 'sbin/netifd')]:
             self.stub(name, 'raise RuntimeError("runtime service forbidden in fixture")\n', rel)
         self.stub('logger', 'pass\n')
+        self.stub('sysctl', 'import sys\nassert sys.argv[1] == \"-p\"\n')
         self.env = {**os.environ, 'PATH': str(self.tools), 'IPKG_INSTROOT': str(self.root),
                     'TMPDIR': str(self.root / 'tmp')}
         self.steps = []
@@ -324,11 +326,39 @@ for row in rows:print('    inet '+row['address']+'/'+str(row['mask'])+' scope gl
         self.put('etc/dropbear/authorized_keys', preserved + b'command="echo words",no-pty ' + identity_pair + b' renamed\n')
         self.shell('C7 key identity filter preserves unrelated comments', key_helper, 'retire')
         if auth.read_bytes() != preserved: raise RuntimeError('C7 key classifier confused comments with active identities')
+        # Exercise a complete generic v3 preseed with no SSIDs, no operational
+        # topology/services, and a binary755 plugin. This uses actual target
+        # ash/UCI/slimjq and the same boot acceptance path as a full AP profile.
+        sys.path.insert(0,str(self.source/'scripts/dicttech'))
+        sys.path.insert(0,str(self.source/'scripts/dicttech/tests'))
+        import ap_config
+        from resource_fixture import document,PASSWORD_HASH
+        value=document();node=value['devices']['node_0']
+        node.update(uci={},files={'etc/generic-plugin.bin':{'content_base64':'AP9iaW5hcnk=','mode':'755'}},ssids=[],peers={},services={},common={},resolver=None)
+        node['identity'].update(ethernet={},radios={},mlds={},bssids={})
+        node['platform']={'board_names':['gemtek,xr1710g']}
+        resources=ap_config.render(ap_config.resolve(value,'node_0'))
+        for path,data in resources.items():self.put(path,data)
+        for entry in json.loads(resources['etc/dicttech-ap/managed-files.json'])['files']:
+            (self.root/entry['path']).chmod(int(entry['mode'],8))
+        self.shell('C7 generic zero-SSID binary755 resource prepare',bootstrap,'prepare-boot')
+        self.shell('C7 generic resource post-normalization acceptance',bootstrap,'finalize-boot')
+        if not (self.root/'etc/dicttech-ap/accepted.json').exists() or (self.root/'tmp/dicttech-ap-bootstrap-isolated').exists():
+            raise RuntimeError('C7 generic resource record was not accepted')
+        if root_hash()!=PASSWORD_HASH or (self.root/'etc/generic-plugin.bin').read_bytes()!=b'\0\xffbinary' or (self.root/'etc/generic-plugin.bin').stat().st_mode&0o777!=0o755:
+            raise RuntimeError('C7 generic credentials, binary bytes or explicit mode differ')
+        marker_path=self.root/'etc/dicttech-ap/device.json'
+        changed=json.loads(marker_path.read_text());changed['device']['hostname']='altered-with-original-fingerprint'
+        self.put('etc/dicttech-ap/device.json',json.dumps(changed).encode())
+        self.shell('C7 accepted lifecycle metadata digest rejects modification',bootstrap,'prepare-boot')
+        if not (self.root/'tmp/dicttech-ap-bootstrap-isolated').exists():
+            raise RuntimeError('C7 accepted binding authenticated altered lifecycle metadata')
         return {'passed': True, 'steps': self.steps, 'dhcp_and_offline_pending_proven': True,
                 'actual_init_enable_exercised': True, 'slim_jq_without_regex': True,
                 'bounded_cli_success_and_missing_helper_proven': True,
                 'initialization_password_fresh_pending_reboot_confirmed_retired_with_actual_c7_tools': True,
                 'legacy_initialization_key_stripped': True,
+                'generic_zero_ssid_binary_mode_preseed_and_immutable_metadata_proven': True,
                 'ash_sha256': hashlib.sha256(self.bb.read_bytes()).hexdigest(),
                 'jq_sha256': hashlib.sha256((self.rom / 'usr/bin/jq').read_bytes()).hexdigest()}
 
