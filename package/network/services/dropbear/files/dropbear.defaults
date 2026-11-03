@@ -1,6 +1,3 @@
-# The separately provisioned AP profile owns wireless and login defaults.
-[ ! -f /usr/share/dicttech-ap/contract.json ] || exit 0
-
 [ ! -s /etc/dropbear/authorized_keys ] || exit 0
 
 . /usr/share/libubox/jshn.sh

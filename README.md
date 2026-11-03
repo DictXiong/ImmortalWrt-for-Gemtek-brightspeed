@@ -15,11 +15,11 @@ XR1710G 与 XG2010G 设备维护的 Airoha AN7581 固件项目。
 
 项目的重要功能、稳定性和补丁维护记录见 [更新日志](CHANGELOG.md)。
 
-本仓库的 `dicttech/xr1710g-ap` 自用分支另提供[统一 AP 镜像与部署流程](docs/dicttech-ap.md)，
-使用独立构建配置、无秘密的公共默认值和外部 JSON 部署。其首次启动入口与下述上游默认配置不同。
-[双版本发布流程](docs/xr1710g-releases.md)从两条活跃维护分支的固定提交，分别构建 `custom` 定制版和
-`fixes` 通用修复版，并汇入同一个 Release；通用修复分支不带个人公钥或 AP 策略，原 PR 分支保持冻结。
-一般用户选择 `fixes`；`custom` 面向 DictTech 自用部署，包含所有者公钥和预置策略。
+[完整版固件](docs/xr1710g-full.md)提供通用路由功能、改进的 WebUI、命令行工具、
+可选的 wrtix 配置管理与有线回程漫游软件包。初始配置沿用 OpenWrt 的 LAN/WAN 行为，
+无线默认关闭，不包含个人公钥、密码、维护地址或 AP 策略。
+[双版本发布流程](docs/xr1710g-releases.md)分别构建 `full` 完整版和
+`fixes` 通用修复版，并汇入同一个 Release；后者仅在固定上游基线中加入硬件/驱动修复。
 
 当前维护两个相互隔离的硬件配置：
 
@@ -37,7 +37,9 @@ XR1710G 与 XG2010G 设备维护的 Airoha AN7581 固件项目。
 
 ### XR1710G
 
-默认管理地址：http://192.168.50.1 或 http://immortalwrt.lan，用户名：**root**，密码：*无*。
+以下默认地址与无线设置适用于 `1710.config` 基线及 fixes 构建。**full** 使用 `192.168.1.1`，root 空密码、LAN 侧 SSH 22，无线初始关闭；请通过 LuCI 设置所在地区和无线安全，或自行选择 wrtix 管理。完整差异见 [full 使用说明](docs/xr1710g-full.md)。
+
+基线默认管理地址：http://192.168.50.1 或 http://immortalwrt.lan，用户名：**root**，密码：*无*。
 
 首次启动的无线网络为 `ImmortalWrt-2G`、`ImmortalWrt-5G` 和 `ImmortalWrt-6G`，统一初始密码为 `12345678`。2.4GHz 使用 WPA2，5GHz 使用 WPA2/WPA3 混合模式，6GHz 使用 WPA3；首次登录后请及时修改管理密码和无线密码。
 
@@ -120,6 +122,8 @@ XG2010G 与 XR1710G 同属 Airoha AN7581 平台，但硬件布局和软件包集
 - 启动与设备定制：`03_wifi_defaults`（SSID、加密方式、US 区域码）、`03_wireless`（射频参数）、`18-xr1710g-firewall-defaults`（默认软件/硬件 flow offload）、`99-ppe-reload`（无线接口创建后重载防火墙）、`packet-steering.sh`（Wi-Fi worker/CPU 亲和性）、风扇服务、升级平台脚本，以及由 `airoha` feed 提供的附属 LuCI 应用。
 
 ### 网络与无线默认行为
+
+以下描述基线构建；full 的初始网络及无线行为以上述 full 使用说明为准。
 
 - 默认 LAN 地址由各设备构建配置的 `CONFIG_TARGET_PREINIT_IP` 决定：XR1710G 为 `192.168.50.1`，XG2010G 为 `192.168.1.1`；IPv6 使用 SLAAC/EUI-64，关闭 DHCPv6/NDP 与 RA DNS/附加标志，减少国内网络环境下的兼容性问题。
 - 默认开启 firewall4 软件 flow offload 与硬件 flow offload；VLAN 标签卸载、PPPoE 透传卸载和 AP 模式加速可在 NPU 页面按需启用，并由 FlowSense 展示运行状态。

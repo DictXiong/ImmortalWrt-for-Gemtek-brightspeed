@@ -8,6 +8,10 @@ on:
       - configs/xr1710g-release.json
   workflow_dispatch:
     inputs:
+      wrtix_repository:
+        description: wrtix repository override (owner/name); defaults to WRTIX_REPOSITORY or DictXiong/wrtix
+        required: false
+        type: string
       layout:
         description: 分区布局（不会转换引导程序）
         required: true
@@ -31,7 +35,7 @@ jobs:
   plan:
     runs-on: ubuntu-24.04
     outputs:
-      custom_commit: ${{ steps.pins.outputs.custom_commit }}
+      full_commit: ${{ steps.pins.outputs.full_commit }}
       fixes_commit: ${{ steps.pins.outputs.fixes_commit }}
     steps:
       - uses: actions/checkout@v6
@@ -41,14 +45,14 @@ jobs:
       - name: Freeze and validate the two source commits
         id: pins
         env:
-          CUSTOM_SHA: ${{ github.sha }}
+          FULL_SHA: ${{ github.sha }}
         run: |
           python3 scripts/dicttech/release.py plan > "$RUNNER_TEMP/release-plan.json"
           python3 - "$RUNNER_TEMP/release-plan.json" >> "$GITHUB_OUTPUT" <<'PY'
           import json, os, sys
           plan = json.load(open(sys.argv[1]))
-          assert plan['release_commit'] == os.environ['CUSTOM_SHA']
-          print('custom_commit=' + plan['release_commit'])
+          assert plan['release_commit'] == os.environ['FULL_SHA']
+          print('full_commit=' + plan['release_commit'])
           print('fixes_commit=' + plan['fixes_commit'])
           PY
       - name: Check optional draft-release authorization before compiling
@@ -59,6 +63,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$ ]] || { echo 'Invalid tag'; exit 1; }
+          expected_tag=$(python3 -c 'import json; print("v" + json.load(open("configs/xr1710g-release.json"))["version"])')
+          [[ "$RELEASE_TAG" == "$expected_tag" ]] || { echo "Use the configured version tag: $expected_tag" >&2; exit 1; }
           [[ -n "$GH_TOKEN" ]] || { echo 'Set RELEASE_TOKEN with Contents and Workflows write permission, or leave release_tag empty.' >&2; exit 1; }
           # Read only. GitHub checks the token's write permissions when creating
           # the release; do not mistake repository visibility for authorization.
@@ -72,14 +78,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        flavor: [custom, fixes]
+        flavor: [full, fixes]
     steps:
-      # The release controller always comes from the pinned custom commit.
+      # The release controller always comes from the pinned full commit.
       # prepare checks out the selected edition's exact source commit separately.
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.plan.outputs.custom_commit }}
+          ref: ${{ needs.plan.outputs.full_commit }}
           fetch-depth: 0
+      - name: Fetch pinned wrtix source
+        if: matrix.flavor == 'full'
+        env:
+          WRTIX_REPOSITORY: ${{ inputs.wrtix_repository || vars.WRTIX_REPOSITORY || 'DictXiong/wrtix' }}
+        run: |
+          [[ "$WRTIX_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo 'Set WRTIX_REPOSITORY to the published owner/repository.' >&2; exit 1; }
+          revision=$(python3 -c 'import json; print(json.load(open("configs/wrtix-source.json"))["revision"])')
+          git clone "https://github.com/$WRTIX_REPOSITORY.git" "$RUNNER_TEMP/wrtix"
+          git -C "$RUNNER_TEMP/wrtix" checkout --detach "$revision"
+          echo "WRTIX_SOURCE=$RUNNER_TEMP/wrtix" >> "$GITHUB_ENV"
       - name: Record hosted build capacity
         run: |
           nproc
@@ -92,14 +108,14 @@ jobs:
       - name: Check pinned-source and artifact separation
         if: matrix.flavor == 'fixes'
         run: python3 scripts/dicttech/tests/test_release.py
-      - name: Validate the exact custom source before building
-        if: matrix.flavor == 'custom'
+      - name: Validate the exact full source before building
+        if: matrix.flavor == 'full'
         run: sudo bash scripts/dicttech/check-regressions.sh host
       - name: Prepare the exact edition source
         env:
           FLAVOR: ${{ matrix.flavor }}
           LAYOUT: ${{ inputs.layout || 'legacy' }}
-          CUSTOM_SHA: ${{ needs.plan.outputs.custom_commit }}
+          FULL_SHA: ${{ needs.plan.outputs.full_commit }}
           FIXES_SHA: ${{ needs.plan.outputs.fixes_commit }}
         run: |
           python3 scripts/dicttech/release.py prepare --flavor "$FLAVOR" --layout "$LAYOUT" \
@@ -107,9 +123,9 @@ jobs:
           python3 - "$RUNNER_TEMP/xr-release-$FLAVOR/source.json" <<'PY'
           import json, os, sys
           source = json.load(open(sys.argv[1]))
-          assert source['release_commit'] == os.environ['CUSTOM_SHA']
+          assert source['release_commit'] == os.environ['FULL_SHA']
           assert source['fixes_commit'] == os.environ['FIXES_SHA']
-          expected = os.environ['CUSTOM_SHA'] if os.environ['FLAVOR'] == 'custom' else os.environ['FIXES_SHA']
+          expected = os.environ['FULL_SHA'] if os.environ['FLAVOR'] == 'full' else os.environ['FIXES_SHA']
           assert source['source_commit'] == expected
           PY
       - name: Build and audit matched firmware and APKs
@@ -119,17 +135,17 @@ jobs:
           set -o pipefail
           python3 scripts/dicttech/release.py build --directory "$RUNNER_TEMP/xr-release-$FLAVOR" --jobs "$(nproc)" \
             2>&1 | tee "$RUNNER_TEMP/xr-$FLAVOR-build.log"
-      - name: Exercise the custom image's real ARM64 programs
-        if: matrix.flavor == 'custom'
+      - name: Exercise the full image's real ARM64 programs
+        if: matrix.flavor == 'full'
         run: |
-          source="$RUNNER_TEMP/xr-release-custom/source"
+          source="$RUNNER_TEMP/xr-release-full/source"
           rootfs=$(find "$source/build_dir" -maxdepth 2 -type d -name root-airoha -print -quit)
           test -n "$rootfs"
           sudo bash "$source/scripts/dicttech/check-regressions.sh" rootfs "$rootfs" "$source/bin/targets/airoha/an7581"
       - name: Upload only the audited public edition
         uses: actions/upload-artifact@v7
         with:
-          name: xr1710g-${{ matrix.flavor }}-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.custom_commit }}
+          name: xr1710g-${{ matrix.flavor }}-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.full_commit }}
           if-no-files-found: error
           retention-days: 30
           path: ${{ runner.temp }}/xr-release-${{ matrix.flavor }}/public/*
@@ -137,7 +153,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: xr1710g-${{ matrix.flavor }}-build-log-${{ needs.plan.outputs.custom_commit }}
+          name: xr1710g-${{ matrix.flavor }}-build-log-${{ needs.plan.outputs.full_commit }}
           if-no-files-found: ignore
           retention-days: 14
           path: ${{ runner.temp }}/xr-${{ matrix.flavor }}-build.log
@@ -147,11 +163,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.plan.outputs.custom_commit }}
+          ref: ${{ needs.plan.outputs.full_commit }}
           fetch-depth: 0
       - uses: actions/download-artifact@v8
         with:
-          pattern: xr1710g-*-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.custom_commit }}
+          pattern: xr1710g-*-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.full_commit }}
           path: ${{ runner.temp }}/edition-artifacts
       - name: Verify both editions belong to the pinned source pair
         run: |
@@ -159,7 +175,7 @@ jobs:
             --output "$RUNNER_TEMP/release-pair"
       - uses: actions/upload-artifact@v7
         with:
-          name: xr1710g-release-pair-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.custom_commit }}
+          name: xr1710g-release-pair-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.full_commit }}
           if-no-files-found: error
           retention-days: 30
           path: ${{ runner.temp }}/release-pair/*
@@ -170,11 +186,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.plan.outputs.custom_commit }}
+          ref: ${{ needs.plan.outputs.full_commit }}
           fetch-depth: 0
       - uses: actions/download-artifact@v8
         with:
-          name: xr1710g-release-pair-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.custom_commit }}
+          name: xr1710g-release-pair-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.full_commit }}
           path: release-pair
       - name: Generate Chinese notes from the verified source pair
         run: |
@@ -184,10 +200,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           RELEASE_TAG: ${{ inputs.release_tag }}
-          RELEASE_SHA: ${{ needs.plan.outputs.custom_commit }}
+          RELEASE_SHA: ${{ needs.plan.outputs.full_commit }}
           GH_REPO: ${{ github.repository }}
         run: |
           [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$ ]] || { echo 'Invalid tag'; exit 1; }
+          expected_tag=$(python3 -c 'import json; print("v" + json.load(open("configs/xr1710g-release.json"))["version"])')
+          [[ "$RELEASE_TAG" == "$expected_tag" ]] || { echo "Use the configured version tag: $expected_tag" >&2; exit 1; }
           [[ -n "$GH_TOKEN" ]] || { echo 'RELEASE_TOKEN is required for draft creation.' >&2; exit 1; }
           # Repeat existence checks after compiling to avoid overwriting a tag
           # or release created while the two independent builders were running.
@@ -195,6 +213,8 @@ jobs:
           [[ -z "$existing" ]] || { echo 'Use a new release tag'; exit 1; }
           gh api --paginate "repos/$GH_REPO/releases" --jq '.[].tag_name' > "$RUNNER_TEMP/release-tags"
           if grep -Fxq "$RELEASE_TAG" "$RUNNER_TEMP/release-tags"; then echo 'Release already exists'; exit 1; fi
-          gh release create "$RELEASE_TAG" --target "$RELEASE_SHA" --draft \
-            --title "XR1710G $RELEASE_TAG（定制版与通用修复版）" \
+          release_flags=()
+          [[ "$RELEASE_TAG" != *-* ]] || release_flags+=(--prerelease)
+          gh release create "$RELEASE_TAG" --target "$RELEASE_SHA" --draft "${release_flags[@]}" \
+            --title "XR1710G $RELEASE_TAG（完整版与通用修复版）" \
             --notes-file "$RUNNER_TEMP/release-notes.md" release-pair/*

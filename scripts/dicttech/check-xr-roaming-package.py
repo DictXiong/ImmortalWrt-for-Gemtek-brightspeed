@@ -97,13 +97,7 @@ def main():
 
     def defaults():
         config = (package / "files/xr_roaming.config").read_text()
-        profiles = []
-        for section in config.split("config roaming ")[1:]:
-            profiles.append(section.splitlines()[0].strip("'"))
-            assert "option enabled '0'" in section
-            assert "option peer " not in section and "list peer_bssid " not in section
-        assert profiles == ["main", "guest", "iot"]
-        assert config.count("option mlo '") == 3 and config.count("option max_links '") == 3
+        assert all(not line.strip() or line.lstrip().startswith("#") for line in config.splitlines())
         conffiles = makefile.split("define Package/xr-roaming/conffiles\n", 1)[1].split("\nendef", 1)[0]
         assert conffiles.splitlines() == ["/etc/config/xr_roaming"]
         assert "uci-defaults" not in makefile
@@ -111,7 +105,7 @@ def main():
         assert "CLI=/usr/sbin/hostapd_cli\n" in helper and "CLI_SHA=" not in helper
         assert "$(LN) /tmp/xr-roaming-public $(1)/www/xr-roaming" in makefile
 
-    check("disabled-profile-and-package-persistence-contract", defaults)
+    check("unconfigured-profile-and-package-persistence-contract", defaults)
 
     if args.installed_root:
         def payload():

@@ -6,13 +6,13 @@ an incremental build. This checker uses Python's standard library and does not
 connect to a router or modify an image.
 
 ```sh
-python3 scripts/dicttech/check-ap-image.py \
+python3 scripts/dicttech/check-image.py \
   --layout legacy --image /build/xr1710g-sysupgrade.itb \
   --rootfs /build/root-airoha --kernel-release 6.18.55 \
   --output /build/image-check.json
 ```
 
-`--profile` is an alias for `--layout`. Use `ubi` only for the distinct OpenWrt
+Use `--layout ubi` only for the distinct OpenWrt
 U-Boot layout. A passing UBI image check does not convert a legacy device's boot
 chain or factory data. The deployer must separately match the running device's
 U-Boot, raw NAND layout and UBI volumes to the selected image, then run the
@@ -45,14 +45,12 @@ The gate verifies:
   was extracted from this exact FIT rootfs. Keep the build manifest, kernel
   configuration, feed pins and matching kmod packages as release artifacts.
 
-The historical C7 legacy DTB carried `gemtek,xr1710g-ubi` as an extra compatible.
-For auditing that old image only, add `--allow-legacy-ubi-alias`. New legacy
-releases should retain only their proper legacy device identity.
+Legacy and UBI board aliases must never be mixed in one device tree.
 
 Optional independent tools may be supplied by explicit path:
 
 ```sh
-python3 scripts/dicttech/check-ap-image.py --layout legacy --image image.itb \
+python3 scripts/dicttech/check-image.py --layout legacy --image image.itb \
   --fwtool /tools/fwtool --fit-check-sign /tools/fit_check_sign
 ```
 
@@ -64,7 +62,7 @@ cryptographic release/signature trust remains a separate release policy.
 Run the public, synthetic regression fixtures:
 
 ```sh
-python3 scripts/dicttech/tests/test_ap_image.py
+python3 scripts/dicttech/tests/test_image.py
 ```
 
 For a layout change, amend the source DTS and rebuild the image. Copying an old
@@ -83,28 +81,32 @@ package `files/` directories while leaving a superficially usable build tree.
 Compare the actual rootfs bytes against the authoritative reviewed repository:
 
 ```sh
-python3 scripts/dicttech/check-ap-rootfs.py \
+python3 scripts/dicttech/check-rootfs.py \
   --rootfs /build/root-airoha --source-root /reviewed/firmware-repository \
   --manifest /build/xr1710g.manifest --output /build/rootfs-check.json
 ```
 
-The checker compares every `ap-profile/files/` file at its installed path. It
-parses the `xr-roaming` Makefile install mapping, including its disabled default
-UCI configuration. This is a **virgin image** check; a running AP legitimately
-has its own device configuration and credentials. It also verifies installed
-wireless/default-password generators against source, checks the AP conditional
-that generates disabled Wi-Fi interfaces, and confirms upstream credential and
-wireless defaults are suppressed. It does not execute a hardware-dependent UCI
-wireless generator on the build host.
+The source tree must have completed `build-full.sh --prepare-only` with its pinned
+`WRTIX_SOURCE`; this materializes and verifies the feed used by the checker.
 
-Device deployment state, preset usable root passwords in shadow and private SSH/HTTPS
-host identities are rejected in the shared image. The public root/password
-initialization hash is an immutable, checked asset installed only by fresh boot;
-it is not device secret material. The owner public-key file
-is required to match the reviewed `cli-profile` asset exactly, as a regular
-0600 file; missing, empty, extra or replaced keys fail. CLI assets, helper,
-root rc files, ARP policy and the reviewed history collector/RPC/init/ACL
-postimages are also checked for source drift and applicable permissions.
+The checker compares the public `xr1710g-full` marker and pinned `wrtix-agent`
+runtime, contract, lifecycle hooks and runtime hash inventory at installed paths.
+It rejects retired runtime files and deployment state. It parses the `xr-roaming`
+install mapping, including its disabled defaults, and verifies history/factory UI
+postimages and RPC permissions. This is a **virgin image** check; running devices
+legitimately carry user configuration and credentials.
+
+The full-edition wireless guards suppress upstream fixed-country/password presets
+and disable newly generated interfaces without rewriting preserved configuration.
+The checker verifies their installed bytes and guard markers; actual hardware
+wireless generation is a separate target check.
+
+Personal CLI/setup assets, nonempty authorized-key sets, preset root password
+hashes, private SSH/HTTPS device keys, custom root shell and personal network
+presets are rejected. The image does not prescribe an AP maintenance subnet or a
+netifd-only resolver symlink. Routing packages are required alongside management
+and wireless tools. User SSH keys, password, topology and shell preferences belong
+in configuration applied after installation.
 The manifest policy reuses `REQUIRED` and `FORBIDDEN` from `check-build.py`, so
 package selection and artifact checks share one policy. Manifest checking is
 optional; supply the manifest produced alongside the exact finished image.
@@ -112,12 +114,12 @@ optional; supply the manifest produced alongside the exact finished image.
 To check the rootfs from the **final ITB**, rather than a staging directory:
 
 ```sh
-python3 scripts/dicttech/check-ap-image.py \
+python3 scripts/dicttech/check-image.py \
   --layout legacy --image /build/xr1710g-sysupgrade.itb \
-  --rootfs-image-output /private/ap-root.squashfs --output /build/image-check.json
-unsquashfs -d /private/ap-root /private/ap-root.squashfs
-python3 scripts/dicttech/check-ap-rootfs.py \
-  --rootfs /private/ap-root --source-root /reviewed/firmware-repository \
+  --rootfs-image-output /private/image-root.squashfs --output /build/image-check.json
+unsquashfs -d /private/image-root /private/image-root.squashfs
+python3 scripts/dicttech/check-rootfs.py \
+  --rootfs /private/image-root --source-root /reviewed/firmware-repository \
   --manifest /build/xr1710g.manifest --output /build/rootfs-check.json
 ```
 
@@ -129,6 +131,6 @@ comparison source; an unverified build mirror is not an independent reference.
 Reports must be written outside the rootfs being verified.
 
 ```sh
-python3 scripts/dicttech/tests/test_ap_rootfs.py
-python3 scripts/dicttech/tests/test_ap_image.py
+python3 scripts/dicttech/tests/test_rootfs.py
+python3 scripts/dicttech/tests/test_image.py
 ```

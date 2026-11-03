@@ -4,7 +4,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=xr-roaming
 PKG_VERSION:=6.0.0
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 PKG_LICENSE:=GPL-2.0-only
 PKGARCH:=all
 
@@ -19,7 +19,7 @@ define Package/xr-roaming
 endef
 
 define Package/xr-roaming/description
-  Validated multi-link neighbor-report exchange for the C7 XR1710G AP profile.
+  Validated multi-link neighbor-report exchange for user-configured XR1710G ESSes.
   Maintains separate candidate lists for up to seventeen configured ESSes over wired LAN.
   Does not change wireless configuration, select channels or steer clients.
 endef

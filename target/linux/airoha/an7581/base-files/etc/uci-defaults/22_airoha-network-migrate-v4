@@ -1,5 +1,9 @@
 #!/bin/sh
 
+# Declarative configurations already name the target netdevs explicitly.
+# Do not reinterpret a deliberately managed CPU device as a legacy WAN alias.
+[ ! -e /etc/wrtix/identity.json ] || exit 0
+
 . /lib/functions.sh
 . /lib/functions/system.sh
 

@@ -1,6 +1,7 @@
 #!/bin/sh
-# The separately provisioned AP profile owns wireless and login defaults.
-[ ! -f /usr/share/dicttech-ap/contract.json ] || exit 0
+# Full uses ordinary disabled radio discovery, without preset country or keys.
+# Existing user configuration must survive sysupgrade unchanged.
+[ ! -f /etc/xr1710g-full ] || exit 0
 
 #
 # Copyright (C) 2026 ImmortalWrt

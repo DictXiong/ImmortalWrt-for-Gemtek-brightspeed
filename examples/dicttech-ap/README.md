@@ -9,5 +9,5 @@ credentials. Keep real complete documents private (mode0600).
 Production Nix configuration should generate the resource document; users do not
 need to maintain this lower-level structure by hand. See the
 [resource format](../../docs/dicttech-config-format.md) and
-[deployment guide](../../docs/dicttech-ap.md). There is no split/common/defaults
+[deployment guide](../../docs/xr1710g-full.md). There is no split/common/defaults
 merge input or legacy migration interface.

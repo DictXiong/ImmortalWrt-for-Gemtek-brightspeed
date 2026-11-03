@@ -15,7 +15,7 @@ import unittest
 
 REPO=Path(__file__).resolve().parents[4]
 PATCH=REPO/'patches/feeds/app_airoha/luci-app-airoha-factory/120-dicttech-readonly-split-dsd.patch'
-spec=importlib.util.spec_from_file_location('rootfs_gate',REPO/'scripts/dicttech/check-ap-rootfs.py')
+spec=importlib.util.spec_from_file_location('rootfs_gate',REPO/'scripts/dicttech/check-rootfs.py')
 gate=importlib.util.module_from_spec(spec);spec.loader.exec_module(gate)
 ROM=None
 QEMU=None

@@ -1,4 +1,4 @@
-# Verify the APKs published with an AP image
+# Verify the APKs published with an firmware image
 
 A correct flashed image and a usable APK release set are separate checks.
 Cached APKs can have the same name/version and kernel release while carrying
@@ -7,7 +7,7 @@ Select the exact final image manifest and the trusted keys from that image's
 assembled or, preferably, extracted rootfs:
 
 ```sh
-python3 scripts/dicttech/check-ap-packages.py \
+python3 scripts/dicttech/check-packages.py \
   --manifest /build/targets/airoha/an7581/current-image.manifest \
   --package-root /build/targets/airoha/an7581/packages \
   --package-root /build/packages/aarch64_cortex-a53 \
@@ -52,5 +52,5 @@ This script does not rotate keys, re-sign packages or repair a failed cache.
 Run synthetic local fixtures without network access or real signing keys:
 
 ```sh
-python3 scripts/dicttech/tests/test_ap_packages.py
+python3 scripts/dicttech/tests/test_packages.py
 ```

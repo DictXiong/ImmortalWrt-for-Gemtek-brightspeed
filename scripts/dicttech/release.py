@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Build one release from pinned personal and generic-fixes commits.
+"""Build one release from pinned full-featured and generic-fixes commits.
 
-The personal release commit records an already merged fixes snapshot. Both
+The full release commit records an already merged fixes snapshot. Both
 editions use exact clean checkouts; builds never move a maintained branch.
 """
 from __future__ import annotations
@@ -22,13 +22,21 @@ LOCK = 'configs/xr1710g-release.json'
 FEEDS = 'configs/xr1710g-fixes-feeds.conf'
 LOCK_SCHEMA = 2
 ARTIFACT_SCHEMA = 3
-FLAVORS = ('custom', 'fixes')
-FORBIDDEN_PACKAGES = {'ap-profile', 'cli-profile', 'xr-roaming'}
+PUBLIC_VERSION = r'(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:alpha|beta|rc)\.[1-9][0-9]*)?'
+FLAVORS = ('full', 'fixes')
+FORBIDDEN_PACKAGES = {'xr1710g-full', 'xr1710g-cli', 'ap-profile', 'wrtix-agent', 'dicttech-setup', 'cli-profile', 'xr-roaming'}
 
 
 def need(value, message):
     if not value:
         raise ValueError(message)
+
+
+def package_version(version):
+    """Map the public prerelease name to APK's ordered version syntax."""
+    need(isinstance(version, str) and re.fullmatch(PUBLIC_VERSION, version),
+         'Invalid public version')
+    return re.sub(r'-(alpha|beta|rc)\.([1-9][0-9]*)$', r'_\1\2', version)
 
 
 def run(args, cwd, *, data=None, capture=True, env=None):
@@ -60,9 +68,9 @@ def plan(repo):
     lock = json.loads(git(repo, 'show', revision + ':' + LOCK))
     need(set(lock) == {'schema_version', 'version', 'upstream_base', 'fixes_commit'} and
          lock['schema_version'] == LOCK_SCHEMA, 'Unsupported release lock')
-    need(re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', lock['version']), 'Invalid public version')
-    profile=git(repo,'show',revision+':package/dicttech/ap-profile/Makefile')
-    need(re.search(r'^PKG_VERSION:='+re.escape(lock['version'])+r'$',profile,re.M), 'Release/profile version mismatch')
+    marker_version = package_version(lock['version'])
+    profile=git(repo,'show',revision+':package/dicttech/xr1710g-full/Makefile')
+    need(re.search(r'^PKG_VERSION:='+re.escape(marker_version)+r'$',profile,re.M), 'Release/profile version mismatch')
     for commit in [lock['upstream_base'], lock['fixes_commit']]:
         need(isinstance(commit, str) and re.fullmatch('[0-9a-f]{40}', commit), 'Use full commit IDs')
         need(git(repo, 'cat-file', '-t', commit) == 'commit', 'Source ID is not a commit')
@@ -88,7 +96,10 @@ def plan(repo):
     stock_names = {line.split()[-2] for line in git(repo, 'show', lock['fixes_commit'] + ':feeds.conf.default').splitlines()
                    if line.startswith('src-git ')}
     need({x['name'] for x in feed_rows} == stock_names, 'Fixes feed lock must cover exactly the upstream feeds')
-    return {'release_commit': revision,
+    wrtix = json.loads(git(repo, 'show', revision + ':configs/wrtix-source.json'))
+    need(set(wrtix) == {'schema_version', 'revision', 'archive_sha256'} and wrtix['schema_version'] == 1 and
+         re.fullmatch('[0-9a-f]{40}', wrtix['revision']) and re.fullmatch('[0-9a-f]{64}', wrtix['archive_sha256']), 'Invalid wrtix source pin')
+    return {'release_commit': revision, 'wrtix_source': wrtix,
             'source_date_epoch': int(git(repo, 'show', '-s', '--format=%ct', revision)),
             **lock,
             'fixed_feeds': feed_rows, 'feed_text': feeds}
@@ -98,7 +109,7 @@ def source_check(directory, receipt):
     source = directory / 'source'
     need(receipt.get('schema_version') == ARTIFACT_SCHEMA, 'Unsupported build receipt schema')
     need(receipt['flavor'] in FLAVORS and receipt['layout'] in ('legacy', 'ubi'), 'Invalid build receipt')
-    expected = receipt['release_commit'] if receipt['flavor'] == 'custom' else receipt['fixes_commit']
+    expected = receipt['release_commit'] if receipt['flavor'] == 'full' else receipt['fixes_commit']
     need(receipt['source_commit'] == expected, 'Edition source does not match its fixed commit')
     need(git(source, 'rev-parse', 'HEAD') == expected, 'Source HEAD moved')
     need(receipt['source_tree'] == git(source, 'rev-parse', expected+'^{tree}'),
@@ -121,7 +132,7 @@ def prepare(repo, directory, flavor, layout):
     directory.mkdir(parents=True)
     source = directory / 'source'
     run(['git', 'clone', '--shared', '--no-checkout', str(repo), str(source)], repo)
-    source_commit = p['release_commit'] if flavor == 'custom' else p['fixes_commit']
+    source_commit = p['release_commit'] if flavor == 'full' else p['fixes_commit']
     run(['git', 'checkout', '--detach', source_commit], source)
     receipt = {k: v for k, v in p.items() if k != 'feed_text'}
     receipt['schema_version'] = ARTIFACT_SCHEMA
@@ -160,8 +171,8 @@ def module(filename, name):
 
 
 def fixes_image_checker():
-    checker = module('check-ap-image.py', 'release_fit')
-    # Strict stock layout, not a relaxation of the personal six-partition audit.
+    checker = module('check-image.py', 'release_fit')
+    # Strict stock layout, not a relaxation of the full-edition six-partition audit.
     checker.PARTITIONS = dict(checker.PARTITIONS)
     checker.PARTITIONS['legacy'] = [('vendor', 0, 0x600000, False),
         ('chainloader', 0x600000, 0x100000, True), ('ubi', 0x700000, 0x1b700000, False),
@@ -177,7 +188,7 @@ def community_audit(source, image, manifest, layout, output):
     rootfs = output / 'rootfs'
     run([str(source/'staging_dir/host/bin/unsquashfs4'), '-no-progress', '-no-xattrs', '-excludes',
          '-d', str(rootfs), str(squash), 'dev'], source)
-    packages = module('check-ap-packages.py', 'release_packages')
+    packages = module('check-packages.py', 'release_packages')
     installed = packages.read_manifest(manifest)
     audit_fixes_rootfs(rootfs, installed)
     fit['modules'] = checker.check_modules(rootfs, installed['kernel'].split('~',1)[0])
@@ -188,11 +199,14 @@ def community_audit(source, image, manifest, layout, output):
 
 
 def audit_fixes_rootfs(rootfs, installed):
-    need(not FORBIDDEN_PACKAGES.intersection(installed), 'Personal package in fixes manifest')
+    need(not FORBIDDEN_PACKAGES.intersection(installed), 'Full-edition or personal package in fixes manifest')
     for relative in ['usr/share/dicttech-ap', 'usr/share/dicttech-cli', 'usr/lib/xr-roaming',
-                     'etc/dicttech-ap', 'etc/dicttech-ap-bootstrap-key']:
+                     'etc/dicttech-ap', 'etc/dicttech-ap-bootstrap-key',
+                     'usr/share/dicttech-setup', 'usr/libexec/dicttech-setup',
+                     'usr/share/wrtix', 'usr/libexec/wrtix', 'etc/wrtix', 'etc/xr1710g-full',
+                     'usr/share/xr1710g-cli', 'etc/profile.d/80-xr1710g-cli.sh']:
         need(not (rootfs/relative).exists() and not (rootfs/relative).is_symlink(),
-             'Personal runtime policy in fixes rootfs')
+             'Full-edition or personal runtime in fixes rootfs')
     for relative in ['etc/dropbear/authorized_keys', 'root/.ssh/authorized_keys']:
         path = rootfs/relative
         need(not path.is_symlink() and (not path.exists() or not path.read_bytes().strip()),
@@ -206,13 +220,13 @@ def build(directory, jobs, prepare_only=False):
     need(isinstance(jobs, int) and 1 <= jobs <= 256, 'Invalid parallelism')
     source_check(directory, d)
     locked = plan(ROOT)
-    need(all(d[key] == locked[key] for key in ['release_commit','source_date_epoch','version','upstream_base','fixes_commit','fixed_feeds']),
+    need(all(d[key] == locked[key] for key in ['release_commit','source_date_epoch','version','upstream_base','fixes_commit','fixed_feeds','wrtix_source']),
          'Build receipt is not bound to this release controller')
     env = {**os.environ, 'SOURCE_DATE_EPOCH': str(d['source_date_epoch'])}
     def shell(script):
         run(['bash', '-Eeuo', 'pipefail', '-c', 'umask 022\n'+script], source, capture=False, env=env)
-    if d['flavor'] == 'custom':
-        command = ['bash', 'scripts/dicttech/build-ap.sh', '--layout', d['layout'], '--jobs', str(jobs)]
+    if d['flavor'] == 'full':
+        command = ['bash', 'scripts/dicttech/build-full.sh', '--layout', d['layout'], '--jobs', str(jobs)]
         if prepare_only: command.append('--prepare-only')
         run(command, source, capture=False, env=env)
     else:
@@ -239,7 +253,7 @@ def build(directory, jobs, prepare_only=False):
         package_dir = output/'packages'
     else:
         package_dir = target/'dicttech-packages'/image.name.removesuffix('-squashfs-sysupgrade.itb')
-        need(package_dir.is_dir(), 'Verified custom-edition APK set missing')
+        need(package_dir.is_dir(), 'Verified full-edition APK set missing')
     public = directory/'public';public.mkdir()
     # Flat variant archives prevent collisions between config.buildinfo, APKs,
     # kernel ABI and checksums. Never upload bin/** or builder signing keys.
@@ -250,6 +264,14 @@ def build(directory, jobs, prepare_only=False):
             need(path.is_file() and not path.is_symlink(), 'Release metadata missing')
             archive.add(path,arcname=path.name,recursive=False)
         archive.add(directory/'source.json',arcname='source.json',recursive=False)
+        if d['flavor'] == 'full':
+            metadata = target/'dicttech-wrtix-source.json'
+            pin = json.loads(metadata.read_text())
+            need(all(pin.get(key) == value for key, value in d['wrtix_source'].items()), 'Built wrtix package source differs from release pin')
+            archive.add(metadata, arcname=metadata.name, recursive=False)
+            wrtix_archive = target/'dicttech-wrtix-source.tar'
+            need(wrtix_archive.is_file() and not wrtix_archive.is_symlink() and digest(wrtix_archive) == pin['archive_sha256'], 'Built wrtix source archive differs from pin')
+            archive.add(wrtix_archive, arcname=wrtix_archive.name, recursive=False)
         for path in sorted(package_dir.iterdir()):
             need(path.is_file() and not path.is_symlink() and path.suffix=='.apk', 'Unexpected APK export member')
             archive.add(path,arcname='packages/'+path.name,recursive=False)
@@ -278,14 +300,15 @@ def assemble(inputs, output, revision, expected_fixes, expected_upstream=None, e
              d.get('release_commit') == revision and d.get('fixes_commit') == expected_fixes and
              d.get('flavor') in FLAVORS,
              'Artifact has a different source or did not pass')
-        source_commit=revision if d['flavor']=='custom' else expected_fixes
+        source_commit=revision if d['flavor']=='full' else expected_fixes
         need(d.get('source_commit')==source_commit,'Artifact edition has the wrong source commit')
         need(re.fullmatch('[0-9a-f]{40}',d.get('source_tree','')),'Invalid source tree')
         if expected_upstream is not None:
             need(d['upstream_base']==expected_upstream,'Artifact upstream base changed')
         if expected_trees is not None:
             need(d['source_tree']==expected_trees[d['flavor']],'Artifact source tree changed')
-        need(d['layout'] in ('legacy','ubi') and re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+-'+revision[:12],d['build_version']),
+        package_version(d['version'])
+        need(d['layout'] in ('legacy','ubi') and d['build_version'] == d['version']+'-'+revision[:12],
              'Invalid artifact layout/version')
         expected = 'xr1710g-'+d['flavor']+'-'+d['layout']+'-'+d['build_version']
         need(path.name == expected+'.json' and d['bundle'] == expected+'.tar.gz', 'Unexpected artifact name')
@@ -305,6 +328,12 @@ def assemble(inputs, output, revision, expected_fixes, expected_upstream=None, e
             image_name=d['image'];need(Path(image_name).name==image_name and image_name.endswith('-squashfs-sysupgrade.itb'),'Invalid image name')
             allowed={image_name,image_name.removesuffix('-squashfs-sysupgrade.itb')+'.manifest',
                      'source.json','config.buildinfo','feeds.buildinfo','version.buildinfo'}
+            if d['flavor'] == 'full':
+                allowed.update({'dicttech-wrtix-source.json', 'dicttech-wrtix-source.tar'})
+                need({'dicttech-wrtix-source.json', 'dicttech-wrtix-source.tar'} <= {m.name for m in members}, 'Required wrtix source metadata absent')
+                pin = json.load(archive.extractfile('dicttech-wrtix-source.json'))
+                need(all(pin.get(key) == value for key, value in d['wrtix_source'].items()), 'Artifact wrtix source differs from release pin')
+                need(hashlib.sha256(archive.extractfile('dicttech-wrtix-source.tar').read()).hexdigest() == pin['archive_sha256'], 'Artifact wrtix archive differs from pin')
             need(all(m.name in allowed or re.fullmatch(r'packages/[A-Za-z0-9+_.~:-]+\.apk',m.name) or
                      re.fullmatch(r'audit/[A-Za-z0-9_.-]+\.audit\.json',m.name) for m in members),
                  'Non-public file in release archive')
@@ -342,12 +371,12 @@ def generate_notes(pair_path, output_path, template_path=None):
     need(pair.get('layout') in ('legacy','ubi'),'Invalid release layout')
     lines=[(template_path or ROOT/'docs/xr1710g-release-notes.md').read_text().rstrip(),
            '', '## 本次发布的固定源码', '',
-           '- 定制版（custom）：`'+pair['release_commit']+'`',
+           '- 完整版（full）：`'+pair['release_commit']+'`',
            '- 通用修复版（fixes）：`'+pair['fixes_commit']+'`',
            '- 分区布局：`'+pair['layout']+'`','',
            '以下记录对应本次实际构建，不使用移动分支名作为版本依据。', '']
     for d in sorted(variants,key=lambda x:x['flavor']):
-        expected=pair['release_commit'] if d['flavor']=='custom' else pair['fixes_commit']
+        expected=pair['release_commit'] if d['flavor']=='full' else pair['fixes_commit']
         need(d.get('schema_version')==ARTIFACT_SCHEMA and d.get('release_commit')==pair['release_commit'] and d.get('fixes_commit')==pair['fixes_commit'] and
              d.get('source_commit')==expected and d.get('layout')==pair['layout'], 'Notes contain mixed source snapshots')
         lines += ['- `'+d['flavor']+'` 源码提交：`'+d['source_commit']+'`']
@@ -371,7 +400,7 @@ def main():
     elif args.action=='prepare':print(json.dumps(prepare(ROOT,args.directory,args.flavor,args.layout),indent=2))
     elif args.action=='assemble':
         p=plan(ROOT)
-        trees={'custom':git(ROOT,'rev-parse',p['release_commit']+'^{tree}'),
+        trees={'full':git(ROOT,'rev-parse',p['release_commit']+'^{tree}'),
                'fixes':git(ROOT,'rev-parse',p['fixes_commit']+'^{tree}')}
         assemble(args.inputs,args.output,p['release_commit'],p['fixes_commit'],p['upstream_base'],trees)
     elif args.action=='notes':generate_notes(args.pair,args.output)

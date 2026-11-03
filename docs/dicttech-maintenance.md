@@ -1,48 +1,26 @@
-# Configured and factory maintenance access
+# Access and maintenance
 
-A configured maintenance address is producer-owned policy. The backend accepts
-explicit device/access metadata and the corresponding network UCI; it does not
-choose a subnet, address, prefix length, interface, VLAN or gateway.
+A newly installed `full` image uses ordinary OpenWrt LAN management at
+`192.168.1.1`; LAN provides DHCP, and WAN is a separate DHCP client with NAT.
+There is no personal offline maintenance address or one-time shared password.
+The initial account is `root` with an empty password; SSH listens on port 22
+on the LAN. Connect from that trusted LAN and set authentication through LuCI
+or include it in the first wrtix deployment. A DHCP address obtained on WAN
+does not expose an initialization service. If the deployment changes SSH ports,
+use `--port 22 --post-switch-port NEW_PORT` along with any address handoff options.
 
-The current Nix AP profile uses DHCP for online management and a persistent
-maintenance address derived from each device's `subId`. Uniqueness is required
-within the same LAN, not globally. This additional native-network address needs
-no upstream DHCP server, but still requires a functioning configured interface.
-The Nix configuration reference is authoritative for its allocation rule and
-for the guest/local-input policy. Do not infer free addresses from failed ping.
+Once configured, management addresses, SSH policy and any offline maintenance
+interface belong to the user's configuration. wrtix does not allocate addresses,
+pick recovery ports or reset credentials on installation. A user profile may
+provide DHCP management and an additional static address, but that is not a
+property of the public firmware or agent.
 
-For offline use, connect to a bridged trusted port and configure the computer
-with a different address in the declared maintenance subnet and the correct
-mask. No default gateway or DNS is necessary for direct management. SSH uses
-the declared port. This is ordinary Linux management, not bootloader Recovery;
-it cannot recover an unbootable installed kernel.
+For a configured static maintenance interface, connect to the declared trusted
+port and use an unused address in its subnet with the correct mask. A direct
+connection requires no gateway or DNS. This is normal Linux management, distinct
+from bootloader Recovery, and cannot recover an unbootable kernel.
 
-The **factory enrollment contract** is separate. A freshly flashed XR1710G uses
-isolated LAN4 `192.168.250.1/24` and a random-identity DHCP discovery bridge on
-the other ports. Only this unconfigured/recovery state has that fixed address.
-Factory-only ARP settings prevent weak-host replies exposing the common LAN4
-address on the discovery bridge during batch enrollment. Configured settings
-come from Nix and are not imposed by the firmware's backend.
-
-The XR factory implementation lives in
-`package/dicttech/ap-profile/files/usr/lib/dicttech-ap/platforms/xr1710g/`.
-The image package selects this adapter and its templates for installation at
-`/usr/lib/dicttech-ap/factory/`. Before writing or proving factory setup, the
-adapter requires `gemtek,xr1710g` or `gemtek,xr1710g-ubi`, matching the
-legacy and UBI XR device trees. Its port layout, discovery
-bridge, setup hostname, factory service policy and template proof are platform
-facts. The ten factory assets retain the existing XR enrollment behavior,
-including DHCP discovery, separate LAN4 maintenance and root/password on SSH
-port 12022.
-
-The shared bootstrap retains resource verification, credential lifecycle,
-snapshots, rollback and configured-boot acceptance. A valid complete producer
-configuration does not load or require the XR factory adapter. A future hardware
-port supplies another factory adapter/assets and selects suitable package
-dependencies and target restrictions; it does not replace the shared transaction
-or acceptance engine. The current image still targets Airoha/XR1710G. This
-separation does not claim that another router has been ported or tested.
-
-Roaming peer addresses are also explicit producer input. An offline maintenance
-entry does not automatically make peer discovery or Internet access available;
-those depend on the generated network and roaming configuration.
+Do not carry old personal overlay state into a presumed fresh public setup.
+Back up first, then deliberately retain or replace configuration. Existing wrtix
+transactions must finish before firmware/package replacement. Required recovery
+checks and the original transaction deadline remain active after controller loss.

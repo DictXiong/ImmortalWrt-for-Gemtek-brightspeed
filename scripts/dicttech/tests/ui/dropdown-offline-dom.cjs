@@ -158,7 +158,7 @@ async function footerBranding(page) {
   await page.evaluate(html => document.body.insertAdjacentHTML('beforeend', html), html);
   return page.evaluate(() => {
     const footer = document.querySelector('.glass-footer');
-    const labels = [...footer.querySelectorAll('span')].filter(node => node.textContent === 'DictTech AP · 定制版');
+    const labels = [...footer.querySelectorAll('span')].filter(node => node.textContent === 'XR1710G Full');
     const label = labels[0];
     const theme = [...footer.querySelectorAll('span')].find(node => node.textContent.startsWith('GlassTheme '));
     const style = label && getComputedStyle(label), original = getComputedStyle(theme);

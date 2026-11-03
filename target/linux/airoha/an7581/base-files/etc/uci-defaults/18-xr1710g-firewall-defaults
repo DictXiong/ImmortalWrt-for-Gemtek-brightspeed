@@ -7,20 +7,13 @@ gemtek,xr1710g|gemtek,xr1710g-ubi) ;;
 *) exit 0 ;;
 esac
 
-uci -q set firewall.@defaults[0].flow_offloading='1'
-uci -q set firewall.@defaults[0].flow_offloading_hw='1'
+# Defaults only: preserve both GUI and declaratively managed choices on upgrade.
+for option in flow_offloading flow_offloading_hw; do
+	uci -q get "firewall.@defaults[0].$option" >/dev/null 2>&1 ||
+		uci -q set "firewall.@defaults[0].$option=1"
+done
 uci -q commit firewall
 
-# Older images disabled firewall by leaving an OverlayFS whiteout over the
-# ROM startup link. Remove only that whiteout before enabling the service.
-firewall_whiteout=/overlay/upper/etc/rc.d/S19firewall
-if [ -c "$firewall_whiteout" ]; then
-	rm -f "$firewall_whiteout"
-fi
-
-if [ -x /etc/init.d/firewall ]; then
-	/etc/init.d/firewall enable
-	/etc/init.d/firewall restart
-fi
-
+# Service enablement belongs to package installation or the operator. Never
+# remove an explicit disable marker or restart networking from a defaults script.
 exit 0

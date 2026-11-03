@@ -23,7 +23,7 @@ PACKAGES = {
     'net/git/Makefile': ['git', 'git-http', 'git-gitweb'],
     'net/rsync/Makefile': ['rsync', 'rsyncd', 'rrsync'],
     'utils/vim/Makefile': ['vim', 'vim-full', 'vim-fuller', 'vim-runtime'],
-    'cli-profile': ['cli-profile'],
+    'fixture-cli': ['fixture-cli'],
 }
 
 
@@ -58,7 +58,7 @@ def metadata(records):
     """Only unrelated leaf libraries are synthetic; tested declarations are real."""
     result = []
     for path, names in PACKAGES.items():
-        source = 'dicttech/cli-profile' if path == 'cli-profile' else 'feeds/packages/' + Path(path).parent.name
+        source = 'fixture-cli' if path == 'fixture-cli' else 'feeds/packages/' + Path(path).parent.name
         result.append('Source-Makefile: package/' + source + '/Makefile\n')
         for name in names:
             record = records[name]
@@ -109,7 +109,7 @@ def kconfig(generated, conf, directory):
     images = directory / 'package/fixture/image-config.in'
     images.parent.mkdir(parents=True); images.write_text('')
     path = directory / 'Kconfig'; path.write_text(prefix + generated)
-    seed = directory / 'seed'; seed.write_text('CONFIG_PACKAGE_cli-profile=y\nCONFIG_PACKAGE_vim-full=y\n')
+    seed = directory / 'seed'; seed.write_text('CONFIG_PACKAGE_fixture-cli=y\nCONFIG_PACKAGE_vim-full=y\n')
     env = dict(os.environ, KCONFIG_CONFIG=str(directory / '.config'))
     return command([str(conf), '--fatalrecursive', '--defconfig=' + str(seed), str(path)], directory, env=env)
 
@@ -138,8 +138,10 @@ def main():
             command(['git', 'apply', str(path)], pristine, check=True)
             command(['git', 'apply', '--reverse', '--check', str(path)], pristine, check=True)
         patched = {path: (pristine / path).read_text() for path in PATCHES}
-        cli = (ROOT / 'package/dicttech/cli-profile/Makefile').read_text()
-        original['cli-profile'] = patched['cli-profile'] = cli
+        # A synthetic downstream consumer reproduces provider recursion without
+        # retaining a personal firmware package just for the regression.
+        consumer = 'define Package/fixture-cli\n DEPENDS:=+vim-full\nendef\n'
+        original['fixture-cli'] = patched['fixture-cli'] = consumer
         before_dir, after_dir = directory / 'before', directory / 'after'
         before_dir.mkdir(); after_dir.mkdir()
         before = generate(fields(original, before_dir), before_dir)
@@ -159,7 +161,7 @@ def main():
         assert old_conf.returncode != 0 and 'recursive dependency' in old_conf.stdout + old_conf.stderr, old_conf.stdout + old_conf.stderr
         assert new_conf.returncode == 0 and 'recursive dependency' not in new_conf.stdout + new_conf.stderr, new_conf.stdout + new_conf.stderr
         final = (after_dir / '.config').read_text()
-        assert 'CONFIG_PACKAGE_cli-profile=y' in final and 'CONFIG_PACKAGE_vim-full=y' in final
+        assert 'CONFIG_PACKAGE_fixture-cli=y' in final and 'CONFIG_PACKAGE_vim-full=y' in final
         assert 'CONFIG_PACKAGE_vim-fuller=y' not in final
     print(json.dumps({'result': 'PASS', 'feed_revision': revision,
                       'patches_apply_cleanly': True, 'unselected_sibling_dependencies_pruned': True,

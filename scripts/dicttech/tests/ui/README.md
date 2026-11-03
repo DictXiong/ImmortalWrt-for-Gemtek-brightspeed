@@ -1,4 +1,4 @@
-These are offline fixtures for `node scripts/dicttech/test-ap-ui.cjs`.
+These are offline fixtures for `node scripts/dicttech/test-ui.cjs`.
 
 Prepare the locked feed sources first, or pass `--source-root` pointing to a
 prepared build tree. The runner checks candidate hashes against the reviewed UI
@@ -10,7 +10,7 @@ frequency save targets, power display and the MLO width form. The board fixture
 contains a synthetic path and public band capabilities only. It has no device
 identity, factory data, credentials or live UCI information.
 
-The custom-edition marker is checked against the pinned Glass footer: the only
+The full-edition marker is checked against the pinned Glass footer: the only
 template change is one label and the existing separator markup. Desktop and
 touch DOM cases verify that it remains visible once in the existing footer and
 inherits the same text styling as Glass's version label; no branding CSS is added.
@@ -20,7 +20,7 @@ For real DOM tests, install Playwright and Chromium locally, or set:
 ```sh
 PLAYWRIGHT_MODULE=/path/to/playwright-core \
 BROWSER_EXECUTABLE=/path/to/chromium \
-node scripts/dicttech/test-ap-ui.cjs --source-root /path/to/build-tree --require-browser
+node scripts/dicttech/test-ui.cjs --source-root /path/to/build-tree --require-browser
 ```
 
 `--playwright-module` and `--browser-executable` provide the same settings.

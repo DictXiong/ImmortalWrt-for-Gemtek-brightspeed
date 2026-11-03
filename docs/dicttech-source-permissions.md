@@ -48,8 +48,8 @@ policy. Private material must remain untracked/outside those source paths.
 
 Fixing the checkout does **not** repair previously assembled files, cached
 install stamps or APKs. A cache built from polluted permissions must be cleaned
-and repackaged, then the actual image rootfs must pass `check-ap-rootfs.py` and
-the release APK set must pass `check-ap-packages.py`. Do not merely chmod the
+and repackaged, then the actual image rootfs must pass `check-rootfs.py` and
+the release APK set must pass `check-packages.py`. Do not merely chmod the
 assembled rootfs: that leaves package/cache artifacts capable of reintroducing
 the bad modes. Cache cleanup and rebuild are explicit build steps, outside this
 source-only tool.

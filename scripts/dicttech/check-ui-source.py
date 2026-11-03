@@ -8,7 +8,7 @@ from pathlib import Path
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location('rootfs_policy', ROOT / 'scripts/dicttech/check-ap-rootfs.py')
+spec = importlib.util.spec_from_file_location('rootfs_policy', ROOT / 'scripts/dicttech/check-rootfs.py')
 policy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(policy)
 
