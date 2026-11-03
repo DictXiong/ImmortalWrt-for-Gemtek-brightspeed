@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "version": "3.0.0-alpha.2",
-  "upstream_base": "8f92c5427fd902eb5c32006d1bc1ed9954055378",
-  "fixes_commit": "449114b6196142ae770cb60ebb38e85800d534b5"
+  "version": "3.0.0-alpha.3",
+  "upstream_base": "218b2b82a1c335c224a298bdf00c44453fade033",
+  "fixes_commit": "88f20bd22f5a44ef034ea679ad9ea232570cd9d1"
 }

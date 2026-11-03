@@ -4,7 +4,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=xr1710g-full
-PKG_VERSION:=3.0.0_alpha2
+PKG_VERSION:=3.0.0_alpha3
 PKG_RELEASE:=1
 PKG_LICENSE:=GPL-2.0-only
 PKGARCH:=all

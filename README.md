@@ -252,6 +252,10 @@ XG2010G 与 XR1710G 同属 Airoha AN7581 平台，但硬件布局和软件包集
 | 原版 U-Boot / 旧布局 | `gemtek_xr1710g` | `vendor` 从 `0x00000000` 开始、大小 `0x00600000`；`chainloader` 从 `0x00600000` 开始；`ubi` 从 `0x00700000` 开始 |
 | OpenWrt U-Boot / UBI 布局 | `gemtek_xr1710g-ubi` | `bl2` 从 `0x00000000` 开始、大小 `0x00020000`；`ubi` 从 `0x00020000` 开始；`factory` 是完整的 2 MiB DSD 主数据 |
 
+本仓库的 **full 旧布局镜像**将表中前 6 MiB 的 `vendor` 区域细分为 `bootloader`、`uenv`、`dsd`，
+各占 2 MiB；`chainloader` 和 `ubi` 的偏移不变。看到这三个分区仍属于旧布局，不表示已经转换为
+OpenWrt U-Boot UBI 布局。`fixes` 镜像沿用上游的 `vendor` 分区名称。
+
 部分较早的旧布局固件报告的板型名是 `gemtek,xr1710g-ubi`，与当前 **新 UBI 布局**的板型名相同。
 因此不能仅凭板型名、镜像文件名中的 `-ubi` 或校验通过就判断布局。可先在路由器上只读查看板型和
 MTD 分区（`offset`、`size` 为十进制字节数）：
