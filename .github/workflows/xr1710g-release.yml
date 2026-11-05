@@ -3,9 +3,6 @@ name: Build XR1710G Full roles
 on:
   push:
     branches: [dicttech/xr1710g-ap]
-    paths:
-      - .github/workflows/xr1710g-release.yml
-      - configs/xr1710g-release.json
   workflow_dispatch:
     inputs:
       wrtix_repository:
@@ -23,6 +20,12 @@ on:
         required: false
         default: ''
         type: string
+
+# New candidate pushes supersede old candidates; an explicit release dispatch
+# keeps its own immutable build and cannot be cancelled by a later push.
+concurrency:
+  group: xr1710g-full-${{ github.event_name }}-${{ github.ref }}-${{ inputs.layout || 'legacy' }}-${{ inputs.release_tag || 'candidate' }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 permissions:
   contents: read
@@ -132,6 +135,28 @@ jobs:
           rootfs=$(find "$source/build_dir" -maxdepth 2 -type d -name root-airoha -print -quit)
           test -n "$rootfs"
           sudo bash "$source/scripts/dicttech/check-regressions.sh" rootfs "$rootfs" "$source/bin/targets/airoha/an7581"
+      - name: Check built UI source identities
+        run: |
+          source="$RUNNER_TEMP/xr-release-${{ matrix.role }}/source"
+          cd "$source"
+          python3 scripts/dicttech/check-ui-source.py \
+            --jsmin staging_dir/hostpkg/bin/jsmin \
+            --output bin/targets/airoha/an7581/dicttech-factory-source-tests.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test source UI and browser fixtures offline
+        working-directory: ${{ runner.temp }}/xr-release-${{ matrix.role }}/source
+        run: |
+          npm install --prefix "$RUNNER_TEMP/dicttech-ui" --no-save playwright@1.59.1
+          "$RUNNER_TEMP/dicttech-ui/node_modules/.bin/playwright" install --with-deps chromium
+          node scripts/dicttech/test-ui.cjs --require-browser \
+            --playwright-module "$RUNNER_TEMP/dicttech-ui/node_modules/playwright" \
+            --output bin/targets/airoha/an7581/dicttech-ui-tests.json
+          PLAYWRIGHT_MODULE="$RUNNER_TEMP/dicttech-ui/node_modules/playwright" \
+          BROWSER_EXECUTABLE="$(node -e 'process.stdout.write(require(process.argv[1]).chromium.executablePath())' "$RUNNER_TEMP/dicttech-ui/node_modules/playwright")" \
+            node scripts/dicttech/tests/factory/frontend.cjs \
+            | tee bin/targets/airoha/an7581/dicttech-factory-ui-tests.json
       - name: Upload only the audited public role
         uses: actions/upload-artifact@v7
         with:
@@ -147,6 +172,16 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
           path: ${{ runner.temp }}/xr-${{ matrix.role }}-build.log
+      - name: Retain validation reports separately
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: xr1710g-validation-${{ matrix.role }}-${{ needs.plan.outputs.full_commit }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}/xr-release-${{ matrix.role }}/source/bin/targets/airoha/an7581/dicttech-*tests.json
+            ${{ runner.temp }}/xr-release-${{ matrix.role }}/source/bin/targets/airoha/an7581/dicttech-*-tests.log
   pair:
     needs: [plan, build]
     runs-on: ubuntu-24.04
@@ -186,7 +221,7 @@ jobs:
         run: |
           python3 scripts/dicttech/release.py notes --pair release-pair/release-pair.json \
             --output "$RUNNER_TEMP/release-notes.md"
-      - name: Create one new draft containing both editions
+      - name: Create one new draft containing both Full roles
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           RELEASE_TAG: ${{ inputs.release_tag }}

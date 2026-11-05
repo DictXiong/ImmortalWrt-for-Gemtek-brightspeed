@@ -50,7 +50,7 @@ python3 scripts/dicttech/release.py notes --pair /tmp/xr-release-pair/release-pa
 
 **Build XR1710G release pair**（`xr1710g-release.yml`）固定一次源码提交，然后在两个隔离 job 中分别构建 `gateway`／`ap`。只有两份产物均通过且配对检查成功，才汇总 Release 附件。完整版单独检查工作流也对两种角色分别运行。
 
-维护线推送发布配置或发布工作流修改时，自动生成 `legacy` 候选；手动运行可以选择布局。`release_tag` 留空时只生成候选 artifacts，填写新版本标签时创建草稿。发布前补充实际测试结果与已知限制，工作流不会覆盖已有标签或 Release。
+维护线每次推送只触发这一个工作流，构建 gateway／ap 两种 `legacy` 候选；手动运行可以选择布局。源码、ARM 程序和浏览器 UI 回归统一在此流程执行，无独立重复编译的 Full 工作流。新推送会取消同分支尚未完成的旧候选，显式发布调度不受影响。`release_tag` 留空时只生成候选 artifacts，填写新版本标签时创建草稿。发布前补充实际测试结果与已知限制，工作流不会覆盖已有标签或 Release。
 
 自动创建草稿需要仓库 Secret `RELEASE_TOKEN`，具有本仓库的 Contents／Workflows 写权限；不使用默认 `GITHUB_TOKEN` 代替。无需创建草稿时保持标签为空。此设置不影响无发布权限的候选构建。
 
