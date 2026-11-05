@@ -1,9 +1,10 @@
 # XR1710G full edition
 
-XR1710G 3.0.0 introduces the `full` edition. It combines hardware/driver fixes, LuCI improvements, commonly
-useful command-line tools, `wrtix-agent` and `xr-roaming`. It is a general router
-image. No owner public keys, shared password, custom maintenance subnet, AP
-policy or MAC allocator is included. The Full-only `xr1710g-cli` package provides
+The `full` edition combines hardware/driver fixes, LuCI improvements, commonly
+useful command-line tools, `wrtix-agent` and `xr-roaming`. Its `gateway` and `ap`
+build roles use the same source, drivers, packages and wrtix version; only the
+initial network configuration differs. No owner public keys, shared password,
+custom maintenance subnet, personal AP policy or MAC allocator is included. The Full-only `xr1710g-cli` package provides
 an offline ys zsh prompt, One Dark Vim theme and tmux defaults. Interactive root
 terminals enter zsh; the account shell remains `/bin/ash`, so remote commands,
 failsafe and package removal retain the normal shell. These defaults work before
@@ -15,10 +16,21 @@ CLI assets live in `/usr/share/xr1710g-cli`, with the login hook at
 are `/root/.zshrc.local`, `/root/.vimrc.local` and `/root/.tmux.conf.local`.
 History and editor caches use a private RAM directory rather than flash.
 
-Initial network setup follows OpenWrt's board configuration: LAN management at
-`192.168.1.1` with DHCP service, WAN DHCP/NAT, and no WAN administration exposure.
-The initial root password is empty and SSH uses LAN port 22. Set authentication
-from the trusted LAN before exposing management elsewhere. Wireless interfaces
+Choose the default network role when building or downloading:
+
+| Role | Initial network and management |
+| --- | --- |
+| `gateway` | WAN DHCP client and NAT; LAN at `192.168.1.1` with DHCP service; administration is blocked on WAN. |
+| `ap` | All four ports (`wan`, `lan2`, `lan3`, `lan4`) form one LAN bridge. The AP obtains DHCP/DHCPv6 addresses from its upstream and does not serve DHCP or IPv6 RA. Find its address in the upstream lease table. |
+
+AP mode has no preset maintenance IPv4 address or local DHCP server. An offline
+direct connection therefore needs a separately prepared management path. The
+physical WAN port is a LAN bridge member in AP mode, including for management.
+Use an unconfigured image on a trusted network: the initial root password is
+empty and SSH uses LAN port 22 in both roles. Set authentication before exposing
+management elsewhere. Role defaults apply only to a fresh/reset configuration;
+upgrading while retaining configuration does not convert its network role.
+Wireless interfaces
 are disabled initially; `xr-roaming` has no predefined profiles and starts no
 worker until configured. Choose the actual regulatory country and Wi-Fi security
 before enabling radios. The full-edition marker suppresses upstream preset
@@ -34,10 +46,12 @@ itself has no such defaults. See [configuration ownership](dicttech-config-forma
 
 ```sh
 WRTIX_SOURCE=/absolute/path/to/clean/wrtix \
-  bash scripts/dicttech/build-full.sh --layout legacy --jobs 4
+  bash scripts/dicttech/build-full.sh --role gateway --layout legacy --jobs 4
 ```
 
-Use `ubi` only for hardware already using that bootloader/partition layout.
+Select `--role ap` for the bridged DHCP-client default. Role and partition layout
+are independent choices. Use `ubi` only for hardware already using that
+bootloader/partition layout.
 The command does not convert partitions or flash bootloaders. Feeds and wrtix
 are pinned, and the build rejects a root `files/` overlay. Source must be
 committed; `--allow-dirty` is reserved for explicitly uncommitted local trials.
@@ -55,7 +69,8 @@ its architecture-independent agent package and target dependencies.
 The finished FIT, extracted rootfs, package signatures and exact kmod set are
 checked before publishing. Private keys, personal authentication material and
 preset deployment state are prohibited. See [image checks](dicttech-image-checks.md),
-[package checks](dicttech-package-checks.md), and the [paired release workflow](xr1710g-releases.md).
+[package checks](dicttech-package-checks.md), and the [paired-role release workflow](xr1710g-releases.md).
+Fixes builds are retired; historical release assets and tags remain available.
 
 A firmware upgrade and a wrtix configuration transaction are different operations.
 Complete pending transactions before upgrading. Include a compatible agent in a

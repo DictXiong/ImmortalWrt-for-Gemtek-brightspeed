@@ -17,9 +17,10 @@ XR1710G 与 XG2010G 设备维护的 Airoha AN7581 固件项目。
 
 [完整版固件](docs/xr1710g-full.md)提供通用路由功能、改进的 WebUI、命令行工具、
 可选的 wrtix 配置管理与有线回程漫游软件包。初始配置沿用 OpenWrt 的 LAN/WAN 行为，
-无线默认关闭，不包含个人公钥、密码、维护地址或 AP 策略。
-[双版本发布流程](docs/xr1710g-releases.md)分别构建 `full` 完整版和
-`fixes` 通用修复版，并汇入同一个 Release；后者仅在固定上游基线中加入硬件/驱动修复。
+无线默认关闭，不包含个人公钥、密码、维护地址或私人 AP 策略。
+[双角色发布流程](docs/xr1710g-releases.md)从同一份 Full 源码构建 `gateway` 网关和
+`ap` 接入点两种镜像，共用驱动、软件包与 wrtix，仅默认网络配置不同。
+Fixes 通用修复版已停止维护和新增构建；历史标签及发布附件保留。
 
 当前维护两个相互隔离的硬件配置：
 
@@ -37,7 +38,7 @@ XR1710G 与 XG2010G 设备维护的 Airoha AN7581 固件项目。
 
 ### XR1710G
 
-以下默认地址与无线设置适用于 `1710.config` 基线及 fixes 构建。**full** 使用 `192.168.1.1`，root 空密码、LAN 侧 SSH 22，无线初始关闭；请通过 LuCI 设置所在地区和无线安全，或自行选择 wrtix 管理。完整差异见 [full 使用说明](docs/xr1710g-full.md)。
+以下默认地址与无线设置描述 `1710.config` 上游基线。当前发布的 **Full gateway** 使用 `192.168.1.1` 提供 LAN DHCP，WAN 为 DHCP/NAT；**Full ap** 将四口桥接，自身从上游获取 DHCP 地址，不提供 DHCP 服务。两种 Full 均为 root 空密码、LAN 侧 SSH 22、无线初始关闭。默认角色只在清空配置或恢复出厂后生效；保留配置升级不会切换现有角色。完整说明见 [Full 使用说明](docs/xr1710g-full.md)。
 
 基线默认管理地址：http://192.168.50.1 或 http://immortalwrt.lan，用户名：**root**，密码：*无*。
 
@@ -254,7 +255,7 @@ XG2010G 与 XR1710G 同属 Airoha AN7581 平台，但硬件布局和软件包集
 
 本仓库的 **full 旧布局镜像**将表中前 6 MiB 的 `vendor` 区域细分为 `bootloader`、`uenv`、`dsd`，
 各占 2 MiB；`chainloader` 和 `ubi` 的偏移不变。看到这三个分区仍属于旧布局，不表示已经转换为
-OpenWrt U-Boot UBI 布局。`fixes` 镜像沿用上游的 `vendor` 分区名称。
+OpenWrt U-Boot UBI 布局。已停止维护的历史 `fixes` 镜像沿用上游的 `vendor` 分区名称。
 
 部分较早的旧布局固件报告的板型名是 `gemtek,xr1710g-ubi`，与当前 **新 UBI 布局**的板型名相同。
 因此不能仅凭板型名、镜像文件名中的 `-ubi` 或校验通过就判断布局。可先在路由器上只读查看板型和

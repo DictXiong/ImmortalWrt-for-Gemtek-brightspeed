@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Run after sysupgrade restore and before board/config generation. A role image
+# supplies initial defaults only; it must never reinterpret retained settings.
+xr1710g_prepare_network_role() {
+	[ "$(cat /etc/xr1710g-network-role 2>/dev/null)" = ap ] || return 0
+	[ ! -s /etc/config/network ] || return 0
+	: > /tmp/xr1710g-fresh-ap
+}
+boot_hook_add preinit_main xr1710g_prepare_network_role

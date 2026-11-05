@@ -190,6 +190,9 @@ def roaming_map(source_root):
 
 
 GENERATOR_FILES = {
+    'etc/board.d/02_network': 'target/linux/airoha/an7581/base-files/etc/board.d/02_network',
+    'lib/preinit/81_xr1710g_network_role': 'package/dicttech/xr1710g-full/files/81_xr1710g_network_role',
+    'etc/uci-defaults/99-xr1710g-network-role': 'package/dicttech/xr1710g-full/files/99-xr1710g-network-role',
     'lib/wifi/mac80211.uc': 'package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc',
     'etc/board.d/03_wifi_defaults': 'package/network/config/airoha-an7581-mt7996-board/files/etc/board.d/03_wifi_defaults',
     'etc/uci-defaults/03_wireless': 'package/network/config/airoha-an7581-mt7996-board/files/etc/uci-defaults/03_wireless',
@@ -251,9 +254,15 @@ def preset_sections(path):
                 options[key] = value
     return sections
 
-def check_unprovisioned(rootfs, source_root):
+def check_unprovisioned(rootfs, source_root, role=None):
     marker = rootfs / 'etc/xr1710g-full'
     require(regular(marker) and marker.stat().st_mode & 0o7777 == 0o644 and marker.read_bytes()==b'XR1710G Full\n', 'invalid full-edition marker')
+    role_file = rootfs / 'etc/xr1710g-network-role'
+    require(regular(role_file) and role_file.stat().st_mode & 0o7777 == 0o644,
+            'network role marker missing or unsafe')
+    actual_role = role_file.read_text().strip()
+    require(actual_role in ('gateway', 'ap') and (role is None or actual_role == role),
+            'network role marker differs from selected role')
     directory = rootfs / 'etc/wrtix'
     require(directory.is_dir() and not directory.is_symlink() and directory.stat().st_mode & 0o777 == 0o700,
             'private deployment directory must be regular 0700')
@@ -316,7 +325,7 @@ def check_unprovisioned(rootfs, source_root):
             'roaming must ship without predefined profiles')
     public_link = rootfs / 'www/xr-roaming'
     require(public_link.is_symlink() and os.readlink(public_link)=='/tmp/xr-roaming-public', 'roaming publication link must point to RAM')
-    return {'deployment_state':'absent', 'private_host_identity':'absent', 'preset_root_password':False,
+    return {'network_role':actual_role, 'deployment_state':'absent', 'private_host_identity':'absent', 'preset_root_password':False,
             'preset_authorized_keys':'absent', 'root_shell':'/bin/ash', 'roaming_default':'unconfigured'}
 
 
@@ -410,7 +419,7 @@ def check_runtime_manifest(rootfs):
     return compare_bytes(expected, rootfs / 'usr/share/wrtix/runtime.sha256', 'usr/share/wrtix/runtime.sha256')
 
 
-def check_rootfs(rootfs, source_root=REPO, manifest=None):
+def check_rootfs(rootfs, source_root=REPO, manifest=None, role=None):
     rootfs, source_root = rootfs.resolve(), source_root.resolve()
     require(rootfs.is_dir(), 'rootfs directory missing')
     for relative in ('etc/wrtix/managed.json', 'etc/dropbear/key', 'etc/ssh/key', 'www/xr-roaming', 'lib/wifi/mac80211.uc'):
@@ -432,7 +441,7 @@ def check_rootfs(rootfs, source_root=REPO, manifest=None):
     rows += [compare_bytes(expected, rootfs / relative, relative) for relative, expected in sorted(history.items())]
     rows += check_factory(rootfs, source_root, factory)
     result = {'schema_version': 1, 'passed': True, 'files_checked': rows,
-              'clean_image': check_unprovisioned(rootfs, source_root), 'luci_rpc': check_luci_rpc(rootfs),
+              'clean_image': check_unprovisioned(rootfs, source_root, role), 'luci_rpc': check_luci_rpc(rootfs),
               'scope': 'virgin assembled or extracted rootfs; not a running/provisioned AP'}
     if manifest:
         result['packages'] = manifest_policy(source_root, manifest)
@@ -441,6 +450,7 @@ def check_rootfs(rootfs, source_root=REPO, manifest=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--role', choices=('gateway', 'ap'))
     parser.add_argument('--rootfs', required=True, type=Path)
     parser.add_argument('--source-root', default=REPO, type=Path, help='authoritative reviewed source tree, not an unverified build mirror')
     parser.add_argument('--manifest', type=Path)
@@ -449,7 +459,7 @@ def main():
     if args.output:
         require(not args.output.resolve().is_relative_to(args.rootfs.resolve()), 'report output must be outside the verified rootfs')
         require(args.manifest is None or args.output.resolve() != args.manifest.resolve(), 'report output must not overwrite the package manifest')
-    result = check_rootfs(args.rootfs, args.source_root, args.manifest)
+    result = check_rootfs(args.rootfs, args.source_root, args.manifest, args.role)
     text = json.dumps(result, indent=2) + '\n'
     if args.output:
         args.output.write_text(text)

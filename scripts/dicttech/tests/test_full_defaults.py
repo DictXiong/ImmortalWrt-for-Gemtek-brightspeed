@@ -70,6 +70,62 @@ elif args[0]!='commit': sys.exit(5)
         self.run_script(MIGRATE, [('/etc/wrtix/identity.json', marker)])
         self.assertEqual(self.state.read_text(), '{}')
 
+    def role_inputs(self, role):
+        marker = self.root / 'role'; marker.write_text(role + '\n')
+        network = self.root / 'network'
+        fresh = self.root / 'fresh'
+        for name in ('dnsmasq', 'odhcpd'):
+            script = self.root / name
+            script.write_text('#!/bin/sh\ntest "$1" = disable && echo ' + name + ' >> ' + shlex.quote(str(self.root / 'disabled')) + '\n')
+            script.chmod(0o755)
+        return marker, network, fresh
+
+    def test_role_preinit_retained_config_and_gateway_are_untouched(self):
+        source = ROOT / 'package/dicttech/xr1710g-full/files/81_xr1710g_network_role'
+        for role, retained, expected in [('gateway', False, False), ('ap', True, False), ('ap', False, True)]:
+            marker, network, fresh = self.role_inputs(role)
+            if retained: network.write_text('retained settings')
+            elif network.exists(): network.unlink()
+            if fresh.exists(): fresh.unlink()
+            text = source.read_text().replace('/etc/xr1710g-network-role', str(marker)).replace('/etc/config/network', str(network)).replace('/tmp/xr1710g-fresh-ap', str(fresh))
+            script = self.root / 'preinit.sh'
+            script.write_text('boot_hook_add() { :; }\n' + text + '\nxr1710g_prepare_network_role\n')
+            subprocess.run(['/bin/sh', str(script)], check=True)
+            self.assertEqual(fresh.exists(), expected)
+
+    def test_ap_disables_servers_only_on_fresh_boot(self):
+        source = ROOT / 'package/dicttech/xr1710g-full/files/99-xr1710g-network-role'
+        marker, network, fresh = self.role_inputs('ap')
+        self.state.write_text(json.dumps({'network.lan.proto': 'dhcp'}))
+        replacements = [('/etc/xr1710g-network-role', marker), ('/tmp/xr1710g-fresh-ap', fresh),
+                        ('/etc/init.d/dnsmasq', self.root / 'dnsmasq'), ('/etc/init.d/odhcpd', self.root / 'odhcpd')]
+        self.run_script(source, replacements)
+        self.assertFalse((self.root / 'disabled').exists())
+        fresh.touch()
+        self.run_script(source, replacements)
+        state = json.loads(self.state.read_text())
+        self.assertEqual(state['dhcp.lan.ignore'], '1')
+        for option in ('dhcpv4', 'dhcpv6', 'ra', 'ndp'):
+            self.assertEqual(state['dhcp.lan.' + option], 'disabled')
+        self.assertEqual((self.root / 'disabled').read_text().splitlines(), ['dnsmasq', 'odhcpd'])
+        self.assertFalse(fresh.exists())
+        self.run_script(source, replacements)
+        self.assertEqual((self.root / 'disabled').read_text().splitlines(), ['dnsmasq', 'odhcpd'])
+
+    def test_board_roles_choose_expected_physical_topology(self):
+        source = ROOT / 'target/linux/airoha/an7581/base-files/etc/board.d/02_network'
+        functions = self.root / 'board-functions.sh'
+        functions.write_text('board_config_update() { :; }\nboard_config_flush() { :; }\nucidef_set_hostname() { :; }\nucidef_set_interface_lan() { uci set "network.lan.ports=$1"; uci set "network.lan.proto=$2"; }\nucidef_set_interfaces_lan_wan() { uci set "network.lan.ports=$1"; uci set "network.wan.device=$2"; }\n')
+        for role in ('gateway', 'ap'):
+            marker, _, _ = self.role_inputs(role)
+            self.state.write_text('{}')
+            self.run_script(source, [('/lib/functions/uci-defaults.sh', functions), ('/etc/xr1710g-network-role', marker)])
+            state = json.loads(self.state.read_text())
+            if role == 'ap':
+                self.assertEqual(state, {'network.lan.ports':'wan lan2 lan3 lan4', 'network.lan.proto':'dhcp'})
+            else:
+                self.assertEqual(state, {'network.lan.ports':'lan2 lan3 lan4', 'network.wan.device':'wan'})
+
     def test_full_selection_has_routing_stack_and_no_personal_packages(self):
         spec=importlib.util.spec_from_file_location('full_policy', ROOT / 'scripts/dicttech/check-build.py')
         policy=importlib.util.module_from_spec(spec); spec.loader.exec_module(policy)

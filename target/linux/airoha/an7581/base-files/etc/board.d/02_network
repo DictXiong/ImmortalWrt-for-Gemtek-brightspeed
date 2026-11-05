@@ -7,8 +7,8 @@
 . /lib/functions/system.sh
 
 #
-# Gemtek XR1710G / W1700K: LAN side is lan2 lan3 lan4, WAN side is the
-# separate "wan" netdev.
+# Gemtek XR1710G / W1700K: gateway LAN is lan2 lan3 lan4 and WAN is
+# the separate "wan" netdev. Full AP defaults bridge all four as DHCP LAN.
 #
 # NOTE on board.json.bridge: ucidef_set_bridge_device() is deliberately NOT
 # used here.  config_generate's "[ -n "$bridge" ]" branch runs for EVERY
@@ -25,7 +25,11 @@
 #
 gemtek_setup_interfaces()
 {
-	ucidef_set_interfaces_lan_wan "lan2 lan3 lan4" "wan"
+	if [ "$(cat /etc/xr1710g-network-role 2>/dev/null)" = ap ]; then
+		ucidef_set_interface_lan "wan lan2 lan3 lan4" dhcp
+	else
+		ucidef_set_interfaces_lan_wan "lan2 lan3 lan4" "wan"
+	fi
 }
 
 an7581_setup_interfaces()

@@ -1,474 +1,189 @@
 #!/usr/bin/env python3
-"""Offline tests of two pinned Git snapshots, isolation and one release pair."""
+"""Synthetic Git snapshots and adversarial Full role release archives; no builds."""
 import copy
 import hashlib
 import importlib.util
 import io
 import json
-import os
+import shutil
 from pathlib import Path
 import subprocess
 import tarfile
 import tempfile
 import unittest
 
-spec = importlib.util.spec_from_file_location(
-    'release', Path(__file__).resolve().parents[1] / 'release.py')
-r = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(r)
-REJECTED = (ValueError, subprocess.CalledProcessError)
+spec = importlib.util.spec_from_file_location('release', Path(__file__).resolve().parents[1]/'release.py')
+r = importlib.util.module_from_spec(spec); spec.loader.exec_module(r)
 
 
 class ReleaseTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.root = Path(cls.temp.name)
-        cls.repo = cls.root / 'repo'
-        cls.repo.mkdir()
-        r.git(cls.repo, 'init', '-q', '-b', 'fixture-main')
-        cls.configure(cls.repo)
-        cls.put(cls.repo, 'feeds.conf.default',
-                'src-git luci https://example.invalid/luci.git\n')
-        cls.put(cls.repo, '.gitignore', '/files\n/.config\n/feeds.conf\n')
-        cls.put(cls.repo, '1710.config',
-                'CONFIG_PACKAGE_luci=y\nCONFIG_TARGET_MULTI_PROFILE=y\n'
-                'CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_gemtek_xr1710g=y\n')
-        cls.base = cls.commit(cls.repo, 'Upstream')
-        cls.fixes = []
-        for i in range(3):
-            cls.put(cls.repo, 'fix-' + str(i) + '.patch',
-                    'reviewed ' + str(i) + '\n')
-            cls.fixes.append(cls.commit(cls.repo, 'Fix ' + str(i)))
-        cls.fixes_head = cls.fixes[-1]
-        r.git(cls.repo, 'branch', 'fixture-fixes', cls.fixes_head)
-        r.git(cls.repo, 'branch', 'fixture-pr-frozen', cls.fixes_head)
-        cls.put(cls.repo, 'package/dicttech/owner',
-                'PUBLIC OWNER FIXTURE - NOT FOR COMMUNITY\n')
-        cls.put(cls.repo, 'package/dicttech/xr1710g-full/Makefile',
-                'PKG_VERSION:=2.1.0\n')
-        cls.put(cls.repo, 'configs/xr1710g-release.json', json.dumps({
-            'schema_version': 2, 'version': '2.1.0',
-            'upstream_base': cls.base, 'fixes_commit': cls.fixes_head}))
-        cls.put(cls.repo, 'configs/xr1710g-fixes-feeds.conf',
-                'src-git luci https://example.invalid/luci.git^' + 'd' * 40 + '\n')
-        cls.put(cls.repo, 'configs/wrtix-source.json', json.dumps({'schema_version': 1, 'revision': 'a'*40, 'archive_sha256': 'b'*64}))
-        cls.head = cls.commit(cls.repo, 'Personal policy and release metadata')
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name); self.repo = self.root/'repo'; self.repo.mkdir()
+        r.git(self.repo,'init','-q','-b','fixture-main')
+        for key,value in [('user.name','Fixture'),('user.email','fixture@example.invalid'),('commit.gpgsign','false'),('core.hooksPath','/dev/null')]:
+            r.git(self.repo,'config',key,value)
+        self.put('base','base\n'); self.base = self.commit('upstream')
+        self.put('.gitignore','/.config\n/files\n')
+        self.put('package/dicttech/xr1710g-full/Makefile','PKG_VERSION:=3.1.0_alpha1\n')
+        self.put('configs/xr1710g-release.json',json.dumps({'schema_version':3,'version':'3.1.0-alpha.1','upstream_base':self.base}))
+        self.put('configs/dicttech-feeds.conf','src-git --directory=theme glass https://example.invalid/theme.git^'+'d'*40+'\n')
+        self.pin={'schema_version':1,'revision':'a'*40,'archive_sha256':hashlib.sha256(b'wrtix fixture').hexdigest()}
+        self.put('configs/wrtix-source.json',json.dumps(self.pin)); self.head=self.commit('Full release')
+        self.tree=r.git(self.repo,'rev-parse','HEAD^{tree}')
+        self.inputs=self.root/'inputs';self.inputs.mkdir()
 
-    @staticmethod
-    def configure(repo):
-        for args in [('user.name', 'Fixture'),
-                     ('user.email', 'fixture@example.invalid'),
-                     ('commit.gpgsign', 'false'),
-                     ('core.hooksPath', '/dev/null')]:
-            r.git(repo, 'config', *args)
+    def put(self,name,data):
+        p=self.repo/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(data)
 
-    @staticmethod
-    def put(repo, name, text):
-        path = repo / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
+    def commit(self,title):
+        r.git(self.repo,'add','.');r.git(self.repo,'commit','-qm',title);return r.git(self.repo,'rev-parse','HEAD')
 
-    @staticmethod
-    def commit(repo, title):
-        r.git(repo, 'add', '.')
-        r.git(repo, 'commit', '-qm', title)
-        return r.git(repo, 'rev-parse', 'HEAD')
+    def output(self): return self.root/'pair'
 
-    @classmethod
-    def tearDownClass(cls):
-        cls.temp.cleanup()
+    def artifact(self,role, *, manifest='kernel - 6.18~abi\nwrtix-agent - 1.0.0-r1\n',
+                 config='CONFIG_PACKAGE_wrtix-agent=y\n', audit_role=None, update=None, extra=None):
+        folder=self.inputs/role;folder.mkdir(exist_ok=True)
+        d={k:v for k,v in r.plan(self.repo).items() if k!='feed_text'}
+        d.update(schema_version=r.ARTIFACT_SCHEMA, flavor='full',role=role,layout='legacy',
+                 source_commit=self.head,source_tree=self.tree,
+                 build_version='3.1.0-alpha.1-'+self.head[:12],feed_lock_sha256='e'*64)
+        if update:d.update(update)
+        prefix='xr1710g-full-'+role+'-legacy-'+d['build_version']; image=prefix+'-squashfs-sysupgrade.itb'
+        members={'source.json':json.dumps(d).encode(),image:b'image fixture '+role.encode(),
+                 image.removesuffix('-squashfs-sysupgrade.itb')+'.manifest':manifest.encode(),
+                 'config.buildinfo':(config+('CONFIG_XR1710G_DEFAULT_ROLE_AP=y\n' if role=='ap' else '# CONFIG_XR1710G_DEFAULT_ROLE_AP is not set\n')).encode(),
+                 'feeds.buildinfo':b'fixed feeds\n','version.buildinfo':b'fixed version\n',
+                 'dicttech-wrtix-source.json':json.dumps(self.pin).encode(),
+                 'dicttech-wrtix-source.tar':b'wrtix fixture',
+                 'audit/image.rootfs.audit.json':json.dumps({'passed':True,'clean_image':{'network_role':audit_role or role}}).encode()}
+        if extra:members.update(extra)
+        bundle=folder/(prefix+'.tar.gz')
+        with tarfile.open(bundle,'w:gz')as a:
+            for name,data in members.items():
+                m=tarfile.TarInfo(name);m.size=len(data);a.addfile(m,io.BytesIO(data))
+        download=folder/(prefix+'-sysupgrade.itb');download.write_bytes(members[image])
+        source=folder/(prefix+'-source.tar.gz');source.write_bytes(b'git source fixture')
+        d.update(passed=True,image=image,image_sha256=r.digest(download),bundle=bundle.name,
+                 bundle_sha256=r.digest(bundle),source_archive=source.name,source_archive_sha256=r.digest(source))
+        path=folder/(prefix+'.json');path.write_text(json.dumps(d));return path
 
-    def destination(self):
-        return Path(tempfile.mkdtemp(dir=self.root)) / 'new'
+    def pair(self,**kwargs):
+        self.artifact('gateway');self.artifact('ap',**kwargs)
 
-    def clone(self):
-        repo = self.destination()
-        r.run(['git', 'clone', '--shared', str(self.repo), str(repo)], self.root)
-        self.configure(repo)
-        return repo
+    def assemble(self):
+        r.assemble(self.inputs,self.output(),self.head,self.base,self.tree)
 
-    def set_lock(self, repo, **updates):
-        path = repo / 'configs/xr1710g-release.json'
-        document = json.loads(path.read_text())
-        document.update(updates)
-        path.write_text(json.dumps(document))
+    def test_both_roles_are_exact_same_source_without_moving_branches(self):
+        before=r.git(self.repo,'show-ref')
+        for role in r.ROLES:
+            directory=self.root/role
+            receipt=r.prepare(self.repo,directory,role,'legacy')
+            self.assertEqual(receipt['source_commit'],self.head);self.assertEqual(receipt['source_tree'],self.tree)
+            self.assertEqual(receipt['role'],role);self.assertEqual(receipt['flavor'],'full')
+            self.assertEqual(receipt['schema_version'],4);r.source_check(directory,receipt)
+        self.assertEqual(r.git(self.repo,'show-ref'),before)
 
-    def append_fourth_fix(self, repo):
-        r.git(repo, 'checkout', '--detach', self.fixes_head)
-        self.put(repo, 'fix-3.patch', 'reviewed 3\n')
-        return self.commit(repo, 'Fourth generic fix')
+    def test_retired_fixes_role_is_rejected(self):
+        with self.assertRaises(ValueError):r.prepare(self.repo,self.root/'fixes','fixes','legacy')
 
-    def test_exact_two_commits_without_moving_branches(self):
-        before = r.git(self.repo, 'show-ref')
-        for flavor in r.FLAVORS:
-            with self.subTest(flavor=flavor):
-                out = self.destination()
-                receipt = r.prepare(self.repo, out, flavor, 'legacy')
-                source = out / 'source'
-                expected = self.head if flavor == 'full' else self.fixes_head
-                self.assertEqual(receipt['schema_version'], r.ARTIFACT_SCHEMA)
-                self.assertEqual(r.plan(self.repo)['schema_version'], r.LOCK_SCHEMA)
-                self.assertEqual(receipt['release_commit'], self.head)
-                self.assertEqual(receipt['fixes_commit'], self.fixes_head)
-                self.assertEqual(receipt['source_commit'], expected)
-                self.assertEqual(r.git(source, 'rev-parse', 'HEAD'), expected)
-                self.assertEqual(receipt['source_tree'],
-                                 r.git(source, 'rev-parse', expected + '^{tree}'))
-                self.assertEqual((source / 'package/dicttech/owner').exists(),
-                                 flavor == 'full')
-                self.assertFalse(r.git(source, 'status', '--porcelain'))
-                for i in range(3):
-                    self.assertEqual((source / ('fix-' + str(i) + '.patch')).read_text(),
-                                     'reviewed ' + str(i) + '\n')
-                r.source_check(out, receipt)
-        self.assertEqual(r.git(self.repo, 'show-ref'), before)
+    def test_dirty_and_rootfs_overlay_sources_are_rejected(self):
+        self.put('untracked','private')
+        with self.assertRaisesRegex(ValueError,'Commit'):r.plan(self.repo)
+        (self.repo/'untracked').unlink();(self.repo/'files').mkdir()
+        with self.assertRaisesRegex(ValueError,'overlays'):r.prepare(self.repo,self.root/'ap','ap','legacy')
 
-    def test_prerelease_public_version_and_apk_marker_are_consistent(self):
-        for stage in ['alpha', 'beta', 'rc']:
-            version = '3.0.0-' + stage + '.1'
-            with self.subTest(stage=stage):
-                repo = self.clone()
-                self.set_lock(repo, version=version)
-                self.put(repo, 'package/dicttech/xr1710g-full/Makefile',
-                         'PKG_VERSION:=3.0.0_' + stage + '1\n')
-                self.commit(repo, 'Pin a prerelease with APK-compatible marker')
-                self.assertEqual(r.plan(repo)['version'], version)
-                receipt = r.prepare(repo, self.destination(), 'full', 'legacy')
-                self.assertEqual(receipt['build_version'], version + '-' + receipt['release_commit'][:12])
-        inputs = self.destination()
-        self.fake_bundle(inputs / 'one', 'full', public_version='3.0.0-alpha.1')
-        self.fake_bundle(inputs / 'two', 'fixes', public_version='3.0.0-alpha.1')
-        r.assemble(inputs, self.destination(), self.head, self.fixes_head)
-        for version in ['03.0.0', '3.0.0-alpha.01', '3.0.0-preview.1',
-                        '3.0.0-alpha', '3.0.0-alpha.1+local', '3.0.0_alpha1']:
-            with self.subTest(version=version), self.assertRaisesRegex(ValueError, 'Invalid public version'):
-                r.package_version(version)
+    def test_checkout_and_receipt_tampering_are_rejected(self):
+        out=self.root/'ap';d=r.prepare(self.repo,out,'ap','legacy')
+        changed=copy.deepcopy(d);changed['source_commit']=self.base
+        with self.assertRaisesRegex(ValueError,'source'):r.source_check(out,changed)
+        (out/'source/base').write_text('modified')
+        with self.assertRaisesRegex(ValueError,'files changed'):r.source_check(out,d)
 
-    def test_retired_custom_build_input_is_rejected(self):
-        out = self.destination()
-        with self.assertRaisesRegex(ValueError, 'Invalid edition/layout'):
-            r.prepare(self.repo, out, 'custom', 'legacy')
-        self.assertFalse(out.exists())
-        receipt = r.prepare(self.repo, out, 'full', 'legacy')
-        receipt['schema_version'] = 2
-        with self.assertRaisesRegex(ValueError, 'Unsupported build receipt schema'):
-            r.source_check(out, receipt)
+    def test_old_lock_schema_rejected(self):
+        self.put('configs/xr1710g-release.json',json.dumps({'schema_version':2,'version':'3.1.0-alpha.1','upstream_base':self.base,'fixes_commit':self.base}));self.commit('old schema')
+        with self.assertRaisesRegex(ValueError,'lock'):r.plan(self.repo)
 
-    def test_fourth_fix_is_merged_without_rebasing_personal_history(self):
-        repo = self.clone()
-        fourth = self.append_fourth_fix(repo)
-        self.assertEqual(r.git(repo, 'rev-parse', fourth + '^'), self.fixes_head)
-        r.git(repo, 'checkout', 'fixture-main')
-        r.git(repo, 'merge', '--no-ff', '-m', 'Merge fourth generic fix', fourth)
-        self.set_lock(repo, fixes_commit=fourth)
-        full = self.commit(repo, 'Pin merged fourth fix')
-        r.git(repo, 'merge-base', '--is-ancestor', self.head, full)
-        r.git(repo, 'merge-base', '--is-ancestor', fourth, full)
-        self.assertEqual(r.git(repo, 'rev-parse', 'origin/fixture-pr-frozen'),
-                         self.fixes_head)
-        for flavor in r.FLAVORS:
-            out = self.destination()
-            receipt = r.prepare(repo, out, flavor, 'legacy')
-            self.assertEqual(receipt['fixes_commit'], fourth)
-            self.assertEqual((out / 'source/fix-3.patch').read_text(), 'reviewed 3\n')
-            self.assertEqual(receipt['source_commit'], full if flavor == 'full' else fourth)
+    def test_unpinned_feed_rejected(self):
+        self.put('configs/dicttech-feeds.conf','src-git glass https://example.invalid/theme.git^main\n');self.commit('unpinned')
+        with self.assertRaisesRegex(ValueError,'Unpinned'):r.plan(self.repo)
 
-    def test_branch_head_movement_does_not_change_locked_snapshot(self):
-        repo = self.clone()
-        fourth = self.append_fourth_fix(repo)
-        r.git(repo, 'branch', '-f', 'fixture-fixes', fourth)
-        r.git(repo, 'checkout', 'fixture-main')
-        self.assertEqual(r.plan(repo)['fixes_commit'], self.fixes_head)
-        out = self.destination()
-        receipt = r.prepare(repo, out, 'fixes', 'legacy')
-        self.assertEqual(receipt['source_commit'], self.fixes_head)
-        self.assertFalse((out / 'source/fix-3.patch').exists())
-        self.assertEqual(r.git(repo, 'rev-parse', 'fixture-fixes'), fourth)
+    def test_duplicate_feed_rejected(self):
+        p=self.repo/'configs/dicttech-feeds.conf';p.write_text(p.read_text()*2);self.commit('duplicate')
+        with self.assertRaisesRegex(ValueError,'Duplicate'):r.plan(self.repo)
 
-    def test_unmerged_fixes_commit_is_rejected(self):
-        repo = self.clone()
-        fourth = self.append_fourth_fix(repo)
-        r.git(repo, 'checkout', 'fixture-main')
-        self.set_lock(repo, fixes_commit=fourth)
-        self.commit(repo, 'Incorrectly pin an unmerged fix')
-        with self.assertRaises(REJECTED):
-            r.plan(repo)
+    def test_marker_version_must_match_lock(self):
+        self.put('package/dicttech/xr1710g-full/Makefile','PKG_VERSION:=3.0.0\n');self.commit('wrong marker')
+        with self.assertRaisesRegex(ValueError,'version mismatch'):r.plan(self.repo)
 
-    def test_personal_snapshot_cannot_be_used_as_fixes_source(self):
-        repo = self.clone()
-        self.set_lock(repo, fixes_commit=self.head)
-        self.commit(repo, 'Incorrectly select a personal snapshot as fixes')
-        with self.assertRaises(REJECTED):
-            r.prepare(repo, self.destination(), 'fixes', 'legacy')
+    def test_version_mapping(self):
+        for tag,expected in [('3.0.0','3.0.0'),('3.1.0-alpha.1','3.1.0_alpha1'),('3.1.0-beta.2','3.1.0_beta2'),('3.1.0-rc.3','3.1.0_rc3')]:self.assertEqual(r.package_version(tag),expected)
+        for tag in ['3.0','3.0.0-alpha.0','3.0.0;echo secret','v3.0.0']:
+            with self.assertRaises(ValueError):r.package_version(tag)
 
-    def test_wrong_upstream_base_and_moving_fix_ref_are_rejected(self):
-        for updates in [{'upstream_base': self.head},
-                        {'fixes_commit': 'fixture-fixes'}]:
-            repo = self.clone()
-            self.set_lock(repo, **updates)
-            self.commit(repo, 'Invalid release lock')
-            with self.subTest(updates=updates), self.assertRaises(REJECTED):
-                r.plan(repo)
+    def test_pair_accepts_roles_and_writes_checked_public_assets(self):
+        self.pair();self.assemble();x=json.loads((self.output()/'release-pair.json').read_text())
+        self.assertEqual({d['role'] for d in x['variants']},set(r.ROLES));self.assertEqual(len(list(self.output().glob('*'))),10)
+        subprocess.run(['sha256sum','--check','sha256sums'],cwd=self.output(),stdout=subprocess.DEVNULL,check=True)
 
-    def test_dirty_controller_and_old_patch_list_schema_are_rejected(self):
-        repo = self.clone()
-        self.set_lock(repo, version='2.1.1')
-        with self.assertRaises(REJECTED):
-            r.plan(repo)
-        self.put(repo, 'configs/xr1710g-release.json', json.dumps({
-            'schema_version': 1, 'version': '2.1.0',
-            'upstream_base': self.base, 'fixes': self.fixes}))
-        self.commit(repo, 'Obsolete patch-list release lock')
-        with self.assertRaises(REJECTED):
-            r.plan(repo)
+    def test_missing_or_duplicate_role_rejected(self):
+        self.artifact('gateway')
+        with self.assertRaisesRegex(ValueError,'Both'):self.assemble()
 
-    def test_modified_source_and_forged_tree_are_rejected(self):
-        out = self.destination()
-        receipt = r.prepare(self.repo, out, 'fixes', 'legacy')
-        source = out / 'source'
-        (source / '1710.config').write_text('tampered\n')
-        with self.assertRaises(REJECTED):
-            r.source_check(out, receipt)
-        r.git(source, 'add', '1710.config')
-        receipt['source_tree'] = r.git(source, 'write-tree')
-        with self.assertRaises(REJECTED):
-            r.source_check(out, receipt)
+    def test_duplicate_role_rejected(self):
+        self.pair();shutil.copytree(self.inputs/'gateway',self.inputs/'duplicate')
+        with self.assertRaisesRegex(ValueError,'Both'):self.assemble()
 
-    def test_forged_source_commit_and_actual_wrong_checkout_are_rejected(self):
-        out = self.destination()
-        receipt = r.prepare(self.repo, out, 'fixes', 'legacy')
-        wrong = copy.deepcopy(receipt)
-        wrong['source_commit'] = self.head
-        with self.assertRaises(REJECTED):
-            r.source_check(out, wrong)
-        r.git(out / 'source', 'checkout', '--detach', self.head)
-        with self.assertRaises(REJECTED):
-            r.source_check(out, receipt)
+    def test_old_artifact_schema_and_retired_flavor_rejected(self):
+        self.pair(update={'schema_version':3,'flavor':'fixes'})
+        with self.assertRaisesRegex(ValueError,'different source'):self.assemble()
 
-    def test_overlay_and_destination_are_rejected(self):
-        with self.assertRaises(REJECTED):
-            r.prepare(self.repo, self.repo / 'danger', 'fixes', 'legacy')
-        target = self.destination()
-        target.symlink_to(target.parent / 'absent')
-        with self.assertRaises(REJECTED):
-            r.prepare(self.repo, target, 'fixes', 'legacy')
-        out = self.destination()
-        receipt = r.prepare(self.repo, out, 'fixes', 'legacy')
-        (out / 'source/files').mkdir()
-        with self.assertRaises(REJECTED):
-            r.source_check(out, receipt)
+    def test_different_actual_feeds_rejected(self):
+        self.pair(extra={'feeds.buildinfo':b'different actual revision'})
+        with self.assertRaisesRegex(ValueError,'actual feed'):self.assemble()
 
-    def test_one_partition_profile_keeps_stock_packages(self):
-        for layout in ['legacy', 'ubi']:
-            text = r.stock_config((self.repo / '1710.config').read_text(),
-                                  layout, '2.1.0-test', 'abc')
-            self.assertIn('CONFIG_PACKAGE_luci=y', text)
-            self.assertNotIn('CONFIG_TARGET_DEVICE_airoha', text)
-            self.assertEqual(text.count('CONFIG_TARGET_airoha_an7581_DEVICE_'), 1)
-            self.assertNotIn('CONFIG_TARGET_MULTI_PROFILE=y', text)
-            self.assertNotIn('CONFIG_PACKAGE_ap-profile', text)
+    def test_different_packages_rejected(self):
+        self.pair(manifest='wrtix-agent - 9.9.9-r1\n')
+        with self.assertRaisesRegex(ValueError,'different packages'):self.assemble()
 
-    def test_rootfs_personal_credentials_and_policy_are_rejected(self):
-        root = self.destination()
-        root.mkdir()
-        r.audit_fixes_rootfs(root, {'kernel': 'test'})
-        path = root / 'etc/dropbear/authorized_keys'
-        path.parent.mkdir(parents=True)
-        path.write_text('ssh-ed25519 FIXTURE\n')
-        with self.assertRaises(REJECTED):
-            r.audit_fixes_rootfs(root, {'kernel': 'test'})
-        path.unlink()
-        path.symlink_to('/nonexistent')
-        with self.assertRaises(REJECTED):
-            r.audit_fixes_rootfs(root, {'kernel': 'test'})
-        path.unlink()
-        with self.assertRaises(REJECTED):
-            r.audit_fixes_rootfs(root, {'kernel': 'test', 'ap-profile': 'test'})
-        host_key = root / 'etc/dropbear/dropbear_ed25519_host_key'
-        host_key.write_bytes(b'INERT PRIVATE HOST KEY FIXTURE')
-        with self.assertRaises(REJECTED):
-            r.audit_fixes_rootfs(root, {'kernel': 'test'})
+    def test_different_kernel_config_rejected(self):
+        self.pair(config='CONFIG_PACKAGE_wrtix-agent=y\nCONFIG_KERNEL_DEBUG_INFO=y\n')
+        with self.assertRaisesRegex(ValueError,'configuration'):self.assemble()
 
-    def test_stock_and_personal_partition_audits_are_separate(self):
-        spec = importlib.util.spec_from_file_location(
-            'fit_fixture', Path(__file__).with_name('test_image.py'))
-        fixture = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(fixture)
-        personal = fixture.check
-        stock = r.fixes_image_checker()
-        fixture.check = stock
-        for layout in ['legacy', 'ubi']:
-            image = fixture.fit(fixture.device(layout), fixture.metadata(layout))
-            self.assertTrue(stock.check_image(image, layout)['passed'])
-            if layout == 'legacy':
-                with self.assertRaises(personal.ImageError):
-                    personal.check_image(image, layout)
-        fixture.check = personal
-        image = fixture.fit(fixture.device(), fixture.metadata())
-        with self.assertRaises(stock.ImageError):
-            stock.check_image(image, 'legacy')
+    def test_wrong_actual_rootfs_role_rejected(self):
+        self.pair(audit_role='gateway')
+        with self.assertRaisesRegex(ValueError,'role audit'):self.assemble()
 
-    def fake_bundle(self, folder, flavor, *, evil=False, revision=None,
-                    fixes_commit=None, source_commit=None, source_tree=None,
-                    upstream_base=None, schema_version=r.ARTIFACT_SCHEMA,
-                    public_version='2.1.0'):
-        folder.mkdir(parents=True)
-        revision = revision or self.head
-        fixes_commit = fixes_commit or self.fixes_head
-        source_commit = source_commit or (revision if flavor == 'full' else fixes_commit)
-        version = public_version + '-' + revision[:12]
-        prefix = 'xr1710g-' + flavor + '-legacy-' + version
-        document = {
-            'schema_version': schema_version, 'flavor': flavor, 'layout': 'legacy',
-            'version': public_version, 'build_version': version,
-            'release_commit': revision, 'fixes_commit': fixes_commit,
-            'source_commit': source_commit,
-            'wrtix_source': {'schema_version': 1, 'revision': 'a'*40, 'archive_sha256': hashlib.sha256(b'SYNTHETIC WRTIX SOURCE').hexdigest()},
-            'source_tree': source_tree or r.git(self.repo, 'rev-parse', source_commit + '^{tree}'),
-            'upstream_base': upstream_base or self.base,
-        }
-        image = b'INERT FIT FIXTURE'
-        document.update(passed=True, image='fixture-squashfs-sysupgrade.itb',
-                        image_sha256=hashlib.sha256(image).hexdigest(),
-                        bundle=prefix + '.tar.gz',
-                        source_archive=prefix + '-source.tar.gz')
-        source_archive = folder / document['source_archive']
-        with tarfile.open(source_archive, 'w:gz') as archive:
-            data = b'INERT EXACT-SOURCE ARCHIVE FIXTURE\n'
-            member = tarfile.TarInfo('README.txt')
-            member.size = len(data)
-            archive.addfile(member, io.BytesIO(data))
-        document['source_archive_sha256'] = r.digest(source_archive)
-        bundle = folder / document['bundle']
-        with tarfile.open(bundle, 'w:gz') as archive:
-            receipt = {k: v for k, v in document.items()
-                       if k not in ['passed', 'image', 'image_sha256', 'bundle',
-                                    'source_archive', 'source_archive_sha256']}
-            rows = {
-                'source.json': json.dumps(receipt).encode(),
-                document['image']: image,
-                'fixture.manifest': b'kernel - test\n',
-                **{name: b'fixture' for name in
-                   ['config.buildinfo', 'feeds.buildinfo', 'version.buildinfo']},
-            }
-            if flavor == 'full':
-                rows['dicttech-wrtix-source.tar'] = b'SYNTHETIC WRTIX SOURCE'
-                rows['dicttech-wrtix-source.json'] = json.dumps({**document['wrtix_source'], 'tree_sha256': 'c'*64}).encode()
-            if evil:
-                rows['key-build.pem'] = b'INERT PRIVATE KEY FIXTURE'
-            for name, data in rows.items():
-                member = tarfile.TarInfo(name)
-                member.size = len(data)
-                archive.addfile(member, io.BytesIO(data))
-        document['bundle_sha256'] = r.digest(bundle)
-        (folder / (prefix + '.json')).write_text(json.dumps(document))
-        (folder / (prefix + '-sysupgrade.itb')).write_bytes(image)
+    def test_wrong_source_rejected(self):
+        self.pair(update={'source_commit':self.base})
+        with self.assertRaisesRegex(ValueError,'different source'):self.assemble()
 
-    def test_complete_pair_and_hashes(self):
-        inputs = self.destination()
-        self.fake_bundle(inputs / 'one', 'full')
-        self.fake_bundle(inputs / 'two', 'fixes')
-        out = self.destination()
-        r.assemble(inputs, out, self.head, self.fixes_head)
-        self.assertEqual(len(list(out.glob('*.tar.gz'))), 4)
-        self.assertEqual(len(list(out.glob('*-source.tar.gz'))), 2)
-        self.assertEqual(len(list(out.glob('*.itb'))), 2)
-        pair = json.loads((out / 'release-pair.json').read_text())
-        self.assertEqual(pair['schema_version'], r.ARTIFACT_SCHEMA)
-        self.assertEqual({d['flavor'] for d in pair['variants']}, {'full', 'fixes'})
-        self.assertEqual(pair['fixes_commit'], self.fixes_head)
-        self.assertEqual({d['source_commit'] for d in pair['variants']},
-                         {self.head, self.fixes_head})
+    def test_wrtix_pin_changes_rejected(self):
+        self.pair(update={'wrtix_source':{**self.pin,'revision':'b'*40}})
+        with self.assertRaisesRegex(ValueError,'wrtix source'):self.assemble()
 
-    def test_legacy_schema_archive_cannot_be_relabelled_as_current(self):
-        inputs = self.destination()
-        folder = inputs / 'one'
-        self.fake_bundle(folder, 'full', source_commit=self.head, schema_version=2)
-        self.fake_bundle(inputs / 'two', 'fixes')
-        with self.assertRaises(ValueError):
-            r.assemble(inputs, self.destination(), self.head, self.fixes_head)
-        # Changing the outer schema cannot rewrite the archived source receipt.
-        receipt = next(folder.glob('*.json'))
-        document = json.loads(receipt.read_text())
-        document.update(schema_version=r.ARTIFACT_SCHEMA, flavor='full')
-        receipt.write_text(json.dumps(document))
-        with self.assertRaisesRegex(ValueError, 'Bundle source receipt differs|Required wrtix source metadata absent'):
-            r.assemble(inputs, self.destination(), self.head, self.fixes_head)
+    def test_modified_bundle_rejected(self):
+        self.pair();report=json.loads(next((self.inputs/'ap').glob('*.json')).read_text());bundle=self.inputs/'ap'/report['bundle'];bundle.write_bytes(b'tamper')
+        with self.assertRaisesRegex(ValueError,'Bundle changed'):self.assemble()
 
-    def test_missing_mixed_and_private_artifacts_are_rejected(self):
-        for mode in ['missing', 'mixed', 'private', 'modified', 'wrong-fixes',
-                     'wrong-source', 'duplicate-edition', 'source-archive-modified']:
-            inputs = self.destination()
-            self.fake_bundle(inputs / 'one', 'full')
-            if mode != 'missing':
-                self.fake_bundle(
-                    inputs / 'two', 'full' if mode == 'duplicate-edition' else 'fixes',
-                    evil=mode == 'private',
-                    revision=self.base if mode == 'mixed' else None,
-                    fixes_commit=self.base if mode == 'wrong-fixes' else None,
-                    source_commit=self.head if mode == 'wrong-source' else None)
-            if mode == 'modified':
-                path = next(path for path in (inputs / 'two').glob('*.tar.gz')
-                            if not path.name.endswith('-source.tar.gz'))
-                path.write_bytes(path.read_bytes() + b'changed')
-            if mode == 'source-archive-modified':
-                path = next((inputs / 'two').glob('*-source.tar.gz'))
-                path.write_bytes(path.read_bytes() + b'changed')
-            with self.subTest(mode=mode), self.assertRaises(REJECTED):
-                r.assemble(inputs, self.destination(), self.head, self.fixes_head)
+    def test_modified_download_rejected(self):
+        self.pair();next((self.inputs/'ap').glob('*.itb')).write_bytes(b'tamper')
+        with self.assertRaisesRegex(ValueError,'Download image'):self.assemble()
 
-    def test_pair_controller_pins_upstream_and_both_source_trees(self):
-        trees = {
-            'full': r.git(self.repo, 'rev-parse', self.head + '^{tree}'),
-            'fixes': r.git(self.repo, 'rev-parse', self.fixes_head + '^{tree}'),
-        }
-        for mode in ['valid', 'wrong-upstream', 'forged-tree']:
-            inputs = self.destination()
-            upstream = self.head if mode == 'wrong-upstream' else self.base
-            self.fake_bundle(inputs / 'one', 'full', upstream_base=upstream)
-            self.fake_bundle(inputs / 'two', 'fixes', upstream_base=upstream,
-                             source_tree='f' * 40 if mode == 'forged-tree' else None)
-            with self.subTest(mode=mode):
-                if mode == 'valid':
-                    r.assemble(inputs, self.destination(), self.head,
-                               self.fixes_head, self.base, trees)
-                else:
-                    with self.assertRaises(REJECTED):
-                        r.assemble(inputs, self.destination(), self.head,
-                                   self.fixes_head, self.base, trees)
+    def test_private_or_unsafe_archive_member_rejected(self):
+        self.pair(extra={'private/password.txt':b'synthetic'})
+        with self.assertRaisesRegex(ValueError,'Non-public'):self.assemble()
 
-    def test_chinese_notes_pin_both_source_commits(self):
-        inputs = self.destination()
-        self.fake_bundle(inputs / 'one', 'full')
-        self.fake_bundle(inputs / 'two', 'fixes')
-        pair = self.destination()
-        r.assemble(inputs, pair, self.head, self.fixes_head)
-        output = self.destination()
-        template = self.destination()
-        template.write_text('这是测试用中文发布说明。\n')
-        r.generate_notes(pair / 'release-pair.json', output, template)
-        notes = output.read_text()
-        self.assertIn('中文发布说明', notes)
-        self.assertIn(self.head, notes)
-        self.assertIn(self.fixes_head, notes)
-        self.assertIn('full', notes)
-        self.assertIn('完整版（full）', notes)
-        self.assertIn('fixes', notes)
-        with self.assertRaises(FileExistsError):
-            r.generate_notes(pair / 'release-pair.json', output, template)
-        document = json.loads((pair / 'release-pair.json').read_text())
-        legacy = dict(document, schema_version=2)
-        legacy_path = self.destination()
-        legacy_path.write_text(json.dumps(legacy))
-        with self.assertRaisesRegex(ValueError, 'Unsupported release pair'):
-            r.generate_notes(legacy_path, self.destination(), template)
-        document['variants'][0]['source_commit'] = self.base
-        (pair / 'release-pair.json').write_text(json.dumps(document))
-        with self.assertRaises(REJECTED):
-            r.generate_notes(pair / 'release-pair.json', self.destination(), template)
+    def test_traversal_member_rejected(self):
+        self.pair(extra={'../outside':b'synthetic'})
+        with self.assertRaisesRegex(ValueError,'Unsafe'):self.assemble()
+
+    def test_notes_require_complete_new_schema_pair(self):
+        self.pair();self.assemble();template=self.root/'notes';template.write_text('Public notes\n');out=self.root/'notes.md'
+        r.generate_notes(self.output()/'release-pair.json',out,template)
+        text=out.read_text();self.assertIn('gateway／ap',text);self.assertNotIn('fixes',text)
+        x=json.loads((self.output()/'release-pair.json').read_text());x['variants'].pop();(self.output()/'release-pair.json').write_text(json.dumps(x))
+        with self.assertRaisesRegex(ValueError,'both Full roles'):r.generate_notes(self.output()/'release-pair.json',self.root/'bad.md',template)
 
 
-if __name__ == '__main__':
-    os.umask(0o022)
-    unittest.main()
+if __name__=='__main__':unittest.main()

@@ -5,20 +5,23 @@ umask 022
 cd "$(dirname "$0")/../.."
 
 layout=legacy
+role=gateway
 jobs=2
 prepare_only=0
 reuse_feeds=0
 allow_dirty=0
 while (($#)); do
  case "$1" in
-  --layout) layout=${2:?}; shift 2;;
+  --role) role=${2:?}; shift 2;;
+ --layout) layout=${2:?}; shift 2;;
   --jobs) jobs=${2:?}; shift 2;;
   --prepare-only) prepare_only=1; shift;;
   --reuse-feeds) reuse_feeds=1; shift;;
   --allow-dirty) allow_dirty=1; shift;;
-  *) echo 'usage: build-full.sh [--layout legacy|ubi] [--jobs N] [--prepare-only] [--reuse-feeds] [--allow-dirty]' >&2; exit 2;;
+  *) echo 'usage: build-full.sh [--role gateway|ap] [--layout legacy|ubi] [--jobs N] [--prepare-only] [--reuse-feeds] [--allow-dirty]' >&2; exit 2;;
  esac
 done
+[[ $role == gateway || $role == ap ]] || { echo "Unknown network role" >&2; exit 2; }
 [[ $layout == legacy || $layout == ubi ]] || { echo 'Unknown layout' >&2; exit 2; }
 [[ $jobs =~ ^[1-9][0-9]*$ ]] || { echo 'Invalid jobs' >&2; exit 2; }
 # This public build never consumes local deployment bundles or rootfs overlays.
@@ -51,6 +54,11 @@ python3 scripts/dicttech/prepare-source-permissions.py
 python3 scripts/dicttech/check-ui-source.py
 bash scripts/fix-stale-golang-host.sh
 cp configs/xr1710g-full.config .config
+if [[ $role == ap ]]; then
+ printf '%s\n' 'CONFIG_XR1710G_DEFAULT_ROLE_AP=y' >> .config
+else
+ printf '%s\n' '# CONFIG_XR1710G_DEFAULT_ROLE_AP is not set' >> .config
+fi
 if [[ $layout == ubi ]]; then
  sed -i '/^CONFIG_TARGET_airoha_an7581_DEVICE_gemtek_xr1710g=y$/d' .config
  printf '%s\n' 'CONFIG_TARGET_airoha_an7581_DEVICE_gemtek_xr1710g-ubi=y' >>.config
@@ -96,7 +104,7 @@ python3 scripts/dicttech/check-image.py --layout "$layout" --image "$image" \
 # the build host. The FIT/rootfs bytes (including /dev) were verified above.
 staging_dir/host/bin/unsquashfs4 -no-progress -no-xattrs -excludes \
  -d "$audit/rootfs" "$audit/rootfs.squashfs" dev >"$audit/unsquashfs.log"
-python3 scripts/dicttech/check-rootfs.py --rootfs "$audit/rootfs" \
+python3 scripts/dicttech/check-rootfs.py --role "$role" --rootfs "$audit/rootfs" \
  --manifest "bin/targets/airoha/an7581/$prefix.manifest" \
  --output "${image%.itb}.rootfs.audit.json"
 python3 scripts/dicttech/check-image.py --layout "$layout" --image "$image" \

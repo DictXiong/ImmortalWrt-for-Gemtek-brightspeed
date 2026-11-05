@@ -1,0 +1,16 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+[ -f /tmp/xr1710g-fresh-ap ] || exit 0
+[ "$(cat /etc/xr1710g-network-role 2>/dev/null)" = ap ] || exit 1
+[ "$(uci -q get network.lan.proto)" = dhcp ] || exit 1
+# config_generate supplies normal router DHCP defaults even for DHCP-client LAN.
+# Override them before network and DHCP services start on this first boot.
+uci set dhcp.lan.ignore=1 || exit 1
+for option in dhcpv4 dhcpv6 ra ndp; do
+	uci set "dhcp.lan.$option=disabled" || exit 1
+done
+uci commit dhcp || exit 1
+/etc/init.d/dnsmasq disable || exit 1
+/etc/init.d/odhcpd disable || exit 1
+rm -f /tmp/xr1710g-fresh-ap
+exit 0

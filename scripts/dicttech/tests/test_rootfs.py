@@ -42,6 +42,7 @@ class RootfsChecks(unittest.TestCase):
             shutil.copyfile(check.REPO / source, target)
         (self.root / 'etc/wrtix').mkdir(mode=0o700)
         (self.root / 'etc/xr1710g-full').write_text('XR1710G Full\n')
+        (self.root / 'etc/xr1710g-network-role').write_text('gateway\n')
         files = ('usr/libexec/wrtix/agent', 'etc/init.d/wrtix-agent', 'usr/share/wrtix/contract.json')
         (self.root / 'usr/share/wrtix/runtime.sha256').write_text(''.join(check.digest((self.root / name).read_bytes()) + '  ' + name + '\n' for name in files))
         shadow = self.root / 'etc/shadow'; shadow.write_text('root:::0:99999:7:::\nservice:*:0:0:99999:7:::\n'); shadow.chmod(0o600)
@@ -60,6 +61,13 @@ class RootfsChecks(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_selected_network_role_must_match(self):
+        self.assertEqual(check.check_rootfs(self.root, role='gateway')['clean_image']['network_role'], 'gateway')
+        with self.assertRaisesRegex(check.RootfsError, 'network role marker differs'):
+            check.check_rootfs(self.root, role='ap')
+        (self.root / 'etc/xr1710g-network-role').write_text('ap\n')
+        self.assertEqual(check.check_rootfs(self.root, role='ap')['clean_image']['network_role'], 'ap')
 
     def test_cli_installed_identity_and_permissions(self):
         target = self.root / 'etc/profile.d/80-xr1710g-cli.sh'
