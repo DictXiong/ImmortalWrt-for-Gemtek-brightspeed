@@ -42,13 +42,13 @@ python3 scripts/dicttech/release.py notes --pair /tmp/xr-release-pair/release-pa
   --output /tmp/xr-release-notes.md
 ```
 
-配对要求两种角色齐全，准确源码、布局、feed 和 wrtix 输入一致，软件包及版本清单相同，构建配置仅允许角色开关不同。还会验证实际角色审计结果、镜像／归档哈希和归档成员；不能用改文件名或复用另一角色的镜像凑成一对。
+配对要求两种角色齐全，准确源码、布局、feed 和 wrtix 输入一致，软件包及版本清单相同，构建配置仅允许角色开关不同。远端 feed 的 URL／提交必须匹配锁定值；本地 wrtix feed 以已验证的提交和源码归档哈希识别，忽略隔离构建目录前缀。还会验证实际角色审计结果、镜像／归档哈希和归档成员；不能用改文件名或复用另一角色的镜像凑成一对。
 
 附件前缀为 `xr1710g-full-{gateway|ap}-{layout}-{version}-{commit}`。每种角色提供可直接刷写的 ITB、配套固件／APK 归档、精确源码及来源 JSON。`source.json` 和 `release-pair.json` 使用 schema 4，记录相同的 `source_commit`／`source_tree`、显式 `role` 和固定构建输入。两个源码归档对应同一提交；GitHub 自动源码包也对应主标签。独立签名密钥不会公开，不同构建的 APK／kmod 不应混用；固定输入不承诺二进制逐字节可重现。
 
 ## CI 与发布
 
-**Build XR1710G release pair**（`xr1710g-release.yml`）固定一次源码提交，然后在两个隔离 job 中分别构建 `gateway`／`ap`。只有两份产物均通过且配对检查成功，才汇总 Release 附件。完整版单独检查工作流也对两种角色分别运行。
+**Build XR1710G Full roles**（`xr1710g-release.yml`）固定一次源码提交，然后在两个隔离 job 中分别构建 `gateway`／`ap`。只有两份产物均通过且配对检查成功，才汇总 Release 附件。源码、ARM 程序和浏览器检查均由此工作流完成。
 
 维护线每次推送只触发这一个工作流，构建 gateway／ap 两种 `legacy` 候选；手动运行可以选择布局。源码、ARM 程序和浏览器 UI 回归统一在此流程执行，无独立重复编译的 Full 工作流。新推送会取消同分支尚未完成的旧候选，显式发布调度不受影响。`release_tag` 留空时只生成候选 artifacts，填写新版本标签时创建草稿。发布前补充实际测试结果与已知限制，工作流不会覆盖已有标签或 Release。
 

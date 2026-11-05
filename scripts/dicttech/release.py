@@ -201,6 +201,37 @@ def normalized_config(data):
                                                   '# CONFIG_XR1710G_DEFAULT_ROLE_AP ')))
 
 
+def normalized_feeds(data, receipt):
+    """Validate real feed identities; only the verified local wrtix path varies."""
+    expected = {f['name']: ('src-git', f['url']+'^'+f['commit'])
+                for f in receipt['fixed_feeds']}
+    need(len(expected) == len(receipt['fixed_feeds']) and 'wrtix' not in expected,
+         'Invalid actual feed pin inventory')
+    seen = {}
+    pin = receipt['wrtix_source']
+    for line in data.decode().splitlines():
+        if not line.strip() or line.lstrip().startswith('#'):
+            continue
+        fields = line.split()
+        need(len(fields) == 3, 'Invalid actual feed record')
+        kind, name, source = fields
+        need(name not in seen, 'Duplicate actual feed record')
+        if name == 'wrtix':
+            path = Path(source)
+            need(kind == 'src-link' and path.is_absolute() and '..' not in path.parts and
+                 path.parts[-3:] == ('tmp', 'wrtix-sources', pin['revision']),
+                 'Invalid actual feed wrtix snapshot path')
+            # The archive's exact bytes and revision are independently verified
+            # before this function; a runner-local prefix is not source identity.
+            seen[name] = (kind, pin['revision'], pin['archive_sha256'])
+        else:
+            need(name in expected and (kind, source) == expected[name],
+                 'Invalid actual feed source: differs from locked revision')
+            seen[name] = (kind, source)
+    need(set(seen) == set(expected) | {'wrtix'}, 'Missing actual feed record')
+    return seen
+
+
 def assemble(inputs, output, revision, expected_upstream=None, expected_tree=None):
     """Accept only two audited roles with the same code, packages and policy."""
     need(not output.exists(), 'Use a new pair output directory')
@@ -253,7 +284,7 @@ def assemble(inputs, output, revision, expected_upstream=None, expected_tree=Non
                  audits[0].get('clean_image', {}).get('network_role') == d['role'], 'Rootfs role audit absent or mismatched')
             manifests.append(sorted(archive.extractfile(manifest).read().decode().splitlines()))
             configs.append(normalized_config(archive.extractfile('config.buildinfo').read()))
-            feed_receipts.append(archive.extractfile('feeds.buildinfo').read())
+            feed_receipts.append(normalized_feeds(archive.extractfile('feeds.buildinfo').read(), d))
         reports.append((path,bundle,d))
     need(len(reports) == 2 and {d['role'] for _,_,d in reports} == set(ROLES), 'Both Full roles must succeed')
     first = reports[0][2]

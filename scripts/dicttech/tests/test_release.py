@@ -53,7 +53,7 @@ class ReleaseTests(unittest.TestCase):
         members={'source.json':json.dumps(d).encode(),image:b'image fixture '+role.encode(),
                  image.removesuffix('-squashfs-sysupgrade.itb')+'.manifest':manifest.encode(),
                  'config.buildinfo':(config+('CONFIG_XR1710G_DEFAULT_ROLE_AP=y\n' if role=='ap' else '# CONFIG_XR1710G_DEFAULT_ROLE_AP is not set\n')).encode(),
-                 'feeds.buildinfo':b'fixed feeds\n','version.buildinfo':b'fixed version\n',
+                 'feeds.buildinfo':('src-git glass https://example.invalid/theme.git^'+'d'*40+'\n'+'src-link wrtix /builder/'+role+'/source/tmp/wrtix-sources/'+self.pin['revision']+'\n').encode(),'version.buildinfo':b'fixed version\n',
                  'dicttech-wrtix-source.json':json.dumps(self.pin).encode(),
                  'dicttech-wrtix-source.tar':b'wrtix fixture',
                  'audit/image.rootfs.audit.json':json.dumps({'passed':True,'clean_image':{'network_role':audit_role or role}}).encode()}
@@ -137,6 +137,26 @@ class ReleaseTests(unittest.TestCase):
     def test_old_artifact_schema_and_retired_flavor_rejected(self):
         self.pair(update={'schema_version':3,'flavor':'fixes'})
         with self.assertRaisesRegex(ValueError,'different source'):self.assemble()
+
+    def test_actual_feed_sources_must_match_pins_even_when_both_roles_agree(self):
+        for change in ('revision', 'url', 'missing', 'duplicate', 'link-revision', 'link-path', 'extra'):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as tmp:
+                feed = 'src-git glass https://example.invalid/theme.git^'+'d'*40+'\n'
+                link = 'src-link wrtix /builder/source/tmp/wrtix-sources/'+self.pin['revision']+'\n'
+                if change == 'revision': feed = feed.replace('d'*40, 'e'*40)
+                elif change == 'url': feed = feed.replace('theme.git', 'other.git')
+                elif change == 'missing': feed = ''
+                elif change == 'duplicate': feed += feed
+                elif change == 'link-revision': link = link.replace(self.pin['revision'], 'c'*40)
+                elif change == 'link-path': link = 'src-link wrtix /arbitrary/local/source\n'
+                elif change == 'extra': feed += 'src-git extra https://example.invalid/extra.git^'+'d'*40+'\n'
+                original = self.inputs; self.inputs = Path(tmp)
+                try:
+                    for role in r.ROLES: self.artifact(role, extra={'feeds.buildinfo': (feed+link).encode()})
+                    with self.assertRaisesRegex(ValueError, 'actual feed'): self.assemble()
+                finally:
+                    self.inputs = original
+                    if self.output().exists(): shutil.rmtree(self.output())
 
     def test_different_actual_feeds_rejected(self):
         self.pair(extra={'feeds.buildinfo':b'different actual revision'})
