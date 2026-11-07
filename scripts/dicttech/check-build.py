@@ -22,6 +22,7 @@ REQUIRED = {
     'luci-i18n-airoha-factory-zh-cn', 'luci-i18n-package-manager-zh-cn',
     'luci-i18n-wifihistory-zh-cn', 'dnsmasq', 'odhcpd-ipv6only',
     'ppp', 'ppp-mod-pppoe', 'luci-proto-ppp', 'kmod-crypto-hw-eip93',
+    'kmod-crypto-cbc', 'kmod-crypto-ctr', 'kmod-crypto-ecb',
 }
 FORBIDDEN = {
     'ap-profile', 'dicttech-setup', 'cli-profile', 'usteer', 'dawn', 'luci-app-usteer', 'luci-app-dawn', 'miniupnpd',
