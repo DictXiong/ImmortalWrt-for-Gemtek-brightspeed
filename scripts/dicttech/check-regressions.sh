@@ -5,6 +5,7 @@
 set -Eeuo pipefail
 export PYTHONDONTWRITEBYTECODE=1
 cd "$(dirname "$0")/../.."
+export WRTMESH_SOURCE="${WRTMESH_SOURCE:-$PWD/../wrtmesh}"
 
 usage() {
  printf '%s\n' 'usage: check-regressions.sh host | rootfs ROOTFS REPORT_DIRECTORY' >&2
@@ -25,8 +26,8 @@ case ${1:-} in
    scripts/dicttech/tests/test_ui_source.py \
    scripts/dicttech/tests/test_packages.py \
    scripts/dicttech/tests/test_source_permissions.py \
-   scripts/dicttech/check-xr-roaming-package.py \
-   scripts/dicttech/test-xr-roaming.py; do
+   "$WRTMESH_SOURCE/tests/check-xr-roaming-package.py" \
+   "$WRTMESH_SOURCE/tests/test-xr-roaming.py"; do
    printf 'Running %s\n' "$test"
    python3 "$test"
   done
@@ -45,6 +46,8 @@ PY
   )
   python3 scripts/dicttech/tests/wifihistory/test_history.py --ucode "$ucode" \
    2>&1 | tee "$reports/dicttech-history-tests.log"
+  python3 "$WRTMESH_SOURCE/tests/test-xr-mesh.py" --c7-rootfs "$rootfs" \
+   2>&1 | tee "$reports/dicttech-wrtmesh-tests.log"
   python3 scripts/dicttech/tests/factory/test_factory.py --rootfs "$rootfs" \
    2>&1 | tee "$reports/dicttech-factory-tests.log"
   ;;

@@ -1,7 +1,7 @@
 # XR1710G full edition
 
 The `full` edition combines hardware/driver fixes, LuCI improvements, commonly
-useful command-line tools, `wrtix-agent` and `xr-roaming`. Its `gateway` and `ap`
+useful command-line tools, `wrtix-agent` and `wrtmesh`. Its `gateway` and `ap`
 build roles use the same source, drivers, packages and wrtix version; only the
 initial network configuration differs. No owner public keys, shared password,
 custom maintenance subnet, personal AP policy or MAC allocator is included. The Full-only `xr1710g-cli` package provides
@@ -30,9 +30,8 @@ Use an unconfigured image on a trusted network: the initial root password is
 empty and SSH uses LAN port 22 in both roles. Set authentication before exposing
 management elsewhere. Role defaults apply only to a fresh/reset configuration;
 upgrading while retaining configuration does not convert its network role.
-Wireless interfaces
-are disabled initially; `xr-roaming` has no predefined profiles and starts no
-worker until configured. Choose the actual regulatory country and Wi-Fi security
+Wireless interfaces are disabled initially. wrtmesh ships no predefined peers
+or ESS profiles. Choose the actual regulatory country and Wi-Fi security
 before enabling radios. The full-edition marker suppresses upstream preset
 wireless credentials and country overrides; it does not rewrite retained settings.
 
@@ -46,25 +45,26 @@ itself has no such defaults. See [configuration ownership](dicttech-config-forma
 
 ```sh
 WRTIX_SOURCE=/absolute/path/to/clean/wrtix \
+WRTMESH_SOURCE=/absolute/path/to/clean/wrtmesh \
   bash scripts/dicttech/build-full.sh --role gateway --layout legacy --jobs 4
 ```
 
 Select `--role ap` for the bridged DHCP-client default. Role and partition layout
 are independent choices. Use `ubi` only for hardware already using that
 bootloader/partition layout.
-The command does not convert partitions or flash bootloaders. Feeds and wrtix
-are pinned, and the build rejects a root `files/` overlay. Source must be
-committed; `--allow-dirty` is reserved for explicitly uncommitted local trials.
+The command leaves the partition layout and bootloader in place. The build pins
+all feeds and rejects a root `files/` overlay. Commit the source before building
+a release. Use `--allow-dirty` for explicitly uncommitted local trials.
 `--prepare-only` prepares feed/config inputs without compiling the image.
 
-`configs/wrtix-source.json` records the exact wrtix commit and Git archive hash.
-GitHub Actions fetches `DictXiong/wrtix` by default. The `wrtix_repository`
+`configs/wrtix-source.json` and `configs/wrtmesh-source.json` record each standalone feed’s Git commit and archive hash.
+GitHub Actions fetches `DictXiong/wrtix` and `DictXiong/wrtmesh` by default. The `wrtix_repository`
 workflow input takes precedence over the `WRTIX_REPOSITORY` repository variable;
 either override still has to supply the pinned commit and matching archive.
-The build requires `WRTIX_SOURCE` to match, materializes a verified snapshot,
-and includes its source archive in the release bundle. Runtime protocol versions
-are independent of the firmware's version. A matching SDK/firmware build supplies
-its architecture-independent agent package and target dependencies.
+The build verifies and materializes both checkouts and includes both source
+archives in the release bundle. The wrtmesh APK retains the original
+`/etc/config/xr_roaming` and `/etc/config/xr_mesh` paths for sysupgrade.
+Its source checkout also supplies the LuCI Overview patch.
 
 The finished FIT, extracted rootfs, package signatures and exact kmod set are
 checked before publishing. Private keys, personal authentication material and

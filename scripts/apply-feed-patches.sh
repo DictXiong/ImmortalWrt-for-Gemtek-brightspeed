@@ -44,6 +44,9 @@ absent=0
 while IFS= read -r -d '' patch_file; do
 	feed_path="${patch_file#patches/feeds/}"
 	feed_name="${feed_path%%/*}"
+	if [[ "$patch_file" == feeds/wrtmesh/integration/luci-overview.patch ]]; then
+		feed_name=luci
+	fi
 	feed_dir="feeds/$feed_name"
 
 	# A feed that has not been fetched yet is not a build error: the patched
@@ -74,6 +77,13 @@ while IFS= read -r -d '' patch_file; do
 		echo "The feed moved on; rebase the patch before building." >&2
 		exit 1
 	fi
-done < <(find patches/feeds -type f -name '*.patch' -print0 | sort -z)
+done < <(
+	{
+		find patches/feeds -type f -name '*.patch' -print0
+		if [[ -f feeds/wrtmesh/integration/luci-overview.patch ]]; then
+			printf '%s\0' feeds/wrtmesh/integration/luci-overview.patch
+		fi
+	} | sort -z
+)
 
 echo "Feed patches: $applied applied, $skipped already present, $absent skipped (feed absent)."

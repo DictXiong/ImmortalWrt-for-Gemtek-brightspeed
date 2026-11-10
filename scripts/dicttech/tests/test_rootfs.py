@@ -2,6 +2,7 @@
 """No-device tests for source/installed byte identity and virgin-image policy."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -31,9 +32,21 @@ class RootfsChecks(unittest.TestCase):
             shutil.copy2(source, target)
             if relative.startswith(('etc/init.d/', 'usr/libexec/', 'lib/apk/commit_hooks.d/')):
                 target.chmod(0o755)
+        wrtmesh = Path(os.environ.get('WRTMESH_SOURCE', check.REPO.parent / 'wrtmesh')).resolve()
+        patcher = patch.object(check, 'pinned_wrtmesh', return_value=wrtmesh)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         for relative, source in check.roaming_map(check.REPO).items():
             target = self.root / relative; target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
+        translation = b'synthetic immutable compiled translation\n'
+        patcher = patch.object(check, 'wrtmesh_translation', return_value=translation)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        target = self.root / 'usr/lib/lua/luci/i18n/wrtmesh.zh-cn.lmo'
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(translation)
+        target.chmod(0o644)
         for relative, source in check.cli_map(check.REPO).items():
             target = self.root / relative; target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
@@ -46,7 +59,7 @@ class RootfsChecks(unittest.TestCase):
         files = ('usr/libexec/wrtix/agent', 'etc/init.d/wrtix-agent', 'usr/share/wrtix/contract.json')
         (self.root / 'usr/share/wrtix/runtime.sha256').write_text(''.join(check.digest((self.root / name).read_bytes()) + '  ' + name + '\n' for name in files))
         shadow = self.root / 'etc/shadow'; shadow.write_text('root:::0:99999:7:::\nservice:*:0:0:99999:7:::\n'); shadow.chmod(0o600)
-        (self.root / 'www').mkdir(); (self.root / 'www/xr-roaming').symlink_to('/tmp/xr-roaming-public')
+        (self.root / 'www/xr-roaming').symlink_to('/tmp/xr-roaming-public')
         (self.root / 'etc/resolv.conf').symlink_to('/tmp/resolv.conf')
         (self.root / 'etc/passwd').write_text('root:x:0:0:root:/root:/bin/ash\n')
         for relative in check.RPC_REQUIRED_FILES:
@@ -85,6 +98,21 @@ class RootfsChecks(unittest.TestCase):
         self.assertGreaterEqual(len(report['files_checked']), 20)
         self.assertFalse(report['clean_image']['preset_root_password'])
         self.assertEqual(report['clean_image']['preset_authorized_keys'], 'absent')
+
+    def test_wrtmesh_translation_and_stylesheet_require_exact_bytes(self):
+        for relative in ('usr/lib/lua/luci/i18n/wrtmesh.zh-cn.lmo',
+                         'www/luci-static/resources/xrmesh.css'):
+            with self.subTest(relative=relative):
+                path = self.root / relative
+                original = path.read_bytes()
+                path.write_bytes(b'tampered\n')
+                with self.assertRaisesRegex(check.RootfsError, 'authoritative source'):
+                    check.check_rootfs(self.root)
+                path.unlink()
+                with self.assertRaisesRegex(check.RootfsError, 'missing or symlinked'):
+                    check.check_rootfs(self.root)
+                path.write_bytes(original)
+                path.chmod(0o644)
 
     def test_runtime_modes_manifest_and_retired_runtime_rejected(self):
         path = self.root / 'etc/init.d/wrtix-agent'

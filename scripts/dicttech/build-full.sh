@@ -31,15 +31,19 @@ done
  exit 1
 }
 export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+export WRTMESH_SOURCE="${WRTMESH_SOURCE:-$PWD/../wrtmesh}"
 cp configs/dicttech-feeds.conf feeds.conf
 : "${WRTIX_SOURCE:?Set WRTIX_SOURCE to the clean wrtix checkout matching configs/wrtix-source.json}"
 python3 scripts/dicttech/wrtix-source.py prepare --source "$WRTIX_SOURCE" \
  --lock configs/wrtix-source.json --output tmp/wrtix-sources --feeds-file feeds.conf \
  --metadata bin/dicttech-wrtix-source.json
+python3 scripts/dicttech/wrtix-source.py prepare --feed wrtmesh --source "$WRTMESH_SOURCE" \
+ --lock configs/wrtmesh-source.json --output tmp/wrtmesh-sources --feeds-file feeds.conf \
+ --metadata bin/dicttech-wrtmesh-source.json
 if [[ $reuse_feeds == 0 ]]; then
  ./scripts/feeds update -a
 else
- ./scripts/feeds update wrtix
+ ./scripts/feeds update wrtix wrtmesh
 fi
 python3 scripts/dicttech/check-build.py --feeds-only >/dev/null
 FEED_PATCHES_STRICT=1 bash scripts/apply-feed-patches.sh
@@ -96,7 +100,7 @@ image="bin/targets/airoha/an7581/$prefix-squashfs-sysupgrade.itb"
 [[ -f $image ]] || { echo 'Expected current-build image is missing' >&2; exit 1; }
 audit=$(mktemp -d "$PWD/tmp/dicttech-image.XXXXXX")
 trap 'rm -rf -- "$audit"' EXIT
-cp bin/dicttech-wrtix-source.json bin/dicttech-wrtix-source.tar bin/targets/airoha/an7581/
+cp bin/dicttech-{wrtix,wrtmesh}-source.{json,tar} bin/targets/airoha/an7581/
 python3 scripts/dicttech/check-image.py --layout "$layout" --image "$image" \
  --rootfs-image-output "$audit/rootfs.squashfs" \
  --output "${image%.itb}.audit.json"

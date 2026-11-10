@@ -29,7 +29,11 @@ class ReleaseTests(unittest.TestCase):
         self.put('configs/xr1710g-release.json',json.dumps({'schema_version':3,'version':'3.1.0-alpha.1','upstream_base':self.base}))
         self.put('configs/dicttech-feeds.conf','src-git --directory=theme glass https://example.invalid/theme.git^'+'d'*40+'\n')
         self.pin={'schema_version':1,'revision':'a'*40,'archive_sha256':hashlib.sha256(b'wrtix fixture').hexdigest()}
-        self.put('configs/wrtix-source.json',json.dumps(self.pin)); self.head=self.commit('Full release')
+        self.put('configs/wrtix-source.json', json.dumps(self.pin))
+        self.mesh_pin = {'schema_version': 1, 'revision': 'b' * 40,
+                         'archive_sha256': hashlib.sha256(b'wrtmesh fixture').hexdigest()}
+        self.put('configs/wrtmesh-source.json', json.dumps(self.mesh_pin))
+        self.head = self.commit('Full release')
         self.tree=r.git(self.repo,'rev-parse','HEAD^{tree}')
         self.inputs=self.root/'inputs';self.inputs.mkdir()
 
@@ -53,9 +57,12 @@ class ReleaseTests(unittest.TestCase):
         members={'source.json':json.dumps(d).encode(),image:b'image fixture '+role.encode(),
                  image.removesuffix('-squashfs-sysupgrade.itb')+'.manifest':manifest.encode(),
                  'config.buildinfo':(config+('CONFIG_XR1710G_DEFAULT_ROLE_AP=y\n' if role=='ap' else '# CONFIG_XR1710G_DEFAULT_ROLE_AP is not set\n')).encode(),
-                 'feeds.buildinfo':('src-git glass https://example.invalid/theme.git^'+'d'*40+'\n'+'src-link wrtix /builder/'+role+'/source/tmp/wrtix-sources/'+self.pin['revision']+'\n').encode(),'version.buildinfo':b'fixed version\n',
+                 'feeds.buildinfo':('src-git glass https://example.invalid/theme.git^'+'d'*40+'\n'+'src-link wrtix /builder/'+role+'/source/tmp/wrtix-sources/'+self.pin['revision']+'\n'+
+                                    'src-link wrtmesh /builder/'+role+'/source/tmp/wrtmesh-sources/'+self.mesh_pin['revision']+'\n').encode(),'version.buildinfo':b'fixed version\n',
                  'dicttech-wrtix-source.json':json.dumps(self.pin).encode(),
                  'dicttech-wrtix-source.tar':b'wrtix fixture',
+                 'dicttech-wrtmesh-source.json':json.dumps(self.mesh_pin).encode(),
+                 'dicttech-wrtmesh-source.tar':b'wrtmesh fixture',
                  'audit/image.rootfs.audit.json':json.dumps({'passed':True,'clean_image':{'network_role':audit_role or role}}).encode()}
         if extra:members.update(extra)
         bundle=folder/(prefix+'.tar.gz')
@@ -81,7 +88,7 @@ class ReleaseTests(unittest.TestCase):
             receipt=r.prepare(self.repo,directory,role,'legacy')
             self.assertEqual(receipt['source_commit'],self.head);self.assertEqual(receipt['source_tree'],self.tree)
             self.assertEqual(receipt['role'],role);self.assertEqual(receipt['flavor'],'full')
-            self.assertEqual(receipt['schema_version'],4);r.source_check(directory,receipt)
+            self.assertEqual(receipt['schema_version'],r.ARTIFACT_SCHEMA);r.source_check(directory,receipt)
         self.assertEqual(r.git(self.repo,'show-ref'),before)
 
     def test_retired_fixes_role_is_rejected(self):
@@ -150,6 +157,7 @@ class ReleaseTests(unittest.TestCase):
                 elif change == 'link-revision': link = link.replace(self.pin['revision'], 'c'*40)
                 elif change == 'link-path': link = 'src-link wrtix /arbitrary/local/source\n'
                 elif change == 'extra': feed += 'src-git extra https://example.invalid/extra.git^'+'d'*40+'\n'
+                link += 'src-link wrtmesh /builder/source/tmp/wrtmesh-sources/' + self.mesh_pin['revision'] + '\n'
                 original = self.inputs; self.inputs = Path(tmp)
                 try:
                     for role in r.ROLES: self.artifact(role, extra={'feeds.buildinfo': (feed+link).encode()})
@@ -181,6 +189,14 @@ class ReleaseTests(unittest.TestCase):
     def test_wrtix_pin_changes_rejected(self):
         self.pair(update={'wrtix_source':{**self.pin,'revision':'b'*40}})
         with self.assertRaisesRegex(ValueError,'wrtix source'):self.assemble()
+
+    def test_wrtmesh_archive_and_pin_are_verified(self):
+        self.pair(extra={'dicttech-wrtmesh-source.tar': b'tampered'})
+        with self.assertRaisesRegex(ValueError, 'wrtmesh archive'):
+            self.assemble()
+        self.pair(update={'wrtmesh_source': {**self.mesh_pin, 'revision': 'c' * 40}})
+        with self.assertRaisesRegex(ValueError, 'wrtmesh source'):
+            self.assemble()
 
     def test_modified_bundle_rejected(self):
         self.pair();report=json.loads(next((self.inputs/'ap').glob('*.json')).read_text());bundle=self.inputs/'ap'/report['bundle'];bundle.write_bytes(b'tamper')

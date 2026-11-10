@@ -15,7 +15,7 @@
 
 `configs/xr1710g-release.json` 使用 schema 3，保存 `version` 与固定的 `upstream_base`。当前干净提交同时是发布控制器和两种角色的唯一源码；控制器校验上游基线已合入，拒绝脏源码及 `files/` overlay。公开版本使用 `x.y.z` 或 `x.y.z-alpha.N`／`beta.N`／`rc.N`，标签为 `v` 加版本号；APK 的预发布版本使用其本地排序形式。
 
-两种角色保持相同驱动、软件包清单、feed 与 wrtix 版本。`configs/dicttech-feeds.conf` 固定 feed 提交，`configs/wrtix-source.json` 固定 wrtix 提交和 Git archive 哈希。构建须设置 `WRTIX_SOURCE` 指向匹配的干净 checkout。GitHub Actions 默认从 `DictXiong/wrtix` 获取；`wrtix_repository` 输入优先于 `WRTIX_REPOSITORY` 仓库变量，覆盖仓库仍须满足同一提交和哈希。
+两种角色保持相同驱动、软件包清单和 feed 版本。`configs/dicttech-feeds.conf` 固定 feed 提交，`configs/wrtix-source.json` 和 `configs/wrtmesh-source.json` 固定两个独立仓库的提交和 Git archive 哈希。本地构建可通过 `WRTIX_SOURCE` 和 `WRTMESH_SOURCE` 指向匹配的干净 checkout。GitHub Actions 默认从 `DictXiong/wrtix` 获取；`wrtix_repository` 输入优先于 `WRTIX_REPOSITORY` 仓库变量，覆盖仓库仍须满足同一提交和哈希。wrtmesh 从 `DictXiong/wrtmesh` 获取。
 
 ## 本地构建与配对
 
@@ -42,9 +42,9 @@ python3 scripts/dicttech/release.py notes --pair /tmp/xr-release-pair/release-pa
   --output /tmp/xr-release-notes.md
 ```
 
-配对要求两种角色齐全，准确源码、布局、feed 和 wrtix 输入一致，软件包及版本清单相同，构建配置仅允许角色开关不同。远端 feed 的 URL／提交必须匹配锁定值；本地 wrtix feed 以已验证的提交和源码归档哈希识别，忽略隔离构建目录前缀。还会验证实际角色审计结果、镜像／归档哈希和归档成员；不能用改文件名或复用另一角色的镜像凑成一对。
+配对要求两种角色齐全，准确源码、布局、feed 和 wrtix／wrtmesh 输入一致，软件包及版本清单相同，构建配置仅允许角色开关不同。远端 feed 的 URL／提交必须匹配锁定值；本地 wrtix／wrtmesh feed 以已验证的提交和源码归档哈希识别，忽略隔离构建目录前缀。还会验证实际角色审计结果、镜像／归档哈希和归档成员；不能用改文件名或复用另一角色的镜像凑成一对。
 
-附件前缀为 `xr1710g-full-{gateway|ap}-{layout}-{version}-{commit}`。每种角色提供可直接刷写的 ITB、配套固件／APK 归档、精确源码及来源 JSON。`source.json` 和 `release-pair.json` 使用 schema 4，记录相同的 `source_commit`／`source_tree`、显式 `role` 和固定构建输入。两个源码归档对应同一提交；GitHub 自动源码包也对应主标签。独立签名密钥不会公开，不同构建的 APK／kmod 不应混用；固定输入不承诺二进制逐字节可重现。
+附件前缀为 `xr1710g-full-{gateway|ap}-{layout}-{version}-{commit}`。每种角色提供可直接刷写的 ITB、配套固件／APK 归档、精确源码及来源 JSON。`source.json` 和 `release-pair.json` 使用 schema 5，记录相同的 `source_commit`／`source_tree`、显式 `role` 和两个独立项目的固定构建输入。两个源码归档对应同一提交；GitHub 自动源码包也对应主标签。独立签名密钥不会公开，不同构建的 APK／kmod 不应混用；固定输入不承诺二进制逐字节可重现。
 
 ## CI 与发布
 

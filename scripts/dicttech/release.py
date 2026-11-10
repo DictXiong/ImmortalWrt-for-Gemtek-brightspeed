@@ -16,7 +16,9 @@ ROOT = Path(__file__).resolve().parents[2]
 LOCK = 'configs/xr1710g-release.json'
 FEEDS = 'configs/dicttech-feeds.conf'
 LOCK_SCHEMA = 3
-ARTIFACT_SCHEMA = 4
+ARTIFACT_SCHEMA = 5
+LOCAL_FEEDS = ('wrtix', 'wrtmesh')
+LOCAL_SOURCE_KEYS = tuple(f'{name}_source' for name in LOCAL_FEEDS)
 PUBLIC_VERSION = r'(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:alpha|beta|rc)\.[1-9][0-9]*)?'
 ROLES = ('gateway', 'ap')
 
@@ -83,10 +85,14 @@ def plan(repo):
         need(re.fullmatch('[A-Za-z0-9_-]+', directory), 'Invalid feed directory')
         feed_rows.append({'name': name, 'directory': directory, 'url': url, 'commit': pin})
     need(len({x['name'] for x in feed_rows}) == len(feed_rows), 'Duplicate feed')
-    wrtix = json.loads(git(repo, 'show', revision + ':configs/wrtix-source.json'))
-    need(set(wrtix) == {'schema_version', 'revision', 'archive_sha256'} and wrtix['schema_version'] == 1 and
-         re.fullmatch('[0-9a-f]{40}', wrtix['revision']) and re.fullmatch('[0-9a-f]{64}', wrtix['archive_sha256']), 'Invalid wrtix source pin')
-    return {'release_commit': revision, 'wrtix_source': wrtix,
+    sources = {}
+    for name in LOCAL_FEEDS:
+        pin = json.loads(git(repo, 'show', revision + f':configs/{name}-source.json'))
+        need(set(pin) == {'schema_version', 'revision', 'archive_sha256'} and pin['schema_version'] == 1 and
+             re.fullmatch('[0-9a-f]{40}', pin['revision']) and
+             re.fullmatch('[0-9a-f]{64}', pin['archive_sha256']), f'Invalid {name} source pin')
+        sources[f'{name}_source'] = pin
+    return {'release_commit': revision, **sources,
             'source_date_epoch': int(git(repo, 'show', '-s', '--format=%ct', revision)),
             **lock,
             'fixed_feeds': feed_rows, 'feed_text': feeds}
@@ -137,7 +143,7 @@ def build(directory, jobs, prepare_only=False):
     need(isinstance(jobs, int) and 1 <= jobs <= 256, 'Invalid parallelism')
     source_check(directory, d)
     locked = plan(ROOT)
-    need(all(d[key] == locked[key] for key in ['release_commit','source_date_epoch','version','upstream_base','fixed_feeds','wrtix_source']),
+    need(all(d[key] == locked[key] for key in ['release_commit','source_date_epoch','version','upstream_base','fixed_feeds', *LOCAL_SOURCE_KEYS]),
          'Build receipt is not bound to this release controller')
     need(d['feed_lock_sha256'] == hashlib.sha256(locked['feed_text'].encode()).hexdigest(), 'Feed lock changed after preparation')
     env = {**os.environ, 'SOURCE_DATE_EPOCH': str(d['source_date_epoch'])}
@@ -169,13 +175,17 @@ def build(directory, jobs, prepare_only=False):
             need(path.is_file() and not path.is_symlink(), 'Release metadata missing')
             archive.add(path,arcname=path.name,recursive=False)
         archive.add(directory/'source.json',arcname='source.json',recursive=False)
-        metadata = target/'dicttech-wrtix-source.json'
-        pin = json.loads(metadata.read_text())
-        need(all(pin.get(key) == value for key, value in d['wrtix_source'].items()), 'Built wrtix package source differs from release pin')
-        archive.add(metadata, arcname=metadata.name, recursive=False)
-        wrtix_archive = target/'dicttech-wrtix-source.tar'
-        need(wrtix_archive.is_file() and not wrtix_archive.is_symlink() and digest(wrtix_archive) == pin['archive_sha256'], 'Built wrtix source archive differs from pin')
-        archive.add(wrtix_archive, arcname=wrtix_archive.name, recursive=False)
+        for name in LOCAL_FEEDS:
+            metadata = target / f'dicttech-{name}-source.json'
+            pin = json.loads(metadata.read_text())
+            need(all(pin.get(key) == value for key, value in d[f'{name}_source'].items()),
+                 f'Built {name} package source differs from release pin')
+            archive.add(metadata, arcname=metadata.name, recursive=False)
+            source_tar = target / f'dicttech-{name}-source.tar'
+            need(source_tar.is_file() and not source_tar.is_symlink() and
+                 digest(source_tar) == pin['archive_sha256'],
+                 f'Built {name} source archive differs from pin')
+            archive.add(source_tar, arcname=source_tar.name, recursive=False)
         for path in sorted(package_dir.iterdir()):
             need(path.is_file() and not path.is_symlink() and path.suffix=='.apk', 'Unexpected APK export member')
             archive.add(path,arcname='packages/'+path.name,recursive=False)
@@ -202,13 +212,12 @@ def normalized_config(data):
 
 
 def normalized_feeds(data, receipt):
-    """Validate real feed identities; only the verified local wrtix path varies."""
+    """Validate real feed identities; only verified local feed paths vary."""
     expected = {f['name']: ('src-git', f['url']+'^'+f['commit'])
                 for f in receipt['fixed_feeds']}
-    need(len(expected) == len(receipt['fixed_feeds']) and 'wrtix' not in expected,
+    need(len(expected) == len(receipt['fixed_feeds']) and not set(LOCAL_FEEDS).intersection(expected),
          'Invalid actual feed pin inventory')
     seen = {}
-    pin = receipt['wrtix_source']
     for line in data.decode().splitlines():
         if not line.strip() or line.lstrip().startswith('#'):
             continue
@@ -216,11 +225,12 @@ def normalized_feeds(data, receipt):
         need(len(fields) == 3, 'Invalid actual feed record')
         kind, name, source = fields
         need(name not in seen, 'Duplicate actual feed record')
-        if name == 'wrtix':
+        if name in LOCAL_FEEDS:
+            pin = receipt[f'{name}_source']
             path = Path(source)
             need(kind == 'src-link' and path.is_absolute() and '..' not in path.parts and
-                 path.parts[-3:] == ('tmp', 'wrtix-sources', pin['revision']),
-                 'Invalid actual feed wrtix snapshot path')
+                 path.parts[-3:] == ('tmp', f'{name}-sources', pin['revision']),
+                 f'Invalid actual feed {name} snapshot path')
             # The archive's exact bytes and revision are independently verified
             # before this function; a runner-local prefix is not source identity.
             seen[name] = (kind, pin['revision'], pin['archive_sha256'])
@@ -228,7 +238,7 @@ def normalized_feeds(data, receipt):
             need(name in expected and (kind, source) == expected[name],
                  'Invalid actual feed source: differs from locked revision')
             seen[name] = (kind, source)
-    need(set(seen) == set(expected) | {'wrtix'}, 'Missing actual feed record')
+    need(set(seen) == set(expected) | set(LOCAL_FEEDS), 'Missing actual feed record')
     return seen
 
 
@@ -267,13 +277,19 @@ def assemble(inputs, output, revision, expected_upstream=None, expected_tree=Non
             need(Path(image_name).name == image_name and image_name.endswith('-squashfs-sysupgrade.itb'), 'Invalid image name')
             manifest = image_name.removesuffix('-squashfs-sysupgrade.itb')+'.manifest'
             allowed = {image_name, manifest, 'source.json', 'config.buildinfo', 'feeds.buildinfo',
-                       'version.buildinfo', 'dicttech-wrtix-source.json', 'dicttech-wrtix-source.tar'}
+                       'version.buildinfo'} | {
+                           f'dicttech-{name}-source.{ext}' for name in LOCAL_FEEDS for ext in ('json', 'tar')
+                       }
             need(allowed <= {m.name for m in members}, 'Required public metadata absent')
             need(all(m.name in allowed or re.fullmatch(r'packages/[A-Za-z0-9+_.~:-]+\.apk',m.name) or
                      re.fullmatch(r'audit/[A-Za-z0-9_.-]+\.audit\.json',m.name) for m in members), 'Non-public file in release archive')
-            pin = json.load(archive.extractfile('dicttech-wrtix-source.json'))
-            need(all(pin.get(k) == v for k, v in d['wrtix_source'].items()), 'Artifact wrtix source differs from release pin')
-            need(hashlib.sha256(archive.extractfile('dicttech-wrtix-source.tar').read()).hexdigest() == pin['archive_sha256'], 'Artifact wrtix archive differs from pin')
+            for name in LOCAL_FEEDS:
+                pin = json.load(archive.extractfile(f'dicttech-{name}-source.json'))
+                need(all(pin.get(key) == value for key, value in d[f'{name}_source'].items()),
+                     f'Artifact {name} source differs from release pin')
+                source_tar = archive.extractfile(f'dicttech-{name}-source.tar')
+                need(hashlib.sha256(source_tar.read()).hexdigest() == pin['archive_sha256'],
+                     f'Artifact {name} archive differs from pin')
             inside = json.load(archive.extractfile('source.json'))
             need(set(inside) == set(d)-{'passed','image','image_sha256','bundle','bundle_sha256',
                                       'source_archive','source_archive_sha256'} and
@@ -290,7 +306,7 @@ def assemble(inputs, output, revision, expected_upstream=None, expected_tree=Non
     first = reports[0][2]
     for _,_,d in reports[1:]:
         need(all(d[k] == first[k] for k in ['layout','build_version','upstream_base','source_tree',
-                                          'fixed_feeds','feed_lock_sha256','wrtix_source','source_archive_sha256']), 'Roles have different release inputs')
+                                          'fixed_feeds','feed_lock_sha256','source_archive_sha256', *LOCAL_SOURCE_KEYS]), 'Roles have different release inputs')
     need(manifests[0] == manifests[1], 'Roles have different packages or package versions')
     need(configs[0] == configs[1], 'Roles have different driver or package configuration')
     need(feed_receipts[0] == feed_receipts[1], 'Roles have different actual feed revisions')

@@ -87,11 +87,11 @@ python3 scripts/dicttech/check-rootfs.py \
 ```
 
 The source tree must have completed `build-full.sh --prepare-only` with its pinned
-`WRTIX_SOURCE`; this materializes and verifies the feed used by the checker.
+`WRTIX_SOURCE` and `WRTMESH_SOURCE`. This materializes the two verified feeds used by the checker.
 
 The checker compares the public `xr1710g-full` marker and pinned `wrtix-agent`
 runtime, contract, lifecycle hooks and runtime hash inventory at installed paths.
-It rejects retired runtime files and deployment state. It parses the `xr-roaming`
+It rejects retired runtime files and deployment state. It parses the pinned `wrtmesh`
 install mapping, including its disabled defaults, and verifies history/factory UI
 postimages and RPC permissions. This is a **virgin image** check; running devices
 legitimately carry user configuration and credentials.

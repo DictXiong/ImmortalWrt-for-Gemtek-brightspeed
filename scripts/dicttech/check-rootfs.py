@@ -9,7 +9,9 @@ import os
 from pathlib import Path
 import re
 import shlex
+import subprocess
 import sys
+import tempfile
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -167,26 +169,48 @@ def check_factory(rootfs, source_root, expected):
 
 
 def roaming_map(source_root):
-    package = source_root / 'package/dicttech/xr-roaming'
+    package = pinned_wrtmesh(source_root) / 'feed/wrtmesh'
     makefile = (package / 'Makefile').read_text()
-    match = re.search(r'^define Package/xr-roaming/install\n(.*?)^endef$', makefile, re.M | re.S)
-    require(match is not None, 'xr-roaming Makefile install block missing')
+    match = re.search(r'^define Package/wrtmesh/install\n(.*?)^endef$', makefile, re.M | re.S)
+    require(match is not None, 'wrtmesh Makefile install block missing')
+    translation = '$(INSTALL_DATA) $(PKG_BUILD_DIR)/wrtmesh.zh-cn.lmo $(1)/usr/lib/lua/luci/i18n/'
+    require(sum(line.strip() == translation for line in match[1].splitlines()) == 1,
+            'wrtmesh translation install mapping changed')
     mapping = {}
     for line in match[1].splitlines():
+        if line.strip() == translation:
+            continue
         words = line.split()
         if not words or words[0] not in {'$(INSTALL_BIN)', '$(INSTALL_DATA)', '$(INSTALL_CONF)'}:
             continue
-        require(words[-1].startswith('$(1)/'), 'unsupported xr-roaming install destination')
+        require(words[-1].startswith('$(1)/'), 'unsupported wrtmesh install destination')
         destination = words[-1][5:]
         for token in words[1:-1]:
-            require(token.startswith('./files/'), 'unsupported xr-roaming install source')
+            require(token.startswith('./files/'), 'unsupported wrtmesh install source')
             name = token[len('./files/'):]
             relative = destination + Path(name).name if destination.endswith('/') else destination
-            require(relative not in mapping and '..' not in Path(relative).parts, 'duplicate or unsafe xr-roaming destination')
+            require(relative not in mapping and '..' not in Path(relative).parts, 'duplicate or unsafe wrtmesh destination')
             mapping[relative] = package / 'files' / name
-    require({p.name for p in mapping.values()} == {'helper.sh', 'common.jq', 'cli-report.jq', 'xr_roaming.init', 'xr_roaming.config'},
-            'xr-roaming package mapping changed; review the rootfs checker')
+    require({p.name for p in mapping.values()} == {
+        'helper.sh', 'common.jq', 'cli-report.jq', 'xr_roaming.init', 'xr_roaming.config',
+        'xr_mesh.config', 'mesh.uc', 'mesh-sample.uc', 'mesh-daemon.sh', 'xr-mesh.cgi',
+        'xrmesh.uc', 'xrmesh-acl.json', 'xrmesh-menu.json', 'xrmesh.js', 'xrmesh.css', 'xrmesh-view.js',
+    },
+            'wrtmesh package mapping changed; review the rootfs checker')
     return mapping
+
+
+def wrtmesh_translation(source_root):
+    compiler = source_root / 'staging_dir/hostpkg/bin/po2lmo'
+    source = pinned_wrtmesh(source_root) / 'feed/wrtmesh/po/zh_Hans/wrtmesh.po'
+    require(regular(compiler) and os.access(compiler, os.X_OK), 'wrtmesh translation compiler missing')
+    require(regular(source), 'wrtmesh translation source missing')
+    with tempfile.TemporaryDirectory(prefix='wrtmesh-translation-') as directory:
+        output = Path(directory) / 'wrtmesh.zh-cn.lmo'
+        result = subprocess.run([str(compiler), str(source), str(output)],
+                                capture_output=True, timeout=10)
+        require(result.returncode == 0 and regular(output), 'wrtmesh translation compilation failed')
+        return output.read_bytes()
 
 
 GENERATOR_FILES = {
@@ -319,10 +343,11 @@ def check_unprovisioned(rootfs, source_root, role=None):
         if section['type'] == 'zone':
             require(section['options'].get('name') in ('lan', 'wan'),
                     'virgin rootfs contains site-specific firewall zone')
-    roaming = rootfs / 'etc/config/xr_roaming'
-    require(regular(roaming), 'roaming configuration missing')
-    require(all(not line.strip() or line.lstrip().startswith("#") for line in roaming.read_text().splitlines()),
-            'roaming must ship without predefined profiles')
+    for name in ('xr_roaming', 'xr_mesh'):
+        config = rootfs / 'etc/config' / name
+        require(regular(config), name + ' configuration missing')
+        require(all(not line.strip() or line.lstrip().startswith("#") for line in config.read_text().splitlines()),
+                name + ' must ship without predefined profiles or peers')
     public_link = rootfs / 'www/xr-roaming'
     require(public_link.is_symlink() and os.readlink(public_link)=='/tmp/xr-roaming-public', 'roaming publication link must point to RAM')
     return {'network_role':actual_role, 'deployment_state':'absent', 'private_host_identity':'absent', 'preset_root_password':False,
@@ -381,10 +406,18 @@ def check_luci_rpc(rootfs):
             'group_or_other_writable': False}
 
 
-def pinned_wrtix(source_root):
+def pinned_feed(name, source_root):
     spec = importlib.util.spec_from_file_location('dicttech_build_policy', source_root / 'scripts/dicttech/check-build.py')
     policy = importlib.util.module_from_spec(spec); spec.loader.exec_module(policy)
-    return policy.wrtix_source(source_root)[0]
+    return policy.local_feed_source(name, source_root)[0]
+
+
+def pinned_wrtix(source_root):
+    return pinned_feed('wrtix', source_root)
+
+
+def pinned_wrtmesh(source_root):
+    return pinned_feed('wrtmesh', source_root)
 
 
 def profile_map(source_root):
@@ -433,6 +466,11 @@ def check_rootfs(rootfs, source_root=REPO, manifest=None, role=None):
     for relative in {**mapping, **GENERATOR_FILES, **history, **factory}:
         safe_ancestors(rootfs, relative)
     rows = [compare(path, rootfs / relative, relative) for relative, path in sorted(mapping.items())]
+    translation = 'usr/lib/lua/luci/i18n/wrtmesh.zh-cn.lmo'
+    safe_ancestors(rootfs, translation)
+    rows.append(compare_bytes(wrtmesh_translation(source_root), rootfs / translation, translation))
+    require((rootfs / translation).stat().st_mode & 0o7777 == 0o644,
+            'wrtmesh translation has unexpected mode')
     for relative in cli:
         require((rootfs / relative).stat().st_mode & 0o7777 == 0o644,
                 'invalid installed CLI file mode: ' + relative)
@@ -470,6 +508,6 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except (RootfsError, OSError, UnicodeError, ValueError, ImportError) as exc:
+    except (RootfsError, OSError, UnicodeError, ValueError, ImportError, subprocess.SubprocessError) as exc:
         print('Rootfs check failed: ' + str(exc), file=sys.stderr)
         raise SystemExit(1)

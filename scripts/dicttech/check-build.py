@@ -12,8 +12,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 REQUIRED = {
-    'wrtix-agent', 'xr1710g-full', 'xr1710g-cli', 'xr-roaming', 'wpad-mesh-mbedtls', 'hostapd-utils', 'jq',
-    'curl', 'coreutils-timeout', 'flock', 'firewall4', 'kmod-nft-bridge',
+    'wrtix-agent', 'xr1710g-full', 'xr1710g-cli', 'wrtmesh', 'wpad-mesh-mbedtls', 'hostapd-utils', 'jq',
+    'curl', 'coreutils-timeout', 'flock', 'umdns', 'firewall4', 'kmod-nft-bridge',
     'kmod-nft-offload', 'luci-app-mlo', 'luci-app-airoha-fancontrol',
     'luci-app-airoha-npu', 'luci-theme-glass', 'dropbear', 'uhttpd', 'cpufreq',
     'luci-i18n-base-zh-cn', 'zsh', 'vim-full', 'tmux', 'less',
@@ -25,7 +25,7 @@ REQUIRED = {
     'kmod-crypto-cbc', 'kmod-crypto-ctr', 'kmod-crypto-ecb',
 }
 FORBIDDEN = {
-    'ap-profile', 'dicttech-setup', 'cli-profile', 'usteer', 'dawn', 'luci-app-usteer', 'luci-app-dawn', 'miniupnpd',
+    'xr-roaming', 'ap-profile', 'dicttech-setup', 'cli-profile', 'usteer', 'dawn', 'luci-app-usteer', 'luci-app-dawn', 'miniupnpd',
     'miniupnpd-nftables', 'luci-app-upnp', 'lucky', 'luci-app-lucky',
     'watchcat', 'luci-app-watchcat', 'luci-app-autoreboot', 'ttyd',
     'luci-app-ttyd', 'ddns-scripts', 'luci-app-ddns',
@@ -64,21 +64,24 @@ def feeds():
     return rows
 
 
-def wrtix_source(source_root=ROOT):
-    spec = importlib.util.spec_from_file_location('wrtix_source', source_root / 'scripts/dicttech/wrtix-source.py')
+LOCAL_FEEDS = ('wrtix', 'wrtmesh')
+
+
+def local_feed_source(name, source_root=ROOT):
+    spec = importlib.util.spec_from_file_location('pinned_feed_source', source_root / 'scripts/dicttech/wrtix-source.py')
     module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
-    pin = json.loads((source_root / 'configs/wrtix-source.json').read_text())
+    pin = json.loads((source_root / f'configs/{name}-source.json').read_text())
     if set(pin) != {'schema_version', 'revision', 'archive_sha256'} or pin['schema_version'] != 1 or not re.fullmatch('[0-9a-f]{40}', pin['revision']) or not re.fullmatch('[0-9a-f]{64}', pin['archive_sha256']):
-        raise ValueError('Invalid wrtix source pin')
-    metadata = json.loads((source_root / 'bin/dicttech-wrtix-source.json').read_text())
-    if hashlib.sha256((source_root / 'bin/dicttech-wrtix-source.tar').read_bytes()).hexdigest() != pin['archive_sha256']:
-        raise ValueError('wrtix source archive differs from its pin')
-    directory = source_root / 'tmp/wrtix-sources' / pin['revision']
+        raise ValueError(f'Invalid {name} source pin')
+    metadata = json.loads((source_root / f'bin/dicttech-{name}-source.json').read_text())
+    if hashlib.sha256((source_root / f'bin/dicttech-{name}-source.tar').read_bytes()).hexdigest() != pin['archive_sha256']:
+        raise ValueError(f'{name} source archive differs from its pin')
+    directory = source_root / f'tmp/{name}-sources' / pin['revision']
     if metadata != {**pin, 'tree_sha256': module.inventory(directory)} or not directory.is_dir() or directory.is_symlink():
-        raise ValueError('Materialized wrtix feed differs from its verified source')
-    feed = source_root / 'feeds/wrtix'
+        raise ValueError(f'Materialized {name} feed differs from its verified source')
+    feed = source_root / f'feeds/{name}'
     if not feed.is_symlink() or feed.resolve() != directory.resolve():
-        raise ValueError('wrtix feed does not point to the verified snapshot')
+        raise ValueError(f'{name} feed does not point to the verified snapshot')
     return directory, metadata
 
 
@@ -102,7 +105,7 @@ def main():
     parser.add_argument('--layout', choices=['legacy', 'ubi'], default='legacy')
     parser.add_argument('--output', type=Path)
     args = parser.parse_args()
-    result = {'schema_version': 1, 'feeds': feeds(), 'wrtix': wrtix_source()[1]}
+    result = {'schema_version': 1, 'feeds': feeds(), **{name: local_feed_source(name)[1] for name in LOCAL_FEEDS}}
     if not args.feeds_only:
         result.update(config(args.config, args.layout))
         result['source_revision'] = git('rev-parse', 'HEAD')
