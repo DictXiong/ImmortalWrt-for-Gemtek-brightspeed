@@ -10,6 +10,11 @@ terminals enter zsh; the account shell remains `/bin/ash`, so remote commands,
 failsafe and package removal retain the normal shell. These defaults work before
 wrtix enrollment and carry no authentication material.
 
+Both roles include `umdns` for mDNS discovery, with logical-network IPv4 source
+selection, and `arp-scan` with its MAC vendor database for on-demand LAN
+diagnostics. `arp-scan` does not run a background service. These packages are
+required by both build-configuration and installed-package manifest checks.
+
 CLI assets live in `/usr/share/xr1710g-cli`, with the login hook at
 `/etc/profile.d/80-xr1710g-cli.sh`. Create the adjacent
 `80-xr1710g-cli.hush` file to disable automatic zsh entry. Optional user overrides

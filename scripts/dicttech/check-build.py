@@ -13,7 +13,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 REQUIRED = {
     'wrtix-agent', 'xr1710g-full', 'xr1710g-cli', 'wrtmesh', 'wpad-mesh-mbedtls', 'hostapd-utils', 'jq',
-    'curl', 'coreutils-timeout', 'flock', 'umdns', 'firewall4', 'kmod-nft-bridge',
+    'curl', 'coreutils-timeout', 'flock', 'umdns', 'arp-scan', 'arp-scan-database',
+    'firewall4', 'kmod-nft-bridge',
     'kmod-nft-offload', 'luci-app-mlo', 'luci-app-airoha-fancontrol',
     'luci-app-airoha-npu', 'luci-theme-glass', 'dropbear', 'uhttpd', 'cpufreq',
     'luci-i18n-base-zh-cn', 'zsh', 'vim-full', 'tmux', 'less',
