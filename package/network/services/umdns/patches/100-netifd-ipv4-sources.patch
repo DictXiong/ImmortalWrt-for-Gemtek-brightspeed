@@ -1,0 +1,186 @@
+From: DictTech firmware maintainers
+Subject: [PATCH] umdns: select advertised IPv4 sources from netifd
+
+Use an optional interface-to-source map while retaining the legacy interface
+API. Filter A records and explicitly select the source of IPv4 packets. An
+empty source disables IPv4 on that interface until a lease is available.
+Unicast queries to excluded local aliases are ignored.
+
+--- a/interface.c
++++ b/interface.c
+@@ -76,6 +76,8 @@
+ 
+ 	pkti = (struct in_pktinfo*) CMSG_DATA(cmsg);
+ 	pkti->ipi_ifindex = iface->ifindex;
++	if (iface->addrs.n_addr == 1)
++		pkti->ipi_spec_dst = iface->addrs.v4[0].addr;
+ 
+ 	fd = ufd[iface->type].fd;
+ 	if (interface_multicast(iface)) {
+@@ -205,7 +207,7 @@
+ 	int flags = 0;
+ 	uint8_t ttl = 0;
+ 	struct in_pktinfo *inp = NULL;
+-	bool valid_src = false;
++	bool valid_src = false, valid_dst = false;
+ 
+ 	if (u->eof) {
+ 		uloop_end();
+@@ -252,6 +254,8 @@
+ 	iface = interface_lookup(inp->ipi_ifindex, type);
+ 	if (!iface)
+ 		return;
++
++	valid_dst = IN_MULTICAST(ntohl(inp->ipi_addr.s_addr));
+ 
+ 	if (debug > 1) {
+ 		char buf[256];
+@@ -268,15 +272,15 @@
+ 	}
+ 
+ 	for (size_t i = 0; i < iface->addrs.n_addr; i++) {
++		if (iface->addrs.v4[i].addr.s_addr == inp->ipi_addr.s_addr)
++			valid_dst = true;
+ 		if (!interface_valid_src((void *)&iface->addrs.v4[i].addr,
+ 					 (void *)&iface->addrs.v4[i].mask,
+-					 (void *) &from.sin_addr, 4)) {
++					 (void *) &from.sin_addr, 4))
+ 			valid_src = true;
+-			break;
+-		}
+-	}
+-
+-	if (!valid_src)
++	}
++
++	if (!valid_src || !valid_dst)
+ 		return;
+ 
+ 	dns_handle_packet(iface, (struct sockaddr *) &from, ntohs(from.sin_port), buffer, len);
+@@ -593,10 +597,15 @@
+ 	free(list->v4);
+ }
+ 
+-int interface_add(const char *name)
++int interface_add_source(const char *name, const char *source)
+ {
+ 	struct ifaddrs *ifap, *ifa;
+ 	struct interface_addr_list addr4 = {}, addr6 = {};
++	struct in_addr selected = {};
++	struct interface *old;
++
++	if (source && *source && inet_pton(AF_INET, source, &selected) != 1)
++		return 1;
+ 
+ 	if (getifaddrs(&ifap) < 0)
+ 		return 1;
+@@ -612,8 +621,11 @@
+ 			if (cfg_proto && (cfg_proto != 4))
+ 				continue;
+ 
++			sin = (struct sockaddr_in *) ifa->ifa_addr;
++			if (source && (!*source || sin->sin_addr.s_addr != selected.s_addr))
++				continue;
++
+ 			addr4.v4 = realloc(addr4.v4, (addr4.n_addr + 1) * sizeof(*addr4.v4));
+-			sin = (struct sockaddr_in *) ifa->ifa_addr;
+ 			addr4.v4[addr4.n_addr].addr = sin->sin_addr;
+ 			sin = (struct sockaddr_in *) ifa->ifa_netmask;
+ 			addr4.v4[addr4.n_addr++].mask = sin->sin_addr;
+@@ -650,6 +662,15 @@
+ 		__interface_add(name, SOCK_MC_IPV4, &addr4);
+ 	}
+ 
++	if (source && !addr4.n_addr) {
++		old = interface_get(name, SOCK_UC_IPV4);
++		if (old)
++			vlist_delete(&interfaces, &old->node);
++		old = interface_get(name, SOCK_MC_IPV4);
++		if (old)
++			vlist_delete(&interfaces, &old->node);
++	}
++
+ 	if (addr6.n_addr) {
+ 		size_t addr_size = addr6.n_addr * sizeof(*addr6.v6);
+ 		void *addr_dup = malloc(addr_size);
+@@ -661,6 +682,11 @@
+ 	}
+ 
+ 	return !addr4.n_addr && !addr6.n_addr;
++}
++
++int interface_add(const char *name)
++{
++	return interface_add_source(name, NULL);
+ }
+ 
+ void interface_shutdown(void)
+--- a/interface.h
++++ b/interface.h
+@@ -72,6 +72,7 @@
+ }
+ 
+ int interface_add(const char *name);
++int interface_add_source(const char *name, const char *source);
+ int interface_init(void);
+ void interface_shutdown(void);
+ int interface_send_packet(struct interface *iface, struct sockaddr *to, struct iovec *iov, int iov_len);
+--- a/ubus.c
++++ b/ubus.c
+@@ -234,12 +234,14 @@
+ enum {
+ 	CFG_INTERFACES,
+ 	CFG_KEEP,
++	CFG_IPV4_SOURCES,
+ 	CFG_MAX
+ };
+ 
+ static const struct blobmsg_policy config_policy[] = {
+ 	[CFG_INTERFACES]	= { "interfaces", BLOBMSG_TYPE_ARRAY },
+ 	[CFG_KEEP]		= { "keep", BLOBMSG_TYPE_BOOL },
++	[CFG_IPV4_SOURCES] = { "ipv4_sources", BLOBMSG_TYPE_TABLE },
+ };
+ 
+ static int
+@@ -256,6 +258,19 @@
+ 
+ 	if (!blobmsg_check_attr_list(data[CFG_INTERFACES], BLOBMSG_TYPE_STRING))
+ 		return UBUS_STATUS_INVALID_ARGUMENT;
++
++	if (data[CFG_IPV4_SOURCES]) {
++		struct in_addr address;
++
++		if (!blobmsg_check_attr_list(data[CFG_IPV4_SOURCES], BLOBMSG_TYPE_STRING))
++			return UBUS_STATUS_INVALID_ARGUMENT;
++		blobmsg_for_each_attr(cur, data[CFG_IPV4_SOURCES], rem) {
++			const char *source = blobmsg_get_string(cur);
++
++			if (*source && inet_pton(AF_INET, source, &address) != 1)
++				return UBUS_STATUS_INVALID_ARGUMENT;
++		}
++	}
+ 
+ 	keep = data[CFG_KEEP] && blobmsg_get_bool(data[CFG_KEEP]);
+ 	if (!keep) {
+@@ -263,8 +278,19 @@
+ 		ubus_notify(ctx, obj, "set_config", NULL, 1000);
+ 	}
+ 
+-	blobmsg_for_each_attr(cur, data[CFG_INTERFACES], rem)
+-		interface_add(blobmsg_data(cur));
++	blobmsg_for_each_attr(cur, data[CFG_INTERFACES], rem) {
++		struct blob_attr *entry;
++		const char *name = blobmsg_get_string(cur), *source = NULL;
++		int remaining;
++
++		if (data[CFG_IPV4_SOURCES])
++			blobmsg_for_each_attr(entry, data[CFG_IPV4_SOURCES], remaining)
++				if (!strcmp(blobmsg_name(entry), name)) {
++					source = blobmsg_get_string(entry);
++					break;
++				}
++		interface_add_source(name, source);
++	}
+ 
+ 	if (!keep)
+ 		vlist_flush(&interfaces);

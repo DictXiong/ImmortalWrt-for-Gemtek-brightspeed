@@ -7,25 +7,49 @@ USE_PROCD=1
 PROG=/usr/sbin/umdns
 IFACES=""
 
-load_ifaces() {
-	local network="$(uci -q get umdns.@umdns[-1].network)"
-	for n in $network; do
-		local device
-		json_load "$(ifstatus $n)"
-		json_get_var device l3_device
-		echo -n "$device "
-	done
-}
-
 do_reload_service() {
+	local network="$(uci -q get umdns.@umdns[-1].network)"
+	local previous n device address kind known payload
+
+	json_set_namespace umdns_request_ previous
 	json_init
 	json_add_array interfaces
-	for i in $(load_ifaces); do
-		json_add_string "" "$i"
-	done
 	json_close_array
+	json_add_object ipv4_sources
+	json_close_object
 
-	ubus call umdns set_config "$(json_dump)"
+	for n in $network; do
+		json_set_namespace umdns_status_
+		json_load "$(ifstatus "$n")"
+		json_get_var device l3_device
+		address=
+		json_get_type kind ipv4-address
+		if [ "$kind" = array ] && json_select ipv4-address && json_select 1; then
+			json_get_var address address
+		fi
+		json_cleanup
+		[ -n "$device" ] || continue
+
+		json_set_namespace umdns_request_
+		json_select ipv4_sources
+		json_get_type kind "$device"
+		json_get_var known "$device"
+		if [ "$kind" != string ] || [ -z "$known" ]; then
+			json_add_string "$device" "$address"
+		fi
+		json_select ..
+		if [ "$kind" != string ]; then
+			json_select interfaces
+			json_add_string "" "$device"
+			json_select ..
+		fi
+	done
+
+	json_set_namespace umdns_request_
+	payload=$(json_dump)
+	json_cleanup
+	json_set_namespace "$previous"
+	ubus call umdns set_config "$payload"
 }
 
 start_service() {

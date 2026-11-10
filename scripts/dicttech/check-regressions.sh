@@ -50,6 +50,8 @@ PY
    2>&1 | tee "$reports/dicttech-wrtmesh-tests.log"
   python3 scripts/dicttech/tests/factory/test_factory.py --rootfs "$rootfs" \
    2>&1 | tee "$reports/dicttech-factory-tests.log"
+  python3 scripts/dicttech/tests/umdns/test_config.py --rootfs "$rootfs" \
+   2>&1 | tee "$reports/dicttech-umdns-tests.log"
   ;;
  *) usage;;
 esac
