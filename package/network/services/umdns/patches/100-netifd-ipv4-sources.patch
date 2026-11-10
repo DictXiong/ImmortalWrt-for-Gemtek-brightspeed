@@ -184,3 +184,43 @@ Unicast queries to excluded local aliases are ignored.
  
  	if (!keep)
  		vlist_flush(&interfaces);
+--- a/dns.c
++++ b/dns.c
+@@ -272,6 +272,19 @@
+ 		uloop_timeout_set(&timer, 100);
+ }
+ 
++static bool
++interface_advertises_ipv4(const char *name, struct in_addr address)
++{
++	struct interface *iface = interface_get(name, SOCK_MC_IPV4);
++
++	if (iface)
++		for (size_t i = 0; i < iface->addrs.n_addr; i++)
++			if (iface->addrs.v4[i].addr.s_addr == address.s_addr)
++				return true;
++
++	return false;
++}
++
+ void
+ dns_reply_a(struct interface *iface, struct sockaddr *to, int ttl, const char *hostname)
+ {
+@@ -293,6 +306,8 @@
+ 			continue;
+ 		if (ifa->ifa_addr->sa_family == AF_INET) {
+ 			sa = (struct sockaddr_in *) ifa->ifa_addr;
++			if (!interface_advertises_ipv4(iface->name, sa->sin_addr))
++				continue;
+ 			dns_packet_answer(hostname, TYPE_A, (uint8_t *) &sa->sin_addr, 4, ttl);
+ 		}
+ 		if (ifa->ifa_addr->sa_family == AF_INET6) {
+@@ -560,6 +575,8 @@
+ 			continue;
+ 		if (ifa->ifa_addr->sa_family == AF_INET) {
+ 			sa = (struct sockaddr_in *) ifa->ifa_addr;
++			if (!interface_advertises_ipv4(iface->name, sa->sin_addr))
++				continue;
+ 			if (inet_ntop(AF_INET, &sa->sin_addr, intf_ip, INET_ADDRSTRLEN) == NULL)
+ 				continue;
+ 
