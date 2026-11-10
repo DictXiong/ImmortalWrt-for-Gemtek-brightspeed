@@ -1,0 +1,19 @@
+From: DictTech firmware maintainers
+Subject: [PATCH] umdns: use integer IPv6 hop-limit socket options
+
+The IPv6 options take an int. A one-byte value is rejected and leaves the
+multicast hop limit at its default of one instead of the mDNS value 255.
+
+--- a/interface.c
++++ b/interface.c
+@@ -518,8 +518,8 @@
+ 		local.sin_port = htons(MCAST_PORT);
+ 		break;
+ 	case SOCK_MC_IPV6:
+-		setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, &ttl, sizeof(ttl));
+-		setsockopt(fd, IPPROTO_IPV6, IPV6_UNICAST_HOPS, &ttl, sizeof(ttl));
++		setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, &ittl, sizeof(ittl));
++		setsockopt(fd, IPPROTO_IPV6, IPV6_UNICAST_HOPS, &ittl, sizeof(ittl));
+ 		setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &yes, sizeof(yes));
+ 		setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_LOOP, &no, sizeof(no));
+ 		local6.sin6_port = htons(MCAST_PORT);
