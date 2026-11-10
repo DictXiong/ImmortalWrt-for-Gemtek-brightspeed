@@ -39,6 +39,7 @@ class RootfsChecks(unittest.TestCase):
         for relative, source in check.roaming_map(check.REPO).items():
             target = self.root / relative; target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
+        (self.root / check.WIFI_OVERVIEW).write_text('/* Native LuCI Wi-Fi Overview fixture */\n')
         translation = b'synthetic immutable compiled translation\n'
         patcher = patch.object(check, 'wrtmesh_translation', return_value=translation)
         patcher.start()
@@ -99,9 +100,9 @@ class RootfsChecks(unittest.TestCase):
         self.assertFalse(report['clean_image']['preset_root_password'])
         self.assertEqual(report['clean_image']['preset_authorized_keys'], 'absent')
 
-    def test_wrtmesh_translation_and_stylesheet_require_exact_bytes(self):
+    def test_wrtmesh_overview_translation_and_stylesheet_require_exact_bytes(self):
         for relative in ('usr/lib/lua/luci/i18n/wrtmesh.zh-cn.lmo',
-                         'www/luci-static/resources/xrmesh.css'):
+                         'www/luci-static/resources/xrmesh.css', check.WRTMESH_OVERVIEW):
             with self.subTest(relative=relative):
                 path = self.root / relative
                 original = path.read_bytes()
@@ -113,6 +114,12 @@ class RootfsChecks(unittest.TestCase):
                     check.check_rootfs(self.root)
                 path.write_bytes(original)
                 path.chmod(0o644)
+
+    def test_old_wrtmesh_patch_in_native_luci_wifi_module_rejected(self):
+        native = self.root / check.WIFI_OVERVIEW
+        native.write_text("return L.require('xrmesh').then(mesh => mesh.status());\n")
+        with self.assertRaisesRegex(check.RootfsError, 'legacy wrtmesh integration'):
+            check.check_rootfs(self.root)
 
     def test_runtime_modes_manifest_and_retired_runtime_rejected(self):
         path = self.root / 'etc/init.d/wrtix-agent'

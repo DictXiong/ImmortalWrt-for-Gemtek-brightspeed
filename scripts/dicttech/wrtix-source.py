@@ -18,7 +18,7 @@ import tempfile
 FEED_INPUTS = {
     'wrtix': ('feed/wrtix-agent/Makefile', 'agent/agent.sh', 'agent/guard.init', 'agent/contract.json'),
     'wrtmesh': ('VERSION', 'feed/wrtmesh/Makefile', 'feed/wrtmesh/files/helper.sh',
-                'integration/luci-overview.patch'),
+                'feed/wrtmesh/files/65_wrtmesh.js'),
 }
 
 

@@ -163,6 +163,11 @@ jobs:
           BROWSER_EXECUTABLE="$(node -e 'process.stdout.write(require(process.argv[1]).chromium.executablePath())' "$RUNNER_TEMP/dicttech-ui/node_modules/playwright")" \
             node scripts/dicttech/tests/factory/frontend.cjs \
             | tee bin/targets/airoha/an7581/dicttech-factory-ui-tests.json
+          rootfs=$(find build_dir -maxdepth 2 -type d -name root-airoha -print -quit)
+          test -n "$rootfs"
+          WRTMESH_PLAYWRIGHT="$RUNNER_TEMP/dicttech-ui/node_modules/playwright" \
+            node "$WRTMESH_SOURCE/tests/test-luci-browser.cjs" feeds/luci "$rootfs" \
+            | tee bin/targets/airoha/an7581/dicttech-wrtmesh-ui-tests.log
       - name: Upload only the audited public role
         uses: actions/upload-artifact@v7
         with:

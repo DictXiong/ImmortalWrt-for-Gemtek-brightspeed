@@ -65,6 +65,9 @@ FACTORY_FILES = {
 }
 FACTORY_TARGETS = {name: target for name, target in FACTORY_FILES.values()}
 FACTORY_TARGETS['factory-translation'] = 'luci-app-airoha-factory/po/zh_Hans/luci-app-airoha-factory.po'
+OVERVIEW_DIRECTORY = 'www/luci-static/resources/view/status/include'
+WRTMESH_OVERVIEW = f'{OVERVIEW_DIRECTORY}/65_wrtmesh.js'
+WIFI_OVERVIEW = f'{OVERVIEW_DIRECTORY}/60_wifi.js'
 
 
 def patch_postimage(patch, target):
@@ -195,8 +198,11 @@ def roaming_map(source_root):
         'helper.sh', 'common.jq', 'cli-report.jq', 'xr_roaming.init', 'xr_roaming.config',
         'xr_mesh.config', 'mesh.uc', 'mesh-sample.uc', 'mesh-daemon.sh', 'xr-mesh.cgi',
         'xrmesh.uc', 'xrmesh-acl.json', 'xrmesh-menu.json', 'xrmesh.js', 'xrmesh.css', 'xrmesh-view.js',
+        '65_wrtmesh.js',
     },
             'wrtmesh package mapping changed; review the rootfs checker')
+    require(mapping.get(WRTMESH_OVERVIEW) == package / 'files/65_wrtmesh.js',
+            'wrtmesh Overview module must install through the LuCI include directory')
     return mapping
 
 
@@ -466,6 +472,13 @@ def check_rootfs(rootfs, source_root=REPO, manifest=None, role=None):
     for relative in {**mapping, **GENERATOR_FILES, **history, **factory}:
         safe_ancestors(rootfs, relative)
     rows = [compare(path, rootfs / relative, relative) for relative, path in sorted(mapping.items())]
+    require((rootfs / WRTMESH_OVERVIEW).stat().st_mode & 0o7777 == 0o644,
+            'wrtmesh Overview module has unexpected mode')
+    safe_ancestors(rootfs, WIFI_OVERVIEW)
+    wifi = rootfs / WIFI_OVERVIEW
+    require(regular(wifi) and wifi.stat().st_size > 0, 'LuCI Wi-Fi Overview module missing or empty')
+    require(not re.search(rb'''["']xrmesh["']''', wifi.read_bytes()),
+            'legacy wrtmesh integration remains in the LuCI Wi-Fi Overview module')
     translation = 'usr/lib/lua/luci/i18n/wrtmesh.zh-cn.lmo'
     safe_ancestors(rootfs, translation)
     rows.append(compare_bytes(wrtmesh_translation(source_root), rootfs / translation, translation))

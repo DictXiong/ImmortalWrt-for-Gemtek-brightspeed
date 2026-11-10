@@ -51,6 +51,26 @@ class FeedPin(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'clean'):
             source.snapshot(self.repo)
 
+    def test_wrtmesh_source_requires_its_own_overview_module(self):
+        overview = self.repo / 'feed/wrtmesh/files/65_wrtmesh.js'
+        for path in (self.repo / 'VERSION', self.repo / 'feed/wrtmesh/Makefile',
+                     self.repo / 'feed/wrtmesh/files/helper.sh', overview):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('fixture\n')
+        self.git('add', '.')
+        self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                 'commit', '-qm', 'wrtmesh fixture')
+        dest = self.root / 'materialized'
+        pin, data = source.snapshot(self.repo, 'wrtmesh')
+        source.materialize(pin, data, dest, 'wrtmesh')
+        self.assertEqual((dest / overview.relative_to(self.repo)).read_text(), 'fixture\n')
+        self.git('rm', str(overview.relative_to(self.repo)))
+        self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                 'commit', '-qm', 'remove required module')
+        pin, data = source.snapshot(self.repo, 'wrtmesh')
+        with self.assertRaisesRegex(ValueError, 'missing a required package input'):
+            source.materialize(pin, data, dest, 'wrtmesh')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -64,7 +64,10 @@ either override still has to supply the pinned commit and matching archive.
 The build verifies and materializes both checkouts and includes both source
 archives in the release bundle. The wrtmesh APK retains the original
 `/etc/config/xr_roaming` and `/etc/config/xr_mesh` paths for sysupgrade.
-Its source checkout also supplies the LuCI Overview patch.
+The APK also installs `view/status/include/65_wrtmesh.js`, which LuCI loads on
+Overview to show Mesh topology and remote wireless clients. For builds that
+reuse a LuCI feed previously modified by the old Mesh patch, start from the
+clean pinned LuCI checkout so the standard Wi-Fi Overview module is restored.
 
 The finished FIT, extracted rootfs, package signatures and exact kmod set are
 checked before publishing. Private keys, personal authentication material and

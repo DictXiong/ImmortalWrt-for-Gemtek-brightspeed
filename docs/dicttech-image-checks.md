@@ -91,10 +91,13 @@ The source tree must have completed `build-full.sh --prepare-only` with its pinn
 
 The checker compares the public `xr1710g-full` marker and pinned `wrtix-agent`
 runtime, contract, lifecycle hooks and runtime hash inventory at installed paths.
-It rejects retired runtime files and deployment state. It parses the pinned `wrtmesh`
-install mapping, including its disabled defaults, and verifies history/factory UI
-postimages and RPC permissions. This is a **virgin image** check; running devices
-legitimately carry user configuration and credentials.
+It rejects retired runtime files and deployment state. It compares the pinned
+`wrtmesh` install mapping with the image, including its disabled defaults,
+standalone LuCI Overview include, stylesheet and compiled translation. It also
+checks the standard Wi-Fi Overview module for the legacy Mesh integration and
+verifies history/factory UI postimages and RPC permissions. The audit covers a
+**virgin image**. Running devices legitimately carry user configuration and
+credentials.
 
 The full-edition wireless guards suppress upstream fixed-country/password presets
 and disable newly generated interfaces without rewriting preserved configuration.
