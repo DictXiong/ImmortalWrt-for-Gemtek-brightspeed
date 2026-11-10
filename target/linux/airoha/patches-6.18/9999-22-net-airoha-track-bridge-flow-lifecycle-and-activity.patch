@@ -1,0 +1,391 @@
+Subject: [PATCH] net: airoha: track bridge flow lifecycle and hardware activity
+
+Track bridge flow context by PPE slot, namespace, bridge, VLAN, ports
+and MAC pair. Retire direct fallback bindings when their path changes;
+ordinary TC entries retain their existing parent teardown ownership.
+Report bound source activity to bridge aging for both paths. Same-port
+FDB ADD keeps a valid path; DEL and MAC moves retire it. Validate the
+generation under ppe_lock and publish tracking at one shared exit,
+including cleanup of partially committed direct fallback entries.
+
+This file was generated entirely by AI.
+It has not been reviewed line by line by a human.
+
+---
+--- a/drivers/net/ethernet/airoha/airoha_eth.h
++++ b/drivers/net/ethernet/airoha/airoha_eth.h
+@@ -708,6 +708,17 @@
+ #define AIROHA_RXD4_PPE_CPU_REASON	GENMASK(20, 16)
+ #define AIROHA_RXD4_FOE_ENTRY		GENMASK(15, 0)
+ 
++struct airoha_bridge_binding {
++	u32 netns;
++	int bridge_ifindex;
++	int ingress_ifindex;
++	int egress_ifindex;
++	u16 vid;
++	u8 source[ETH_ALEN];
++	u8 destination[ETH_ALEN];
++	bool fallback;
++};
++
+ struct airoha_ppe {
+ 	struct airoha_ppe_dev dev;
+ 	struct airoha_eth *eth;
+@@ -716,6 +727,11 @@
+ 	dma_addr_t foe_dma;
+ 
+ 	struct rhashtable l2_flows;
++	struct airoha_bridge_binding *bridge_bindings;
++	unsigned long *bridge_binding_valid;
++	u32 bridge_generation;
++	struct notifier_block bridge_notifier;
++	struct notifier_block netdev_notifier;
+ 
+ 	struct hlist_head *foe_flow;
+ 	u16 *foe_check_time;
+--- a/drivers/net/ethernet/airoha/airoha_ppe.c
++++ b/drivers/net/ethernet/airoha/airoha_ppe.c
+@@ -14,6 +14,8 @@
+ #include <net/ipv6.h>
+ #include <linux/if_bridge.h>
+ #include <linux/netfilter_bridge.h>
++#include <linux/bitmap.h>
++#include <net/switchdev.h>
+ #include <linux/if_vlan.h>
+ #include <linux/if_pppox.h>
+ #include <net/pkt_cls.h>
+@@ -928,6 +930,7 @@
+ 	e->ib1 &= ~AIROHA_FOE_IB1_BIND_TIMESTAMP;
+ 	e->ib1 |= FIELD_PREP(AIROHA_FOE_IB1_BIND_TIMESTAMP, ts);
+ 	hwe->ib1 = e->ib1;
++	clear_bit(hash, ppe->bridge_binding_valid);
+ 
+ 	rcu_read_lock();
+ 
+@@ -1147,6 +1150,174 @@
+ }
+ EXPORT_SYMBOL_GPL(airoha_ppe_mc_get_origdev);
+ #endif
++
++static void airoha_ppe_bridge_binding_clear(struct airoha_ppe *ppe, u32 hash)
++{
++	struct airoha_foe_entry entry, *hwe;
++
++	/* Ordinary TC entries keep their existing parent teardown ownership. */
++	if (!ppe->bridge_bindings[hash].fallback) {
++		clear_bit(hash, ppe->bridge_binding_valid);
++		return;
++	}
++
++	hwe = airoha_ppe_foe_get_entry_locked(ppe, hash);
++	if (!hwe) {
++		dev_warn_ratelimited(ppe->eth->dev,
++				     "bridge fallback slot %u read failed\n", hash);
++		return;
++	}
++	if (FIELD_GET(AIROHA_FOE_IB1_BIND_STATE, hwe->ib1) !=
++	    AIROHA_FOE_STATE_BIND) {
++		clear_bit(hash, ppe->bridge_binding_valid);
++		return;
++	}
++
++	memcpy(&entry, hwe, sizeof(entry));
++	entry.ib1 &= ~AIROHA_FOE_IB1_BIND_STATE;
++	entry.ib1 |= FIELD_PREP(AIROHA_FOE_IB1_BIND_STATE,
++			       AIROHA_FOE_STATE_INVALID);
++	/* Use the ordinary unicast teardown path, including NPU statistics. */
++	if (airoha_ppe_foe_commit_entry(ppe, &entry, hash, false)) {
++		set_bit(hash, ppe->bridge_binding_valid);
++		dev_warn_ratelimited(ppe->eth->dev,
++				     "bridge fallback slot %u invalidation failed\n",
++				     hash);
++	}
++}
++
++static int airoha_ppe_get_entry_idle_time(struct airoha_ppe *ppe, u32 ib1);
++
++static int airoha_ppe_bridge_activity(struct airoha_ppe *ppe,
++				      struct switchdev_notifier_fdb_activity_info *info)
++{
++	struct net_device *dev = info->info.dev;
++	struct net_device *master;
++	unsigned long hash;
++
++	rcu_read_lock();
++	master = netdev_master_upper_dev_get_rcu(dev);
++	if (!master || !netif_is_bridge_master(master))
++		goto unlock;
++
++	spin_lock_bh(&ppe_lock);
++	for_each_set_bit(hash, ppe->bridge_binding_valid,
++			 airoha_ppe_get_total_num_entries(ppe)) {
++		struct airoha_bridge_binding *binding = &ppe->bridge_bindings[hash];
++		struct airoha_foe_entry *hwe;
++		unsigned long last_used;
++		int idle;
++
++		if (binding->netns != dev_net(dev)->ns.inum ||
++		    binding->bridge_ifindex != master->ifindex ||
++		    binding->ingress_ifindex != dev->ifindex ||
++		    binding->vid != info->vid ||
++		    !ether_addr_equal(binding->source, info->addr))
++			continue;
++
++		hwe = airoha_ppe_foe_get_entry_locked(ppe, hash);
++		if (!hwe || FIELD_GET(AIROHA_FOE_IB1_BIND_STATE, hwe->ib1) !=
++			    AIROHA_FOE_STATE_BIND)
++			continue;
++
++		/* Only a packet's source proves activity at the learned port.
++		 * Sending to a silent destination must not keep its FDB alive.
++		 */
++		idle = airoha_ppe_get_entry_idle_time(ppe, hwe->ib1);
++		last_used = jiffies - (unsigned long)idle * HZ;
++		if (time_after(last_used, info->last_used))
++			info->last_used = last_used;
++	}
++	spin_unlock_bh(&ppe_lock);
++unlock:
++	rcu_read_unlock();
++	return NOTIFY_DONE;
++}
++
++static int airoha_ppe_bridge_event(struct notifier_block *nb,
++				   unsigned long event, void *ptr)
++{
++	struct airoha_ppe *ppe = container_of(nb, struct airoha_ppe, bridge_notifier);
++	struct switchdev_notifier_fdb_info *info = ptr;
++	struct net_device *dev = info->info.dev;
++	struct net_device *master;
++	unsigned long hash;
++
++	if (event == SWITCHDEV_FDB_GET_LAST_USED)
++		return airoha_ppe_bridge_activity(ppe, ptr);
++
++	if (event != SWITCHDEV_FDB_ADD_TO_DEVICE &&
++	    event != SWITCHDEV_FDB_DEL_TO_DEVICE)
++		return NOTIFY_DONE;
++	if (!info->addr || info->is_local)
++		return NOTIFY_DONE;
++
++	rcu_read_lock();
++	master = netdev_master_upper_dev_get_rcu(dev);
++	if (!master || !netif_is_bridge_master(master))
++		goto unlock;
++
++	spin_lock_bh(&ppe_lock);
++	ppe->bridge_generation++;
++	for_each_set_bit(hash, ppe->bridge_binding_valid,
++			 airoha_ppe_get_total_num_entries(ppe)) {
++		struct airoha_bridge_binding *binding = &ppe->bridge_bindings[hash];
++
++		if (binding->netns != dev_net(dev)->ns.inum ||
++		    binding->bridge_ifindex != master->ifindex ||
++		    binding->vid != info->vid)
++			continue;
++		/* Same-port ADD notifications preserve the validated path. A DEL
++		 * always retires it, and an ADD on another port denotes a move.
++		 */
++		if ((ether_addr_equal(binding->source, info->addr) &&
++		     (event == SWITCHDEV_FDB_DEL_TO_DEVICE ||
++		      binding->ingress_ifindex != dev->ifindex)) ||
++		    (ether_addr_equal(binding->destination, info->addr) &&
++		     (event == SWITCHDEV_FDB_DEL_TO_DEVICE ||
++		      binding->egress_ifindex != dev->ifindex)))
++			airoha_ppe_bridge_binding_clear(ppe, hash);
++	}
++	spin_unlock_bh(&ppe_lock);
++unlock:
++	rcu_read_unlock();
++	return NOTIFY_DONE;
++}
++
++static int airoha_ppe_bridge_netdev_event(struct notifier_block *nb,
++					  unsigned long event, void *ptr)
++{
++	struct airoha_ppe *ppe = container_of(nb, struct airoha_ppe, netdev_notifier);
++	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
++	unsigned long hash;
++
++	switch (event) {
++	case NETDEV_DOWN:
++	case NETDEV_UNREGISTER:
++	case NETDEV_CHANGE:
++	case NETDEV_CHANGEADDR:
++	case NETDEV_CHANGEUPPER:
++		break;
++	default:
++		return NOTIFY_DONE;
++	}
++
++	spin_lock_bh(&ppe_lock);
++	ppe->bridge_generation++;
++	for_each_set_bit(hash, ppe->bridge_binding_valid,
++			 airoha_ppe_get_total_num_entries(ppe)) {
++		struct airoha_bridge_binding *binding = &ppe->bridge_bindings[hash];
++
++		if (binding->netns != dev_net(dev)->ns.inum)
++			continue;
++		if (binding->bridge_ifindex == dev->ifindex ||
++		    binding->ingress_ifindex == dev->ifindex ||
++		    binding->egress_ifindex == dev->ifindex)
++			airoha_ppe_bridge_binding_clear(ppe, hash);
++	}
++	spin_unlock_bh(&ppe_lock);
++	return NOTIFY_DONE;
++}
+ 
+ static void airoha_ppe_foe_remove_flow(struct airoha_ppe *ppe,
+ 				       struct airoha_flow_table_entry *e)
+@@ -1387,7 +1558,8 @@
+ static bool
+ airoha_ppe_foe_prepare_bridge_subflow(struct airoha_ppe *ppe,
+ 				      struct sk_buff *skb,
+-				      struct airoha_foe_entry *hwe)
++				      struct airoha_foe_entry *hwe,
++				      struct airoha_bridge_binding *binding)
+ {
+ 	struct net_device_path_stack stack;
+ 	struct net_device_path_ctx ctx = {};
+@@ -1451,6 +1623,12 @@
+ 		ctx.num_vlans = 1;
+ 	}
+ 
++	binding->netns = dev_net(master)->ns.inum;
++	binding->bridge_ifindex = master->ifindex;
++	binding->ingress_ifindex = ingress->ifindex;
++	binding->vid = ctx.num_vlans ? ctx.vlan[0].id : 0;
++	ether_addr_copy(binding->source, eh->h_source);
++	ether_addr_copy(binding->destination, eh->h_dest);
+ 	err = __dev_fill_forward_path(&ctx, eh->h_dest, &stack);
+ 	if (err || stack.num_paths < 2 ||
+ 	    stack.path[0].type != DEV_PATH_BRIDGE) {
+@@ -1482,6 +1660,7 @@
+ 		dev_put(master);
+ 		return false;
+ 	}
++	binding->egress_ifindex = egress->ifindex;
+ 	dev_hold(egress);
+ 	rcu_read_unlock();
+ 
+@@ -1524,6 +1703,8 @@
+ 					u32 hash, bool rx_wlan)
+ {
+ 	struct airoha_foe_entry bridge_hwe = {};
++	struct airoha_bridge_binding binding = {};
++	u32 generation = READ_ONCE(ppe->bridge_generation);
+ 	struct airoha_flow_table_entry *e;
+ 	struct airoha_foe_bridge br = {};
+ 	struct airoha_foe_entry *hwe;
+@@ -1533,10 +1714,11 @@
+ 	bool local = airoha_ppe_foe_skb_is_local(skb);
+ 	struct hlist_node *n;
+ 	u32 index, state;
++	int err = 0;
+ 
+ 	if (!local)
+ 		bridge_ready = airoha_ppe_foe_prepare_bridge_subflow(ppe, skb,
+-							     &bridge_hwe);
++							     &bridge_hwe, &binding);
+ 
+ 	spin_lock_bh(&ppe_lock);
+ 
+@@ -1547,6 +1729,10 @@
+ 	state = FIELD_GET(AIROHA_FOE_IB1_BIND_STATE, hwe->ib1);
+ 	if (state == AIROHA_FOE_STATE_BIND)
+ 		goto unlock;
++
++	/* Bridge events cannot change the generation while ppe_lock is held. */
++	if (generation != ppe->bridge_generation)
++		bridge_ready = false;
+ 
+ 	native_l2b = airoha_is_7581(ppe->eth) &&
+ 		FIELD_GET(AIROHA_FOE_IB1_BIND_PACKET_TYPE, hwe->ib1) ==
+@@ -1579,7 +1765,7 @@
+ 	}
+ 
+ 	if (commit_done)
+-		goto unlock;
++		goto track_bridge_activity;
+ 	if (local)
+ 		goto unlock;
+ 
+@@ -1587,10 +1773,23 @@
+ 	airoha_ppe_foe_set_bridge_addrs(&br, eth_hdr(skb));
+ 	e = rhashtable_lookup_fast(&ppe->l2_flows, &br,
+ 				   airoha_l2_flow_table_params);
+-	if (e)
+-		airoha_ppe_foe_commit_subflow_entry(ppe, e, hash, rx_wlan);
+-	else if (bridge_ready)
+-		airoha_ppe_foe_commit_subflow(ppe, &bridge_hwe, hash, rx_wlan);
++	if (e) {
++		if (airoha_ppe_foe_commit_subflow_entry(ppe, e, hash, rx_wlan))
++			goto unlock;
++	} else if (bridge_ready) {
++		binding.fallback = true;
++		err = airoha_ppe_foe_commit_subflow(ppe, &bridge_hwe, hash, rx_wlan);
++	} else {
++		goto unlock;
++	}
++track_bridge_activity:
++	if (bridge_ready) {
++		ppe->bridge_bindings[hash] = binding;
++		set_bit(hash, ppe->bridge_binding_valid);
++		/* Keep partial direct commits owned until teardown completes. */
++		if (err)
++			airoha_ppe_bridge_binding_clear(ppe, hash);
++	}
+ unlock:
+ 	spin_unlock_bh(&ppe_lock);
+ }
+@@ -2277,6 +2476,14 @@
+ 	eth->ppe = ppe;
+ 
+ 	ppe_num_entries = airoha_ppe_get_total_num_entries(ppe);
++	ppe->bridge_bindings = devm_kcalloc(eth->dev, ppe_num_entries,
++					    sizeof(*ppe->bridge_bindings), GFP_KERNEL);
++	if (!ppe->bridge_bindings)
++		return -ENOMEM;
++	ppe->bridge_binding_valid = devm_bitmap_zalloc(eth->dev, ppe_num_entries,
++						       GFP_KERNEL);
++	if (!ppe->bridge_binding_valid)
++		return -ENOMEM;
+ 	foe_size = ppe_num_entries * sizeof(struct airoha_foe_entry);
+ 	ppe->foe = dmam_alloc_coherent(eth->dev, foe_size, &ppe->foe_dma,
+ 				       GFP_KERNEL);
+@@ -2317,12 +2524,24 @@
+ 	if (err)
+ 		goto error_flow_table_destroy;
+ 
++	ppe->bridge_notifier.notifier_call = airoha_ppe_bridge_event;
++	err = register_switchdev_notifier(&ppe->bridge_notifier);
++	if (err)
++		goto error_l2_flow_table_destroy;
++	ppe->netdev_notifier.notifier_call = airoha_ppe_bridge_netdev_event;
++	err = register_netdevice_notifier(&ppe->netdev_notifier);
++	if (err)
++		goto error_bridge_notifier;
+ 	err = airoha_ppe_debugfs_init(ppe);
+ 	if (err)
+-		goto error_l2_flow_table_destroy;
++		goto error_netdev_notifier;
+ 
+ 	return 0;
+ 
++error_netdev_notifier:
++	unregister_netdevice_notifier(&ppe->netdev_notifier);
++error_bridge_notifier:
++	unregister_switchdev_notifier(&ppe->bridge_notifier);
+ error_l2_flow_table_destroy:
+ 	rhashtable_destroy(&ppe->l2_flows);
+ error_flow_table_destroy:
+@@ -2335,6 +2554,8 @@
+ {
+ 	struct airoha_npu *npu;
+ 
++	unregister_netdevice_notifier(&eth->ppe->netdev_notifier);
++	unregister_switchdev_notifier(&eth->ppe->bridge_notifier);
+ 	mutex_lock(&flow_offload_mutex);
+ 
+ 	npu = rcu_replace_pointer(eth->npu, NULL,

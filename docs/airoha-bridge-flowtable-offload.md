@@ -23,6 +23,9 @@ XG2010G 透明桥 offload 的软件入口和 PPE 写入路径。
 PON 注册、OMCI、光模块控制以及 `pon0` 上的普通三层 NAT 不属于本改动范围。
 1710G 只有在 WAN 加入 LAN bridge 的 AP/透明桥模式下才可能受益。
 
+RX 兜底路径的同端口转发许可、FDB 及端口事件撤销另见
+[桥接兜底绑定与生命周期](airoha-bridge-fallback-lifecycle.md)。
+
 ## 运行时验收
 
 在目标设备上应分别确认：

@@ -1,0 +1,89 @@
+Subject: [PATCH] net: bridge: query offloaded source activity before FDB aging
+
+Query hardware source activity only when a dynamic FDB entry is due to
+age. Drivers may report a newer last-used timestamp through switchdev.
+Refresh existing entries without recreating or moving them. Explicit
+deletion and ageing_time=0 retain their normal behavior. Recheck the
+timestamp before deletion to preserve concurrent software learning.
+
+This file was generated entirely by AI.
+It has not been reviewed line by line by a human.
+
+---
+--- a/include/net/switchdev.h
++++ b/include/net/switchdev.h
+@@ -230,6 +230,9 @@
+ 	SWITCHDEV_BRPORT_OFFLOADED,
+ 	SWITCHDEV_BRPORT_UNOFFLOADED,
+ 	SWITCHDEV_BRPORT_REPLAY,
++
++	/* Query source activity which bypassed software bridge learning. */
++	SWITCHDEV_FDB_GET_LAST_USED,
+ };
+ 
+ struct switchdev_notifier_info {
+@@ -249,6 +252,13 @@
+ 	   is_local:1,
+ 	   locked:1,
+ 	   offloaded:1;
++};
++
++struct switchdev_notifier_fdb_activity_info {
++	struct switchdev_notifier_info info; /* must be first */
++	const unsigned char *addr;
++	u16 vid;
++	unsigned long last_used; /* jiffies, updated only by newer activity */
+ };
+ 
+ struct switchdev_notifier_port_obj_info {
+--- a/net/bridge/br_fdb.c
++++ b/net/bridge/br_fdb.c
+@@ -542,6 +542,22 @@
+ 	spin_unlock_bh(&br->hash_lock);
+ }
+ 
++static unsigned long fdb_get_hw_last_used(struct net_bridge_fdb_entry *fdb)
++{
++	struct switchdev_notifier_fdb_activity_info info = {
++		.addr = fdb->key.addr.addr,
++		.vid = fdb->key.vlan_id,
++		.last_used = READ_ONCE(fdb->updated),
++	};
++	struct net_bridge_port *p = READ_ONCE(fdb->dst);
++
++	if (p)
++		call_switchdev_notifiers(SWITCHDEV_FDB_GET_LAST_USED, p->dev,
++					 &info.info, NULL);
++
++	return info.last_used;
++}
++
+ void br_fdb_cleanup(struct work_struct *work)
+ {
+ 	struct net_bridge *br = container_of(work, struct net_bridge,
+@@ -572,11 +588,24 @@
+ 			continue;
+ 		}
+ 
++		/* Hardware forwarding does not pass br_fdb_update(). Query only
++		 * entries due to age, and never recreate or move a missing entry.
++		 */
++		if (delay && time_after_eq(now, this_timer)) {
++			unsigned long updated = READ_ONCE(f->updated);
++			unsigned long last_used = fdb_get_hw_last_used(f);
++
++			if (time_after(last_used, updated))
++				cmpxchg(&f->updated, updated, last_used);
++			this_timer = READ_ONCE(f->updated) + delay;
++		}
++
+ 		if (time_after(this_timer, now)) {
+ 			work_delay = min(work_delay, this_timer - now);
+ 		} else {
+ 			spin_lock_bh(&br->hash_lock);
+-			if (!hlist_unhashed(&f->fdb_node))
++			if (!hlist_unhashed(&f->fdb_node) &&
++			    time_after_eq(now, READ_ONCE(f->updated) + delay))
+ 				fdb_delete(br, f, true);
+ 			spin_unlock_bh(&br->hash_lock);
+ 		}

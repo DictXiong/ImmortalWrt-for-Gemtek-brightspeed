@@ -1,0 +1,135 @@
+Subject: [PATCH] net: airoha: enforce bridge port policy before fallback binding
+
+A known destination can resolve back to the ingress port. Do not bind
+that path unless bridge hairpin is enabled. Resolve physical ingress
+through VLAN and br_netfilter contexts and reject unknown or disabled
+bridge ports. Ordinary cross-port and permitted wireless hairpin paths
+continue to use PPE. Add an RCU-safe STP reader for the RX path,
+preserving the existing RTNL-only bridge API.
+
+This file was generated entirely by AI.
+It has not been reviewed line by line by a human.
+
+---
+--- a/include/linux/if_bridge.h
++++ b/include/linux/if_bridge.h
+@@ -180,6 +180,7 @@
+ void br_fdb_clear_offload(const struct net_device *dev, u16 vid);
+ bool br_port_flag_is_set(const struct net_device *dev, unsigned long flag);
+ u8 br_port_get_stp_state(const struct net_device *dev);
++u8 br_port_get_stp_state_rcu(const struct net_device *dev);
+ clock_t br_get_ageing_time(const struct net_device *br_dev);
+ #else
+ static inline struct net_device *
+@@ -205,6 +206,11 @@
+ 	return BR_STATE_DISABLED;
+ }
+ 
++static inline u8 br_port_get_stp_state_rcu(const struct net_device *dev)
++{
++	return BR_STATE_DISABLED;
++}
++
+ static inline clock_t br_get_ageing_time(const struct net_device *br_dev)
+ {
+ 	return 0;
+--- a/net/bridge/br_stp.c
++++ b/net/bridge/br_stp.c
+@@ -83,6 +83,15 @@
+ 	return p->state;
+ }
+ EXPORT_SYMBOL_GPL(br_port_get_stp_state);
++
++/* Caller holds an RCU read-side critical section. */
++u8 br_port_get_stp_state_rcu(const struct net_device *dev)
++{
++	struct net_bridge_port *p = br_port_get_check_rcu(dev);
++
++	return p ? READ_ONCE(p->state) : BR_STATE_DISABLED;
++}
++EXPORT_SYMBOL_GPL(br_port_get_stp_state_rcu);
+ 
+ /* called under bridge lock */
+ struct net_bridge_port *br_get_port(struct net_bridge *br, u16 port_no)
+--- a/drivers/net/ethernet/airoha/airoha_ppe.c
++++ b/drivers/net/ethernet/airoha/airoha_ppe.c
+@@ -13,6 +13,7 @@
+ #include <linux/rhashtable.h>
+ #include <net/ipv6.h>
+ #include <linux/if_bridge.h>
++#include <linux/netfilter_bridge.h>
+ #include <linux/if_vlan.h>
+ #include <linux/if_pppox.h>
+ #include <net/pkt_cls.h>
+@@ -1366,6 +1367,23 @@
+ 	return master;
+ }
+ 
++static struct net_device *
++airoha_ppe_bridge_ingress_rcu(const struct sk_buff *skb)
++{
++	struct net_device *dev = skb->dev;
++
++	if (is_vlan_dev(dev))
++		dev = vlan_dev_real_dev(dev);
++	if (netif_is_bridge_port(dev))
++		return dev;
++
++#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
++	return nf_bridge_get_physindev(skb, dev_net(skb->dev));
++#else
++	return NULL;
++#endif
++}
++
+ static bool
+ airoha_ppe_foe_prepare_bridge_subflow(struct airoha_ppe *ppe,
+ 				      struct sk_buff *skb,
+@@ -1376,7 +1394,7 @@
+ 	struct ethhdr *eh = eth_hdr(skb);
+ 	struct vlan_ethhdr *veh;
+ 	struct airoha_flow_data data = {};
+-	struct net_device *master, *egress;
++	struct net_device *master, *ingress, *egress;
+ 	u16 vid, proto;
+ 	int err, i;
+ 
+@@ -1398,6 +1416,12 @@
+ 		return false;
+ 
+ 	rcu_read_lock();
++	ingress = airoha_ppe_bridge_ingress_rcu(skb);
++	if (!ingress || netdev_master_upper_dev_get_rcu(ingress) != master) {
++		rcu_read_unlock();
++		dev_put(master);
++		return false;
++	}
+ 	ctx.dev = master;
+ 	if (is_vlan_dev(skb->dev)) {
+ 		vid = vlan_dev_vlan_id(skb->dev);
+@@ -1420,8 +1444,7 @@
+ 			ctx.num_vlans = 1;
+ 		}
+ 	} else if (br_vlan_enabled(master) &&
+-		   netif_is_bridge_port(skb->dev) &&
+-		   !br_vlan_get_pvid_rcu(skb->dev, &vid) && vid &&
++		   !br_vlan_get_pvid_rcu(ingress, &vid) && vid &&
+ 		   !br_vlan_get_proto(master, &proto)) {
+ 		ctx.vlan[0].id = vid;
+ 		ctx.vlan[0].proto = htons(proto);
+@@ -1447,7 +1470,14 @@
+ 	 * GDM netdev, or a DSA user port.
+ 	 */
+ 	egress = (struct net_device *)stack.path[1].dev;
+-	if (!egress) {
++	/* FDB lookup describes an output path, not permission to forward from
++	 * this ingress. RX learning runs before the bridge's should_deliver().
++	 */
++	if (!egress ||
++	    (egress == ingress &&
++	     !br_port_flag_is_set(ingress, BR_HAIRPIN_MODE)) ||
++	    br_port_get_stp_state_rcu(ingress) != BR_STATE_FORWARDING ||
++	    br_port_get_stp_state_rcu(egress) != BR_STATE_FORWARDING) {
+ 		rcu_read_unlock();
+ 		dev_put(master);
+ 		return false;
