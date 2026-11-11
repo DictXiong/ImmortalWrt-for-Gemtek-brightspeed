@@ -5,6 +5,8 @@ ImmortalWrt 上游合并不逐项展开，仅记录会影响本设备构建或�
 
 ## 2026-11-12
 
+- Full 固件的 wrtix agent 与消费端已锁定的控制器提交对齐，包含配置差异显示，以及对无正则表达式功能的 jq 构建的兼容修复。
+
 - wrtmesh 6.3.0 将本机漫游配置收进管理页面，并统一使用 `wrtmesh` 服务和运行路径。配置保存在 `/etc/config/wrtmesh` 与 `/etc/config/wrtmesh_peers`，升级时迁移历史配置。
 
 ## 2026-11-11
