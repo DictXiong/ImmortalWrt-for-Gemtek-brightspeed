@@ -68,6 +68,13 @@ FACTORY_TARGETS['factory-translation'] = 'luci-app-airoha-factory/po/zh_Hans/luc
 OVERVIEW_DIRECTORY = 'www/luci-static/resources/view/status/include'
 WRTMESH_OVERVIEW = f'{OVERVIEW_DIRECTORY}/65_wrtmesh.js'
 WIFI_OVERVIEW = f'{OVERVIEW_DIRECTORY}/60_wifi.js'
+RETIRED_WRTMESH_PATHS = (
+    'etc/config/xr_roaming', 'etc/config/xr_mesh', 'etc/init.d/xr_roaming',
+    'usr/lib/xr-roaming', 'usr/share/rpcd/ucode/xrmesh.uc',
+    'usr/share/rpcd/acl.d/xrmesh.json', 'usr/share/luci/menu.d/xrmesh.json',
+    'www/luci-static/resources/xrmesh.js', 'www/luci-static/resources/xrmesh.css',
+    'www/luci-static/resources/view/network/xrmesh.js',
+)
 
 
 def patch_postimage(patch, target):
@@ -195,10 +202,10 @@ def roaming_map(source_root):
             require(relative not in mapping and '..' not in Path(relative).parts, 'duplicate or unsafe wrtmesh destination')
             mapping[relative] = package / 'files' / name
     require({p.name for p in mapping.values()} == {
-        'helper.sh', 'common.jq', 'cli-report.jq', 'xr_roaming.init', 'xr_roaming.config',
-        'xr_mesh.config', 'mesh.uc', 'mesh-sample.uc', 'mesh-daemon.sh', 'xr-mesh.cgi',
-        'xrmesh.uc', 'xrmesh-acl.json', 'xrmesh-menu.json', 'xrmesh.js', 'xrmesh.css', 'xrmesh-view.js',
-        '65_wrtmesh.js',
+        'helper.sh', 'common.jq', 'cli-report.jq', 'wrtmesh.init', 'wrtmesh.config',
+        'wrtmesh_peers.config', 'mesh.uc', 'mesh-sample.uc', 'mesh-daemon.sh', 'wrtmesh.cgi',
+        'wrtmesh.uc', 'wrtmesh-acl.json', 'wrtmesh-menu.json', 'wrtmesh.js', 'wrtmesh.css', 'wrtmesh-view.js',
+        '65_wrtmesh.js', 'migrate-config.sh',
     },
             'wrtmesh package mapping changed; review the rootfs checker')
     require(mapping.get(WRTMESH_OVERVIEW) == package / 'files/65_wrtmesh.js',
@@ -300,7 +307,7 @@ def check_unprovisioned(rootfs, source_root, role=None):
     forbidden = ('etc/dicttech-ap', 'etc/dicttech-setup', 'etc/dicttech-ap-bootstrap-key',
                  'usr/share/dicttech-ap', 'usr/share/dicttech-setup', 'usr/share/dicttech-cli',
                  'usr/libexec/dicttech-setup', 'usr/libexec/dicttech-cli',
-                 'root/.zshrc', 'root/.vimrc', 'root/.tmux.conf')
+                 'root/.zshrc', 'root/.vimrc', 'root/.tmux.conf', 'etc/wrtmesh/migration')
     for relative in forbidden:
         path = rootfs / relative
         require(not path.exists() and not path.is_symlink(), 'personal asset remains in full image: ' + relative)
@@ -349,13 +356,23 @@ def check_unprovisioned(rootfs, source_root, role=None):
         if section['type'] == 'zone':
             require(section['options'].get('name') in ('lan', 'wan'),
                     'virgin rootfs contains site-specific firewall zone')
-    for name in ('xr_roaming', 'xr_mesh'):
+    for name in ('wrtmesh', 'wrtmesh_peers'):
         config = rootfs / 'etc/config' / name
         require(regular(config), name + ' configuration missing')
         require(all(not line.strip() or line.lstrip().startswith("#") for line in config.read_text().splitlines()),
                 name + ' must ship without predefined profiles or peers')
-    public_link = rootfs / 'www/xr-roaming'
-    require(public_link.is_symlink() and os.readlink(public_link)=='/tmp/xr-roaming-public', 'roaming publication link must point to RAM')
+    for relative in RETIRED_WRTMESH_PATHS:
+        path = rootfs / relative
+        require(not path.exists() and not path.is_symlink(), 'retired wrtmesh path remains in rootfs: ' + relative)
+    for relative, target in {
+        'www/wrtmesh': '/tmp/wrtmesh-public',
+        'www/xr-roaming': '/tmp/wrtmesh-public',
+        'www/cgi-bin/xr-mesh': 'wrtmesh',
+    }.items():
+        path = rootfs / relative
+        safe_ancestors(rootfs, relative)
+        require(path.is_symlink() and os.readlink(path) == target,
+                'wrtmesh publication or compatibility link has unexpected target: ' + relative)
     return {'network_role':actual_role, 'deployment_state':'absent', 'private_host_identity':'absent', 'preset_root_password':False,
             'preset_authorized_keys':'absent', 'root_shell':'/bin/ash', 'roaming_default':'unconfigured'}
 
@@ -461,7 +478,7 @@ def check_runtime_manifest(rootfs):
 def check_rootfs(rootfs, source_root=REPO, manifest=None, role=None):
     rootfs, source_root = rootfs.resolve(), source_root.resolve()
     require(rootfs.is_dir(), 'rootfs directory missing')
-    for relative in ('etc/wrtix/managed.json', 'etc/dropbear/key', 'etc/ssh/key', 'www/xr-roaming', 'lib/wifi/mac80211.uc'):
+    for relative in ('etc/wrtix/managed.json', 'etc/dropbear/key', 'etc/ssh/key', 'www/wrtmesh', 'lib/wifi/mac80211.uc'):
         safe_ancestors(rootfs, relative)
     mapping = profile_map(source_root)
     mapping.update(roaming_map(source_root))
@@ -477,7 +494,7 @@ def check_rootfs(rootfs, source_root=REPO, manifest=None, role=None):
     safe_ancestors(rootfs, WIFI_OVERVIEW)
     wifi = rootfs / WIFI_OVERVIEW
     require(regular(wifi) and wifi.stat().st_size > 0, 'LuCI Wi-Fi Overview module missing or empty')
-    require(not re.search(rb'''["']xrmesh["']''', wifi.read_bytes()),
+    require(not re.search(rb'''["'](?:xrmesh|wrtmesh)["']''', wifi.read_bytes()),
             'legacy wrtmesh integration remains in the LuCI Wi-Fi Overview module')
     translation = 'usr/lib/lua/luci/i18n/wrtmesh.zh-cn.lmo'
     safe_ancestors(rootfs, translation)

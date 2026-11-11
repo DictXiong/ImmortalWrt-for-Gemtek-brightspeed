@@ -67,8 +67,16 @@ GitHub Actions fetches `DictXiong/wrtix` and `DictXiong/wrtmesh` by default. The
 workflow input takes precedence over the `WRTIX_REPOSITORY` repository variable;
 either override still has to supply the pinned commit and matching archive.
 The build verifies and materializes both checkouts and includes both source
-archives in the release bundle. The wrtmesh APK retains the original
-`/etc/config/xr_roaming` and `/etc/config/xr_mesh` paths for sysupgrade.
+archives in the release bundle. The wrtmesh APK manages `/etc/config/wrtmesh` and
+`/etc/config/wrtmesh_peers`, preserved during firmware sysupgrade. Package
+upgrades migrate the historical roaming configuration and peer overrides.
+Migration preserves mode-0600 source backups at
+`/etc/wrtmesh/migration/roaming.uci` and `/etc/wrtmesh/migration/peers.uci`.
+The init service is `/etc/init.d/wrtmesh` and runtime tools are under
+`/usr/lib/wrtmesh`. Configuration producers must use these names and the new
+UCI package names when preparing a subsequent deployment.
+The package also owns the historical `/xr-roaming/` metadata and
+`/cgi-bin/xr-mesh` aliases for communication with older peers.
 The APK also installs `view/status/include/65_wrtmesh.js`, which LuCI loads on
 Overview to show Mesh topology and remote wireless clients. For builds that
 reuse a LuCI feed previously modified by the old Mesh patch, start from the

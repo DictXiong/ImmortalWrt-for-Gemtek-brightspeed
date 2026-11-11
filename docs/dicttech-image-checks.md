@@ -94,10 +94,13 @@ runtime, contract, lifecycle hooks and runtime hash inventory at installed paths
 It rejects retired runtime files and deployment state. It compares the pinned
 `wrtmesh` install mapping with the image, including its disabled defaults,
 standalone LuCI Overview include, stylesheet and compiled translation. It also
-checks the standard Wi-Fi Overview module for the legacy Mesh integration and
+checks the canonical configuration and runtime names, the two historical
+communication aliases, and the standard Wi-Fi Overview module for the legacy Mesh integration. It
 verifies history/factory UI postimages and RPC permissions. The audit covers a
 **virgin image**. Running devices legitimately carry user configuration and
 credentials.
+Migration backups under `/etc/wrtmesh/migration` belong to an upgraded device
+and are excluded from virgin image inputs.
 
 The full-edition wireless guards suppress upstream fixed-country/password presets
 and disable newly generated interfaces without rewriting preserved configuration.

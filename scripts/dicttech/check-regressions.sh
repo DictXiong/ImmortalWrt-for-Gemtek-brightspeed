@@ -26,8 +26,8 @@ case ${1:-} in
    scripts/dicttech/tests/test_ui_source.py \
    scripts/dicttech/tests/test_packages.py \
    scripts/dicttech/tests/test_source_permissions.py \
-   "$WRTMESH_SOURCE/tests/check-xr-roaming-package.py" \
-   "$WRTMESH_SOURCE/tests/test-xr-roaming.py"; do
+   "$WRTMESH_SOURCE/tests/check-wrtmesh-package.py" \
+   "$WRTMESH_SOURCE/tests/test-roaming.py"; do
    printf 'Running %s\n' "$test"
    python3 "$test"
   done
@@ -46,8 +46,10 @@ PY
   )
   python3 scripts/dicttech/tests/wifihistory/test_history.py --ucode "$ucode" \
    2>&1 | tee "$reports/dicttech-history-tests.log"
-  python3 "$WRTMESH_SOURCE/tests/test-xr-mesh.py" --c7-rootfs "$rootfs" \
+  python3 "$WRTMESH_SOURCE/tests/test-mesh.py" --c7-rootfs "$rootfs" \
    2>&1 | tee "$reports/dicttech-wrtmesh-tests.log"
+  python3 "$WRTMESH_SOURCE/tests/test-configuration.py" --c7-rootfs "$rootfs" \
+   2>&1 | tee "$reports/dicttech-wrtmesh-configuration-tests.log"
   python3 scripts/dicttech/tests/factory/test_factory.py --rootfs "$rootfs" \
    2>&1 | tee "$reports/dicttech-factory-tests.log"
   python3 scripts/dicttech/tests/umdns/test_config.py --rootfs "$rootfs" \

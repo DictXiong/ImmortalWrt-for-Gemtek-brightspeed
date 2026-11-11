@@ -60,7 +60,9 @@ class RootfsChecks(unittest.TestCase):
         files = ('usr/libexec/wrtix/agent', 'etc/init.d/wrtix-agent', 'usr/share/wrtix/contract.json')
         (self.root / 'usr/share/wrtix/runtime.sha256').write_text(''.join(check.digest((self.root / name).read_bytes()) + '  ' + name + '\n' for name in files))
         shadow = self.root / 'etc/shadow'; shadow.write_text('root:::0:99999:7:::\nservice:*:0:0:99999:7:::\n'); shadow.chmod(0o600)
-        (self.root / 'www/xr-roaming').symlink_to('/tmp/xr-roaming-public')
+        (self.root / 'www/wrtmesh').symlink_to('/tmp/wrtmesh-public')
+        (self.root / 'www/xr-roaming').symlink_to('/tmp/wrtmesh-public')
+        (self.root / 'www/cgi-bin/xr-mesh').symlink_to('wrtmesh')
         (self.root / 'etc/resolv.conf').symlink_to('/tmp/resolv.conf')
         (self.root / 'etc/passwd').write_text('root:x:0:0:root:/root:/bin/ash\n')
         for relative in check.RPC_REQUIRED_FILES:
@@ -102,7 +104,7 @@ class RootfsChecks(unittest.TestCase):
 
     def test_wrtmesh_overview_translation_and_stylesheet_require_exact_bytes(self):
         for relative in ('usr/lib/lua/luci/i18n/wrtmesh.zh-cn.lmo',
-                         'www/luci-static/resources/xrmesh.css', check.WRTMESH_OVERVIEW):
+                         'www/luci-static/resources/wrtmesh.css', check.WRTMESH_OVERVIEW):
             with self.subTest(relative=relative):
                 path = self.root / relative
                 original = path.read_bytes()
@@ -117,9 +119,35 @@ class RootfsChecks(unittest.TestCase):
 
     def test_old_wrtmesh_patch_in_native_luci_wifi_module_rejected(self):
         native = self.root / check.WIFI_OVERVIEW
-        native.write_text("return L.require('xrmesh').then(mesh => mesh.status());\n")
-        with self.assertRaisesRegex(check.RootfsError, 'legacy wrtmesh integration'):
-            check.check_rootfs(self.root)
+        for module in ('xrmesh', 'wrtmesh'):
+            with self.subTest(module=module):
+                native.write_text(f"return L.require('{module}').then(mesh => mesh.status());\n")
+                with self.assertRaisesRegex(check.RootfsError, 'legacy wrtmesh integration'):
+                    check.check_rootfs(self.root)
+
+    def test_retired_wrtmesh_runtime_and_migration_backups_are_not_image_inputs(self):
+        for relative in (*check.RETIRED_WRTMESH_PATHS, 'etc/wrtmesh/migration/roaming.uci'):
+            with self.subTest(relative=relative):
+                path = self.root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('retired or private fixture\n')
+                with self.assertRaises(check.RootfsError):
+                    check.check_rootfs(self.root)
+                path.unlink()
+                if relative.endswith('migration/roaming.uci'):
+                    path.parent.rmdir()
+
+    def test_wrtmesh_wire_compatibility_links_have_exact_targets(self):
+        for relative in ('www/wrtmesh', 'www/xr-roaming', 'www/cgi-bin/xr-mesh'):
+            with self.subTest(relative=relative):
+                path = self.root / relative
+                target = path.readlink()
+                path.unlink()
+                path.symlink_to('/tmp/wrong-fixture')
+                with self.assertRaisesRegex(check.RootfsError, 'compatibility link'):
+                    check.check_rootfs(self.root)
+                path.unlink()
+                path.symlink_to(target)
 
     def test_runtime_modes_manifest_and_retired_runtime_rejected(self):
         path = self.root / 'etc/init.d/wrtix-agent'
@@ -195,7 +223,7 @@ class RootfsChecks(unittest.TestCase):
                 with self.assertRaisesRegex(check.RootfsError, 'firewall'): check.check_rootfs(self.root)
 
     def test_stale_runtime_and_changed_default_config_fail(self):
-        for relative in ('usr/libexec/wrtix/agent', 'usr/lib/xr-roaming/helper.sh', 'etc/config/xr_roaming'):
+        for relative in ('usr/libexec/wrtix/agent', 'usr/lib/wrtmesh/helper.sh', 'etc/config/wrtmesh'):
             path = self.root / relative; before = path.read_bytes(); path.write_bytes(before + b'\n# stale fixture\n')
             with self.assertRaisesRegex(check.RootfsError, 'differ from authoritative source'):
                 check.check_rootfs(self.root)

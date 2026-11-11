@@ -3,6 +3,10 @@
 本文件记录 Gemtek Brightspeed 固件仓库的重要功能、稳定性和维护变更。常规的
 ImmortalWrt 上游合并不逐项展开，仅记录会影响本设备构建或运行行为的内容。
 
+## 2026-11-12
+
+- wrtmesh 6.3.0 将本机漫游配置收进管理页面，并统一使用 `wrtmesh` 服务和运行路径。配置保存在 `/etc/config/wrtmesh` 与 `/etc/config/wrtmesh_peers`，升级时迁移历史配置。
+
 ## 2026-11-11
 
 - Full 的 AP 和 gateway 镜像预置 `arp-scan` 及 MAC 厂商数据库，并纳入构建配置和实际安装清单检查。`umdns` 及地址选择修复继续内置。
