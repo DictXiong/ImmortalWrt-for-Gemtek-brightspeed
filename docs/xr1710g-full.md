@@ -82,6 +82,10 @@ controllers and learns BSSIDs from fresh peer snapshots after validating the
 LAN IP/MAC binding. “Roaming enabled” means current candidate reports were
 applied to hostapd; it is derived from worker evidence. Internal controller
 names are not user input and do not need to match between nodes.
+Declarative automatic SSID peer policy requires wrtmesh 6.4.1 or later.
+Provisioners own their policy in `/etc/config/wrtmesh`; LuCI owns the separate
+peer override file, which takes precedence by bridge MAC. Learned BSSIDs remain
+runtime state and must not be written back into static peer policy.
 The APK also installs `view/status/include/65_wrtmesh.js`, which LuCI loads on
 Overview to show Mesh topology and remote wireless clients. For builds that
 reuse a LuCI feed previously modified by the old Mesh patch, start from the
