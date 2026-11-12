@@ -5,6 +5,8 @@ ImmortalWrt 上游合并不逐项展开，仅记录会影响本设备构建或�
 
 ## 2026-11-12
 
+- Full 3.1.0-rc.2 固定 wrtmesh 6.4.1，支持在受管配置中声明通信 IP／MAC 与真实 SSID 列表；LuCI 本地覆盖独立保留，学习得到的 BSSID 不回写声明式策略。
+
 - wrtmesh 6.4.0 按 SSID 开关自动维护 peer 的 BSSID 与 MLO 链路，无需配置标识或 BSSID 输入；Mesh 页显示逐节点、逐 SSID 的漫游状态。概览客户端名称缺失时依次使用 IPv4、IPv6，再显示问号。
 
 - Full 固件的 wrtix agent 与消费端已锁定的控制器提交对齐，包含配置差异显示，以及对无正则表达式功能的 jq 构建的兼容修复。
