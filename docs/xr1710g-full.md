@@ -77,6 +77,11 @@ The init service is `/etc/init.d/wrtmesh` and runtime tools are under
 UCI package names when preparing a subsequent deployment.
 The package also owns the historical `/xr-roaming/` metadata and
 `/cgi-bin/xr-mesh` aliases for communication with older peers.
+The Mesh peer dialog selects actual local SSIDs. The package prepares local
+controllers and learns BSSIDs from fresh peer snapshots after validating the
+LAN IP/MAC binding. “Roaming enabled” means current candidate reports were
+applied to hostapd; it is derived from worker evidence. Internal controller
+names are not user input and do not need to match between nodes.
 The APK also installs `view/status/include/65_wrtmesh.js`, which LuCI loads on
 Overview to show Mesh topology and remote wireless clients. For builds that
 reuse a LuCI feed previously modified by the old Mesh patch, start from the
