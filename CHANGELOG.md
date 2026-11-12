@@ -5,6 +5,7 @@ ImmortalWrt 上游合并不逐项展开，仅记录会影响本设备构建或�
 
 ## 2026-11-12
 
+- wrtmesh 6.4.0 按 SSID 开关自动维护 peer 的 BSSID 与 MLO 链路，无需配置标识或 BSSID 输入；Mesh 页显示逐节点、逐 SSID 的漫游状态。概览客户端名称缺失时依次使用 IPv4、IPv6，再显示问号。
 - wrtmesh 6.3.0 将本机漫游配置收进管理页面，并统一使用 `wrtmesh` 服务和运行路径。配置保存在 `/etc/config/wrtmesh` 与 `/etc/config/wrtmesh_peers`，升级时迁移历史配置。
 
 ## 2026-11-11
