@@ -142,6 +142,10 @@ def check_tree(blob, layout):
     compatible = strings(nodes['/'].get('compatible', b''))
     require(compatible and compatible[0] == expected_board, 'DT primary board does not match the selected layout')
     require(opposite not in compatible, 'DT mixes legacy and UBI board aliases')
+    require(all('airoha,en7581-cpufreq' not in strings(props.get('compatible', b'\0')) and
+                'airoha,force-direct-pll' not in props and
+                not (props.get('device_type') == b'cpu\0' and 'operating-points-v2' in props)
+                for props in nodes.values()), 'AN7581 DT restores unsupported CPU DVFS bindings')
     groups = [path for path, props in nodes.items()
               if props.get('compatible') == b'fixed-partitions\0']
     require(len(groups) == 1, 'expected exactly one fixed NAND partition table')
@@ -186,7 +190,7 @@ def check_tree(blob, layout):
             for name, offset, size, ro in actual], 'rootdisk_volume': 'fit', 'factory_cell_format': layout,
             'i2c_hwmon': {'controller': i2c, 'compatible': 'mediatek,mt7621-i2c',
                           'monitor': monitors[0], 'address': 0x2e},
-            'dtb_sha256': hashlib.sha256(blob).hexdigest()}
+            'cpu_dvfs_provider': False, 'dtb_sha256': hashlib.sha256(blob).hexdigest()}
 
 
 def check_image(blob, layout, rootfs_sink=None):

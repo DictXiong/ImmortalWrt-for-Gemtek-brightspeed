@@ -8,7 +8,7 @@ connect to a router or modify an image.
 ```sh
 python3 scripts/dicttech/check-image.py \
   --layout legacy --image /build/xr1710g-sysupgrade.itb \
-  --rootfs /build/root-airoha --kernel-release 6.18.55 \
+  --rootfs /build/root-airoha --kernel-release 6.18.60 \
   --output /build/image-check.json
 ```
 
@@ -40,6 +40,10 @@ The gate verifies:
   override leaves the bus unbound. This image check establishes the device-tree
   contract; runtime fan feedback and driver probing still require a hardware
   check.
+- The compiled AN7581 DT has no retired CPU DVFS provider, direct-PLL flag or
+  CPU OPP binding. The Full package/rootfs checks also reject `cpufreq` and its
+  obsolete boot scripts/configuration. This preserves the upstream fixed-clock
+  mitigation; it is not a runtime CPU-stability result.
 - Optional assembled-rootfs module architecture and ELF vermagic consistency.
   This is **not** a kernel ABI hash check or proof that the supplied directory
   was extracted from this exact FIT rootfs. Keep the build manifest, kernel

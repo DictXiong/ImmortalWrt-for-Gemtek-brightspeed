@@ -320,9 +320,24 @@ class RootfsChecks(unittest.TestCase):
         manifest = Path(self.temp.name) / 'packages.manifest'
         manifest.write_text(''.join(name + ' - fixture-version\n' for name in sorted(policy.REQUIRED)))
         self.assertTrue(check.check_rootfs(self.root, manifest=manifest)['passed'])
-        manifest.write_text(manifest.read_text() + sorted(policy.FORBIDDEN)[0] + ' - fixture-version\n')
-        with self.assertRaisesRegex(check.RootfsError, 'actual package policy mismatch'):
-            check.check_rootfs(self.root, manifest=manifest)
+        base = manifest.read_text()
+        for forbidden in (sorted(policy.FORBIDDEN)[0], 'cpufreq'):
+            manifest.write_text(base + forbidden + ' - fixture-version\n')
+            with self.assertRaisesRegex(check.RootfsError, 'actual package policy mismatch'):
+                check.check_rootfs(self.root, manifest=manifest)
+
+    def test_stale_cpufreq_boot_inputs_fail_even_without_a_package_manifest(self):
+        for relative in ('etc/config/cpufreq', 'etc/init.d/cpufreq',
+                         'etc/uci-defaults/10-cpufreq', 'etc/uci-defaults/11-xr1710g-cpufreq-defaults',
+                         'etc/rc.d/S15cpufreq'):
+            with self.subTest(relative=relative):
+                path = self.root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.symlink_to('/missing-retired-cpufreq')
+                with self.assertRaisesRegex(check.RootfsError, 'unsupported AN7581 cpufreq'):
+                    check.check_rootfs(self.root)
+                path.unlink()
+        self.assertTrue(check.check_rootfs(self.root)['passed'])
 
     def test_symlinked_runtime_parent_is_rejected_without_following_it(self):
         lib = self.root / 'usr/libexec'; shutil.rmtree(lib); lib.symlink_to('/unowned-fixture')

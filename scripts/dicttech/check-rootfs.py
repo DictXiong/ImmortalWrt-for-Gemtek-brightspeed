@@ -364,6 +364,13 @@ def check_unprovisioned(rootfs, source_root, role=None):
     for relative in RETIRED_WRTMESH_PATHS:
         path = rootfs / relative
         require(not path.exists() and not path.is_symlink(), 'retired wrtmesh path remains in rootfs: ' + relative)
+    for relative in ('etc/config/cpufreq', 'etc/init.d/cpufreq',
+                     'etc/uci-defaults/10-cpufreq', 'etc/uci-defaults/11-xr1710g-cpufreq-defaults'):
+        path = rootfs / relative
+        require(not path.exists() and not path.is_symlink(),
+                'unsupported AN7581 cpufreq boot input remains in rootfs: ' + relative)
+    require(not list(rootfs.glob('etc/rc.d/*cpufreq')),
+            'unsupported AN7581 cpufreq startup link remains in rootfs')
     for relative, target in {
         'www/wrtmesh': '/tmp/wrtmesh-public',
         'www/xr-roaming': '/tmp/wrtmesh-public',
@@ -374,7 +381,8 @@ def check_unprovisioned(rootfs, source_root, role=None):
         require(path.is_symlink() and os.readlink(path) == target,
                 'wrtmesh publication or compatibility link has unexpected target: ' + relative)
     return {'network_role':actual_role, 'deployment_state':'absent', 'private_host_identity':'absent', 'preset_root_password':False,
-            'preset_authorized_keys':'absent', 'root_shell':'/bin/ash', 'roaming_default':'unconfigured'}
+            'preset_authorized_keys':'absent', 'root_shell':'/bin/ash', 'roaming_default':'unconfigured',
+            'cpufreq_boot_inputs':'absent'}
 
 
 def manifest_policy(source_root, path):

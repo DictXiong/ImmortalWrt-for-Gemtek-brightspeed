@@ -51,3 +51,10 @@ The inherited global PON watchdog overlay is packaged as
 `airoha-pon-link-watchdog` and selected by the existing PON profiles. The two
 runtime scripts are unchanged. XR1710G Full excludes this package, retains the
 no-overlay gate, and does not acquire the PON cron entry.
+
+The upstream `16aa9e1c9ba12971651427338f6454f99c395dbf` change disables
+AN7581 Linux CPU DVFS after a reported CPU fault and excludes `cpufreq` from
+this target. Full now explicitly excludes that package and audits for its
+absence, retired boot inputs and compiled CPU DVFS bindings. The PLL/CPU driver
+and its target guard are not restored. PSCI, critical thermal protection and
+the fixed NPU/fan feed stay in place; this is separate from device acceptance.

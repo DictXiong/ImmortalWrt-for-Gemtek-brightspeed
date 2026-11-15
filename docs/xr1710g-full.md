@@ -15,6 +15,15 @@ selection, and `arp-scan` with its MAC vendor database for on-demand LAN
 diagnostics. `arp-scan` does not run a background service. These packages are
 required by both build-configuration and installed-package manifest checks.
 
+The AN7581 development baseline keeps the CPU clock supplied by boot firmware.
+Linux CPU DVFS, governor/maximum-frequency controls and the `cpufreq` package
+are disabled following naoki's
+`16aa9e1c9ba1` fault mitigation. Full configuration and package checks forbid
+`cpufreq`; image/rootfs audits reject the retired CPU DVFS bindings and boot
+inputs. Four-core PSCI startup, thermal shutdown, fan control and NPU/PPE
+features remain in the source. This does not establish hardware stability for
+the new integration build.
+
 CLI assets live in `/usr/share/xr1710g-cli`, with the login hook at
 `/etc/profile.d/80-xr1710g-cli.sh`. Create the adjacent
 `80-xr1710g-cli.hush` file to disable automatic zsh entry. Optional user overrides

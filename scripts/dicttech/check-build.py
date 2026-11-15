@@ -16,7 +16,7 @@ REQUIRED = {
     'curl', 'coreutils-timeout', 'flock', 'umdns', 'arp-scan', 'arp-scan-database',
     'firewall4', 'kmod-nft-bridge',
     'kmod-nft-offload', 'luci-app-mlo', 'luci-app-airoha-fancontrol',
-    'luci-app-airoha-npu', 'luci-theme-glass', 'dropbear', 'uhttpd', 'cpufreq',
+    'luci-app-airoha-npu', 'luci-theme-glass', 'dropbear', 'uhttpd',
     'luci-i18n-base-zh-cn', 'zsh', 'vim-full', 'tmux', 'less',
     'git-http', 'rsync', 'luci-app-airoha-factory',
     'luci-app-package-manager', 'luci-app-wifihistory',
@@ -26,6 +26,8 @@ REQUIRED = {
     'kmod-crypto-cbc', 'kmod-crypto-ctr', 'kmod-crypto-ecb',
 }
 FORBIDDEN = {
+    # The AN7581 baseline keeps the boot firmware clock after CPU DVFS faults.
+    'cpufreq',
     'airoha-pon-link-watchdog',
     'xr-roaming', 'ap-profile', 'dicttech-setup', 'cli-profile', 'usteer', 'dawn', 'luci-app-usteer', 'luci-app-dawn', 'miniupnpd',
     'miniupnpd-nftables', 'luci-app-upnp', 'lucky', 'luci-app-lucky',

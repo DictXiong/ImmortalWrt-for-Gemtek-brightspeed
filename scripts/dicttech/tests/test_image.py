@@ -182,6 +182,17 @@ class ImageChecks(unittest.TestCase):
         with self.assertRaisesRegex(check.ImageError, 'compatibility'):
             check.check_image(fit(device('legacy'), metadata('ubi')), 'legacy')
 
+    def test_compiled_fit_rejects_retired_an7581_cpu_dvfs_bindings(self):
+        for layout in ('legacy', 'ubi'):
+            for props in ({'compatible': text('airoha,en7581-cpufreq')},
+                          {'airoha,force-direct-pll': b''},
+                          {'device_type': text('cpu'), 'operating-points-v2': cell(99)}):
+                with self.subTest(layout=layout, props=props):
+                    nodes = device(layout)
+                    nodes['/retired-cpufreq'] = props
+                    with self.assertRaisesRegex(check.ImageError, 'unsupported CPU DVFS'):
+                        check.check_image(fit(nodes, metadata(layout)), layout)
+
     def test_merged_writable_vendor_is_rejected(self):
         nodes = device()
         for path in tuple(nodes):
