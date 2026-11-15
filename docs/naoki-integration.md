@@ -46,3 +46,8 @@ patch checks. The two old LuCI bridge-member and msd_lite init patches remain
 necessary for the fixed feed revisions and are retained from the formal source.
 The former XG2010G-2G offload guard is already present in the fixed app_airoha
 source and is not duplicated.
+
+The inherited global PON watchdog overlay is packaged as
+`airoha-pon-link-watchdog` and selected by the existing PON profiles. The two
+runtime scripts are unchanged. XR1710G Full excludes this package, retains the
+no-overlay gate, and does not acquire the PON cron entry.

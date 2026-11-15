@@ -4,7 +4,7 @@ set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 # Load the production functions without invoking the router entry point.
-eval "$(sed '/^main "\$@"$/d' "$root/files/usr/sbin/pon-link-watchdog")"
+eval "$(sed '/^main "\$@"$/d' "$root/package/network/config/airoha-pon-link-watchdog/files/usr/sbin/pon-link-watchdog")"
 scratch=$(mktemp -d)
 trap 'rm -f "$scratch/down" "$scratch/events" "$scratch/sampled"; rmdir "$scratch/lock" 2>/dev/null || :; rmdir "$scratch"' 0
 trap 'exit 1' 1 2 15

@@ -131,7 +131,7 @@ define Device/nokia_xg-040g-md-common
   DEVICE_PACKAGES := kmod-gpio-button-hotplug kmod-leds-gpio \
 	kmod-phy-airoha-en8811h kmod-regulator-userspace-consumer \
 	kmod-usb-ledtrig-usbport kmod-usb3 automount kmod-airoha-en7572 \
-	kmod-airoha-xpon airoha-ponctl airoha-pond
+	kmod-airoha-xpon airoha-ponctl airoha-pond airoha-pon-link-watchdog
 endef
 
 define Device/nokia_xg-040g-md
@@ -246,7 +246,7 @@ define Device/gemtek_xg2010g-common
   DEVICE_PACKAGES := fitblk kmod-leds-gpio kmod-gpio-button-hotplug \
 	kmod-phy-airoha-en8811h kmod-phy-realtek rtl826x-firmware \
 	kmod-nf-conntrack-bridge kmod-nft-bridge \
-	kmod-airoha-en7572 kmod-airoha-xpon airoha-ponctl airoha-pond \
+	kmod-airoha-en7572 kmod-airoha-xpon airoha-ponctl airoha-pond airoha-pon-link-watchdog \
 	kmod-airoha-tod kmod-airoha-en7581-pcm-spi \
 	-airoha-an7581-mt7996-board -airoha-en7581-mt7996-npu-firmware \
 	-kmod-mac80211 -kmod-mt7996-firmware -kmod-mt7996e \

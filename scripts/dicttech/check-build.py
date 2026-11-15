@@ -26,6 +26,7 @@ REQUIRED = {
     'kmod-crypto-cbc', 'kmod-crypto-ctr', 'kmod-crypto-ecb',
 }
 FORBIDDEN = {
+    'airoha-pon-link-watchdog',
     'xr-roaming', 'ap-profile', 'dicttech-setup', 'cli-profile', 'usteer', 'dawn', 'luci-app-usteer', 'luci-app-dawn', 'miniupnpd',
     'miniupnpd-nftables', 'luci-app-upnp', 'lucky', 'luci-app-lucky',
     'watchcat', 'luci-app-watchcat', 'luci-app-autoreboot', 'ttyd',

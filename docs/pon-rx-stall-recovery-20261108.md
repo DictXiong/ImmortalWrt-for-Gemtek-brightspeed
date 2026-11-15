@@ -21,7 +21,7 @@
 
 ## 用户态兜底
 
-`files/usr/sbin/pon-link-watchdog` 优先检查 `pppoe`，并要求协议为 PPPoE。
+`package/network/config/airoha-pon-link-watchdog/files/usr/sbin/pon-link-watchdog` 优先检查 `pppoe`，并要求协议为 PPPoE。
 当前 ONU 上网页面的 `internet-apply` 实际生成为 `network.wan`，因此没有
 `pppoe` 拨号接口时，仅允许回退到带 `luci_wanup=1` 标记的 PPPoE `wan`。
 这不会把普通以太网 WAN 当作 PON 会话。桥接配置没有本机 PPPoE 会话时，
@@ -70,7 +70,7 @@ checkout，不会随之更新。旧构建树应先确认这两个 feed 没有未
 `./scripts/feeds install -a -p onu_config` 和
 `./scripts/feeds install -a -p pon_drivers`。无需修改 feed URL。
 实际编译使用 `feeds/` 中的源码，相邻同名仓库不会因当前 `src-git` 配置自动接入。
-固件专用的 `files/usr/sbin/pon-link-watchdog`、检查脚本和本文继续留在固件仓库。
+固件专用的 `package/network/config/airoha-pon-link-watchdog/files/usr/sbin/pon-link-watchdog`、检查脚本和本文继续留在固件仓库。
 
 ## 验证
 
@@ -103,3 +103,5 @@ daemon 的主机 release 构建也已通过。
 拨号正常时清除 `/tmp/pon-link-watchdog.down`；复现 overrun 后约 30 秒出现
 `without downstream progress ... resetting the MAC epoch`，并恢复业务。
 `Key_Control error=-110` 和 nlbwmon netlink 缓冲不足属于独立待查项。
+
+当前集成树将用户态兜底放入 `airoha-pon-link-watchdog` 普通软件包，仅由 PON profile 选择，避免全局 `files/` overlay 将 cron 入口带入 XR1710G Full 镜像。

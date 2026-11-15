@@ -55,7 +55,7 @@ fi
 
 if grep -Eq '^CONFIG_(TARGET_airoha_an7581_DEVICE|TARGET_DEVICE_airoha_an7581_DEVICE)_gemtek_xr1710g(-ubi)?=y$' "$config_file"; then
 	profile="xr1710g"
-	forbidden_packages='(airoha-pon(firmware|manager)|airoha-ponctl|airoha-pond|luci-app-(pon|onu)|kmod-airoha-(xpon-en757x|pon-plugins|pon-dataplane|xpon-igmp|gpon-igmp|en7572|xpon|tod|en7581-pcm-spi))'
+	forbidden_packages='(airoha-pon(firmware|manager|-link-watchdog)|airoha-ponctl|airoha-pond|luci-app-(pon|onu)|kmod-airoha-(xpon-en757x|pon-plugins|pon-dataplane|xpon-igmp|gpon-igmp|en7572|xpon|tod|en7581-pcm-spi))'
 	forbidden_build_config=""
 	required_packages=(
 		airoha-an7581-mt7996-board
