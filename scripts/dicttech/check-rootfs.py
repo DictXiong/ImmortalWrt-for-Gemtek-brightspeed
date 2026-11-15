@@ -205,7 +205,7 @@ def roaming_map(source_root):
         'helper.sh', 'common.jq', 'cli-report.jq', 'wrtmesh.init', 'wrtmesh.config',
         'wrtmesh_peers.config', 'mesh.uc', 'mesh-sample.uc', 'mesh-daemon.sh', 'wrtmesh.cgi',
         'wrtmesh.uc', 'wrtmesh-acl.json', 'wrtmesh-menu.json', 'wrtmesh.js', 'wrtmesh.css', 'wrtmesh-view.js',
-        '65_wrtmesh.js', 'migrate-config.sh',
+        '65_wrtmesh.js', 'migrate-config.sh', 'readiness.uc',
     },
             'wrtmesh package mapping changed; review the rootfs checker')
     require(mapping.get(WRTMESH_OVERVIEW) == package / 'files/65_wrtmesh.js',
