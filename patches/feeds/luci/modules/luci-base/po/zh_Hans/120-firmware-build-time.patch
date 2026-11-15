@@ -1,0 +1,13 @@
+--- a/modules/luci-base/po/zh_Hans/base.po
++++ b/modules/luci-base/po/zh_Hans/base.po
+@@ -5032,6 +5032,10 @@
+ #: modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/10_system.js:70
+ msgid "Firmware Version"
+ msgstr "固件版本"
++
++#: modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/10_system.js
++msgid "Firmware Build Time"
++msgstr "固件构建时间"
+ 
+ #: modules/luci-mod-network/htdocs/luci-static/resources/view/network/dns.js:248
+ msgid "First answer wins."

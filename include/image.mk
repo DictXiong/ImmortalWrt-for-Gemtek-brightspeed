@@ -403,6 +403,16 @@ endif
 	$(call prepare_rootfs,$(mkfs_cur_target_dir),$(TOPDIR)/files)
 
 $(KDIR)/root.%: kernel_prepare
+	@set -e; d="$(mkfs_cur_target_dir)/www/luci-static/resources"; \
+		if [ -d "$$d" ]; then \
+			test ! -L "$$d/firmware-build-time.json"; \
+			stamp="$$(date -u +%s)"; \
+			case "$$stamp" in ''|*[!0-9]*) exit 1;; esac; test "$$stamp" -gt 0; \
+			printf '%s' "$$stamp" > "$$d/firmware-build-time.json"; \
+			chmod 0644 "$$d/firmware-build-time.json"; \
+			printf 'Rootfs build start UTC epoch: %s\n' "$$stamp"; \
+			$(if $(SOURCE_DATE_EPOCH),touch -hcd "@$(SOURCE_DATE_EPOCH)" "$$d/firmware-build-time.json" "$$d",:); \
+		fi
 	$(call Image/mkfs/$(word 1,$(target_params)),$(target_params))
 
 define Device/InitProfile

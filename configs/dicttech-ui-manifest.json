@@ -57,6 +57,18 @@
       "source_sha256": "21dddeae3ad97b8db6d160570e6fea2708c2872a3287625fbf99e4dc8a89abce",
       "patched_sha256": "d922bd509604a84a0a09c2ebdd0dfdd36f6b40f193df3bbc415a39acec65c9f8",
       "patch": "patches/feeds/app_airoha/luci-app-airoha-factory/120-dicttech-readonly-split-dsd.patch"
+    },
+    "firmware-build-time-system": {
+      "target": "modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/10_system.js",
+      "source_sha256": "8a7a87a777c7be145b3f5832c1e8b695887f63450fe7cf91719ff76f5eccf990",
+      "patched_sha256": "ed2ceba35976c033cc48644d4ba296c4bfccfd0d8a119fce7c3edf5ae5bb6cb9",
+      "patch": "patches/feeds/luci/modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/120-firmware-build-time.patch"
+    },
+    "firmware-build-time-translation": {
+      "target": "modules/luci-base/po/zh_Hans/base.po",
+      "source_sha256": "057b6bf2103ea4cc12a7b45e275c9cece1c37e0adb1b1b6b3b6b42ac019e502e",
+      "patched_sha256": "e29be933afdec75788ad308711f8181f6700155a8245c8865058c8b16ea6cfa5",
+      "patch": "patches/feeds/luci/modules/luci-base/po/zh_Hans/120-firmware-build-time.patch"
     }
   },
   "feed_app_airoha_revision": "d496614002cf21f83e96e4741716eab1e5333ede"

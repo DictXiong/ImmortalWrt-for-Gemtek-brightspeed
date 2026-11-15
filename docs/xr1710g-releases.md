@@ -62,3 +62,7 @@ python3 scripts/dicttech/release.py notes --pair /tmp/xr-release-pair/release-pa
 sudo bash scripts/dicttech/check-regressions.sh host
 sudo bash scripts/dicttech/check-regressions.sh rootfs /path/to/root-airoha /tmp/xr-target-reports
 ```
+
+## 固件构建时间
+
+概览的“固件构建时间”来自镜像内普通静态资源 `firmware-build-time.json`，记录本次 rootfs 镜像打包起点的 UTC Unix 秒，按浏览器本地时区显示。它不是源码提交日期、每个软件包的编译时间或全部制品完成时刻。每次实际重新生成 rootfs 时更新；旧镜像资源缺失或无效时显示未知，不猜值回填。标准 `OPENWRT_BUILD_DATE`、`release.builddate` 与 `SOURCE_DATE_EPOCH` 保持原语义及格式。
