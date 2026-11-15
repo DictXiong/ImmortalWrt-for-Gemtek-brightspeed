@@ -1,0 +1,44 @@
+From: Dict Xiong <me@dxng.cn>
+Subject: [PATCH] net: airoha: fix PPE debugfs helper declaration and field formats
+
+The stats-reporting backport calls airoha_ppe_flow_stats_available() before
+its static definition. Declare the exact bool signature before the first
+use so the ARM64 kernel build does not infer a conflicting int signature.
+
+FIELD_GET returns the mask type, which is unsigned long for these masks.
+The extracted 32-bit register fields fit unsigned int; cast them to match
+the existing %u debugfs output format. No stats or forwarding policy changes.
+
+Signed-off-by: Dict Xiong <me@dxng.cn>
+---
+--- a/drivers/net/ethernet/airoha/airoha_ppe_debugfs.c
++++ b/drivers/net/ethernet/airoha/airoha_ppe_debugfs.c
+@@ -8,6 +8,8 @@
+ 
+ #include "airoha_regs.h"
+ #include "airoha_eth.h"
++
++static bool airoha_ppe_flow_stats_available(struct airoha_ppe *ppe);
+ 
+ static void airoha_debugfs_ppe_print_tuple(struct seq_file *m,
+ 					   void *src_addr, void *dest_addr,
+@@ -220,7 +222,7 @@
+ 		seq_printf(m, "ppe%u_table_cfg: %08x\n", i,
+ 			   airoha_fe_rr(eth, REG_PPE_TB_CFG(i)));
+ 		seq_printf(m, "ppe%u_gdm2_default_cpu_port: %u\n", i,
+-			   FIELD_GET(DFT_CPORT_MASK(AIROHA_GDM2_IDX), cport));
++			   (unsigned int)FIELD_GET(DFT_CPORT_MASK(AIROHA_GDM2_IDX), cport));
+ 	}
+ 
+ 	return 0;
+@@ -357,8 +359,8 @@
+ 		u32 rate = airoha_fe_rr(eth, REG_PPE_BIND_RATE(i));
+ 
+ 		seq_printf(m, "ppe%u: l2b=%u l3=%u\n", i,
+-			   FIELD_GET(PPE_BIND_RATE_L2B_BIND_MASK, rate),
+-			   FIELD_GET(PPE_BIND_RATE_BIND_MASK, rate));
++			   (unsigned int)FIELD_GET(PPE_BIND_RATE_L2B_BIND_MASK, rate),
++			   (unsigned int)FIELD_GET(PPE_BIND_RATE_BIND_MASK, rate));
+ 	}
+ 
+ 	return 0;
