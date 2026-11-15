@@ -403,7 +403,7 @@ endif
 	$(call prepare_rootfs,$(mkfs_cur_target_dir),$(TOPDIR)/files)
 
 $(KDIR)/root.%: kernel_prepare
-	@set -e; d="$(mkfs_cur_target_dir)/www/luci-static/resources"; \
+	@set -e; d="$(call mkfs_target_dir,$(target_params))/www/luci-static/resources"; \
 		if [ -d "$$d" ]; then \
 			test ! -L "$$d/firmware-build-time.json"; \
 			stamp="$$(date -u +%s)"; \
