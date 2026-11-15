@@ -140,16 +140,16 @@ Signed-off-by: Felix Fietkau <nbd@nbd.name>
  			       HOSTAPD_LEVEL_DEBUG,
 --- a/src/ap/sta_info.c
 +++ b/src/ap/sta_info.c
-@@ -376,6 +376,8 @@
- 	wpabuf_free(sta->assoc_ie_taxonomy);
- 	sta->assoc_ie_taxonomy = NULL;
+@@ -475,6 +475,8 @@ void ap_free_sta(struct hostapd_data *ha
+ 	sta->assoc_frame_taxonomy = NULL;
  #endif /* CONFIG_TAXONOMY */
-+
-+	ap_sta_clear_assoc_req(sta);
  
++	ap_sta_clear_assoc_req(sta);
++
  	ht40_intolerant_remove(hapd->iface, sta);
  
-@@ -1798,6 +1800,15 @@
+ #ifdef CONFIG_P2P
+@@ -1905,15 +1907,25 @@ const u8 * ap_sta_wpa_get_dpp_pkhash(str
  }
  
  
@@ -165,14 +165,18 @@ Signed-off-by: Felix Fietkau <nbd@nbd.name>
  bool ap_sta_set_authorized_flag(struct hostapd_data *hapd, struct sta_info *sta,
  				int authorized)
  {
-@@ -1816,6 +1827,7 @@
- 		}
- #endif /* CONFIG_IEEE80211BE */
+ 	if (!!authorized == !!(sta->flags & WLAN_STA_AUTHORIZED))
+ 		return false;
+ 
+-	if (authorized)
++	if (authorized) {
  		sta->flags |= WLAN_STA_AUTHORIZED;
+-	else
 +		ap_sta_clear_assoc_req(sta);
- 	} else {
++	} else
  		sta->flags &= ~WLAN_STA_AUTHORIZED;
- 	}
+ 
+ 	return true;
 --- a/src/ap/sta_info.h
 +++ b/src/ap/sta_info.h
 @@ -270,6 +270,10 @@ struct sta_info {

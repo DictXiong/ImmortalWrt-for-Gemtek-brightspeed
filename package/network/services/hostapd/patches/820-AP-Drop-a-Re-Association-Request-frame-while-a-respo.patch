@@ -40,8 +40,8 @@ Signed-off-by: Felix Fietkau <nbd@nbd.name>
 ---
 --- a/src/ap/ieee802_11.c
 +++ b/src/ap/ieee802_11.c
-@@ -4257,6 +4257,37 @@
- #endif /* CONFIG_PASN */
+@@ -4257,6 +4257,37 @@ static const u8 * auth_peer_link_addr(st
+ #endif /* CONFIG_IEEE80211BE */
  
  
 +/* Bounds the wait for a TX status that the driver never reports */

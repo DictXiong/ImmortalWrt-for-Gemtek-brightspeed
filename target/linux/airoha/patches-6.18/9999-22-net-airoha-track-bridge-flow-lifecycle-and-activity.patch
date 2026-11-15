@@ -14,7 +14,7 @@ It has not been reviewed line by line by a human.
 ---
 --- a/drivers/net/ethernet/airoha/airoha_eth.h
 +++ b/drivers/net/ethernet/airoha/airoha_eth.h
-@@ -708,6 +708,17 @@
+@@ -736,6 +736,17 @@
  #define AIROHA_RXD4_PPE_CPU_REASON	GENMASK(20, 16)
  #define AIROHA_RXD4_FOE_ENTRY		GENMASK(15, 0)
  
@@ -32,7 +32,7 @@ It has not been reviewed line by line by a human.
  struct airoha_ppe {
  	struct airoha_ppe_dev dev;
  	struct airoha_eth *eth;
-@@ -716,6 +727,11 @@
+@@ -744,6 +755,11 @@
  	dma_addr_t foe_dma;
  
  	struct rhashtable l2_flows;
@@ -46,16 +46,16 @@ It has not been reviewed line by line by a human.
  	u16 *foe_check_time;
 --- a/drivers/net/ethernet/airoha/airoha_ppe.c
 +++ b/drivers/net/ethernet/airoha/airoha_ppe.c
-@@ -14,6 +14,8 @@
+@@ -17,6 +17,8 @@
  #include <net/ipv6.h>
  #include <linux/if_bridge.h>
  #include <linux/netfilter_bridge.h>
 +#include <linux/bitmap.h>
 +#include <net/switchdev.h>
- #include <linux/if_vlan.h>
- #include <linux/if_pppox.h>
  #include <net/pkt_cls.h>
-@@ -928,6 +930,7 @@
+ #include <net/route.h>
+ 
+@@ -1024,6 +1026,7 @@
  	e->ib1 &= ~AIROHA_FOE_IB1_BIND_TIMESTAMP;
  	e->ib1 |= FIELD_PREP(AIROHA_FOE_IB1_BIND_TIMESTAMP, ts);
  	hwe->ib1 = e->ib1;
@@ -63,7 +63,7 @@ It has not been reviewed line by line by a human.
  
  	rcu_read_lock();
  
-@@ -1147,6 +1150,174 @@
+@@ -1325,6 +1328,174 @@
  }
  EXPORT_SYMBOL_GPL(airoha_ppe_mc_get_origdev);
  #endif
@@ -238,7 +238,7 @@ It has not been reviewed line by line by a human.
  
  static void airoha_ppe_foe_remove_flow(struct airoha_ppe *ppe,
  				       struct airoha_flow_table_entry *e)
-@@ -1387,7 +1558,8 @@
+@@ -1565,7 +1736,8 @@
  static bool
  airoha_ppe_foe_prepare_bridge_subflow(struct airoha_ppe *ppe,
  				      struct sk_buff *skb,
@@ -248,7 +248,7 @@ It has not been reviewed line by line by a human.
  {
  	struct net_device_path_stack stack;
  	struct net_device_path_ctx ctx = {};
-@@ -1451,6 +1623,12 @@
+@@ -1629,6 +1801,12 @@
  		ctx.num_vlans = 1;
  	}
  
@@ -258,10 +258,10 @@ It has not been reviewed line by line by a human.
 +	binding->vid = ctx.num_vlans ? ctx.vlan[0].id : 0;
 +	ether_addr_copy(binding->source, eh->h_source);
 +	ether_addr_copy(binding->destination, eh->h_dest);
- 	err = __dev_fill_forward_path(&ctx, eh->h_dest, &stack);
+ 	ether_addr_copy(ctx.daddr, eh->h_dest);
+ 	err = dev_fill_forward_path(&ctx, &stack);
  	if (err || stack.num_paths < 2 ||
- 	    stack.path[0].type != DEV_PATH_BRIDGE) {
-@@ -1482,6 +1660,7 @@
+@@ -1661,6 +1839,7 @@
  		dev_put(master);
  		return false;
  	}
@@ -269,7 +269,7 @@ It has not been reviewed line by line by a human.
  	dev_hold(egress);
  	rcu_read_unlock();
  
-@@ -1524,6 +1703,8 @@
+@@ -1703,6 +1882,8 @@
  					u32 hash, bool rx_wlan)
  {
  	struct airoha_foe_entry bridge_hwe = {};
@@ -278,7 +278,7 @@ It has not been reviewed line by line by a human.
  	struct airoha_flow_table_entry *e;
  	struct airoha_foe_bridge br = {};
  	struct airoha_foe_entry *hwe;
-@@ -1533,10 +1714,11 @@
+@@ -1712,10 +1893,11 @@
  	bool local = airoha_ppe_foe_skb_is_local(skb);
  	struct hlist_node *n;
  	u32 index, state;
@@ -291,7 +291,7 @@ It has not been reviewed line by line by a human.
  
  	spin_lock_bh(&ppe_lock);
  
-@@ -1547,6 +1729,10 @@
+@@ -1726,6 +1908,10 @@
  	state = FIELD_GET(AIROHA_FOE_IB1_BIND_STATE, hwe->ib1);
  	if (state == AIROHA_FOE_STATE_BIND)
  		goto unlock;
@@ -302,7 +302,7 @@ It has not been reviewed line by line by a human.
  
  	native_l2b = airoha_is_7581(ppe->eth) &&
  		FIELD_GET(AIROHA_FOE_IB1_BIND_PACKET_TYPE, hwe->ib1) ==
-@@ -1579,7 +1765,7 @@
+@@ -1758,7 +1944,7 @@
  	}
  
  	if (commit_done)
@@ -311,7 +311,7 @@ It has not been reviewed line by line by a human.
  	if (local)
  		goto unlock;
  
-@@ -1587,10 +1773,23 @@
+@@ -1766,10 +1952,23 @@
  	airoha_ppe_foe_set_bridge_addrs(&br, eth_hdr(skb));
  	e = rhashtable_lookup_fast(&ppe->l2_flows, &br,
  				   airoha_l2_flow_table_params);
@@ -339,7 +339,7 @@ It has not been reviewed line by line by a human.
  unlock:
  	spin_unlock_bh(&ppe_lock);
  }
-@@ -2277,6 +2476,14 @@
+@@ -2558,6 +2757,14 @@
  	eth->ppe = ppe;
  
  	ppe_num_entries = airoha_ppe_get_total_num_entries(ppe);
@@ -354,7 +354,7 @@ It has not been reviewed line by line by a human.
  	foe_size = ppe_num_entries * sizeof(struct airoha_foe_entry);
  	ppe->foe = dmam_alloc_coherent(eth->dev, foe_size, &ppe->foe_dma,
  				       GFP_KERNEL);
-@@ -2317,12 +2524,24 @@
+@@ -2598,12 +2805,24 @@
  	if (err)
  		goto error_flow_table_destroy;
  
@@ -380,7 +380,7 @@ It has not been reviewed line by line by a human.
  error_l2_flow_table_destroy:
  	rhashtable_destroy(&ppe->l2_flows);
  error_flow_table_destroy:
-@@ -2335,6 +2554,8 @@
+@@ -2616,6 +2835,8 @@
  {
  	struct airoha_npu *npu;
  

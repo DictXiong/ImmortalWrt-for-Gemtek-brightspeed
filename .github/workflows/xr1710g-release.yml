@@ -2,7 +2,7 @@ name: Build XR1710G Full roles
 
 on:
   push:
-    branches: [dicttech/xr1710g-ap]
+    branches: [master]
   workflow_dispatch:
     inputs:
       wrtix_repository:

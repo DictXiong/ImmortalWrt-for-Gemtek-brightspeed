@@ -1,0 +1,69 @@
+name: Sync Upstream ImmortalWrt
+
+on:
+  schedule:
+    - cron: '0 19 */3 * *'
+  workflow_dispatch:
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  sync-upstream:
+    # Self-hosted runner on alex@10.10.30.6: GitHub-hosted minutes for this
+    # private repo are exhausted, self-hosted runners are not metered.
+    runs-on: [self-hosted, linux, x64]
+    env:
+      # Persistent clone owned by this job. It only ever holds tracked sources;
+      # the build artifacts of this repo live in a separate tree, so nothing
+      # generated can reach the sync commit.
+      SYNC_DIR: /home/alex/ci/sync-main
+      UPSTREAM_URL: https://github.com/immortalwrt/immortalwrt.git
+    steps:
+      - name: Sync upstream master into main
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_URL: https://github.com/${{ github.repository }}.git
+        run: |
+          set -euo pipefail
+          AUTH="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
+          ghgit() { git -c "http.https://github.com/.extraheader=$AUTH" "$@"; }
+
+          mkdir -p "$(dirname "$SYNC_DIR")"
+          if [ ! -d "$SYNC_DIR/.git" ]; then
+            echo "== seeding $SYNC_DIR (full clone, slow path) =="
+            ghgit clone --no-single-branch "$REPO_URL" "$SYNC_DIR"
+          fi
+
+          cd "$SYNC_DIR"
+          git remote set-url origin "$REPO_URL"
+          ghgit fetch --prune --no-tags origin '+refs/heads/*:refs/remotes/origin/*'
+          git checkout --force -B main origin/main
+          git reset --hard origin/main
+          git clean -ffdxq
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+          git remote add upstream "$UPSTREAM_URL" 2>/dev/null ||
+            git remote set-url upstream "$UPSTREAM_URL"
+          git fetch --no-tags upstream master
+
+          if git merge-base --is-ancestor upstream/master HEAD; then
+            echo "No upstream updates (main $(git rev-parse --short HEAD), upstream $(git rev-parse --short upstream/master))"
+            exit 0
+          fi
+
+          echo "== merging upstream/master $(git rev-parse --short upstream/master) into main $(git rev-parse --short HEAD)"
+          if ! git merge --no-ff --no-edit -m "Merge upstream immortalwrt/immortalwrt into main" upstream/master; then
+            echo "::error::Merge conflicts need manual resolution"
+            git diff --name-only --diff-filter=U
+            exit 1
+          fi
+
+          echo "== pushing $(git rev-parse --short HEAD) to main =="
+          ghgit push origin HEAD:main

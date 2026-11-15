@@ -13,7 +13,7 @@ It has not been reviewed line by line by a human.
 ---
 --- a/include/linux/if_bridge.h
 +++ b/include/linux/if_bridge.h
-@@ -180,6 +180,7 @@
+@@ -193,6 +193,7 @@
  void br_fdb_clear_offload(const struct net_device *dev, u16 vid);
  bool br_port_flag_is_set(const struct net_device *dev, unsigned long flag);
  u8 br_port_get_stp_state(const struct net_device *dev);
@@ -21,7 +21,7 @@ It has not been reviewed line by line by a human.
  clock_t br_get_ageing_time(const struct net_device *br_dev);
  #else
  static inline struct net_device *
-@@ -205,6 +206,11 @@
+@@ -218,6 +219,11 @@
  	return BR_STATE_DISABLED;
  }
  
@@ -53,15 +53,15 @@ It has not been reviewed line by line by a human.
  struct net_bridge_port *br_get_port(struct net_bridge *br, u16 port_no)
 --- a/drivers/net/ethernet/airoha/airoha_ppe.c
 +++ b/drivers/net/ethernet/airoha/airoha_ppe.c
-@@ -13,6 +13,7 @@
+@@ -16,6 +16,7 @@
  #include <linux/rhashtable.h>
  #include <net/ipv6.h>
  #include <linux/if_bridge.h>
 +#include <linux/netfilter_bridge.h>
- #include <linux/if_vlan.h>
- #include <linux/if_pppox.h>
  #include <net/pkt_cls.h>
-@@ -1366,6 +1367,23 @@
+ #include <net/route.h>
+ 
+@@ -1544,6 +1545,23 @@
  	return master;
  }
  
@@ -85,7 +85,7 @@ It has not been reviewed line by line by a human.
  static bool
  airoha_ppe_foe_prepare_bridge_subflow(struct airoha_ppe *ppe,
  				      struct sk_buff *skb,
-@@ -1376,7 +1394,7 @@
+@@ -1554,7 +1572,7 @@
  	struct ethhdr *eh = eth_hdr(skb);
  	struct vlan_ethhdr *veh;
  	struct airoha_flow_data data = {};
@@ -94,7 +94,7 @@ It has not been reviewed line by line by a human.
  	u16 vid, proto;
  	int err, i;
  
-@@ -1398,6 +1416,12 @@
+@@ -1576,6 +1594,12 @@
  		return false;
  
  	rcu_read_lock();
@@ -107,7 +107,7 @@ It has not been reviewed line by line by a human.
  	ctx.dev = master;
  	if (is_vlan_dev(skb->dev)) {
  		vid = vlan_dev_vlan_id(skb->dev);
-@@ -1420,8 +1444,7 @@
+@@ -1598,8 +1622,7 @@
  			ctx.num_vlans = 1;
  		}
  	} else if (br_vlan_enabled(master) &&
@@ -117,7 +117,7 @@ It has not been reviewed line by line by a human.
  		   !br_vlan_get_proto(master, &proto)) {
  		ctx.vlan[0].id = vid;
  		ctx.vlan[0].proto = htons(proto);
-@@ -1447,7 +1470,14 @@
+@@ -1626,7 +1649,14 @@
  	 * GDM netdev, or a DSA user port.
  	 */
  	egress = (struct net_device *)stack.path[1].dev;

@@ -1,50 +1,25 @@
 From: Dict Xiong <me@dxng.cn>
-Subject: [PATCH] net: pcs: airoha: calibrate pre-E2 PON PCS in USXGMII mode
+Subject: [PATCH] net: pcs: airoha: keep PON manual calibration in USXGMII mode
 
-On an XR1710G with AN7581 E1 silicon, the external WAN PHY negotiates
-2.5Gbps but the PON PCS used for its USXGMII connection never obtains
-block lock. Manual RX calibration is enabled for the ETH PCS only.
+The upstream PCS sequence now enables manual RX calibration for ETH and
+PON SerDes through E2 silicon, with PON RX-lock recovery. Keep those
+changes and the updated crossing-search calibration sequence.
 
-Read the existing pre-E2 calibration requirement for the PON PCS too,
-but consume it only for USXGMII Ethernet links. Preserve the existing
-ETH policy, PRODUCT_ID < 2 threshold and optical PON calibration paths.
-Do not add the separate PON RX-lock recovery callback.
+Retain the product guard from the original pre-E2 PON fix: only consume
+the PON manual-calibration flag for USXGMII Ethernet links. Optical PON
+modes retain their separate calibration paths. The existing ETH policy
+and upstream revision threshold are unchanged.
 
-The PON enablement is inspired by the related YYH implementation by
-Gilly and Yanghan Ye. This is a scoped adaptation, not a direct
-cherry-pick of its E2 calibration and recovery changes.
-
-Enabling this branch for PON USXGMII in the original 6.18.55 kernel
-restored the E1 WAN link. Runtime tests covered warm and physical cold
-boots, a short peer interface down/up, and native/VID192 IPv4/IPv6
-reachability. A kernel rebuilt with this source change has not yet been
-boot-tested; other silicon revisions, optical modes and peak throughput
-remain untested.
+The PON enablement was inspired by the related YYH implementation by
+Gilly and Yanghan Ye; this guard remains a scoped adaptation.
 
 Link: https://github.com/YYH2913/openwrt/commit/fa1edae89eb8765ff6a773a5172bd706a1306503
 Signed-off-by: Dict Xiong <me@dxng.cn>
 Assisted-by: Codex:GPT-6
---- a/drivers/net/pcs/airoha/pcs-airoha-common.c
-+++ b/drivers/net/pcs/airoha/pcs-airoha-common.c
-@@ -1578,11 +1578,11 @@
- 	if (IS_ERR(priv->xfi_rst))
- 		return dev_err_probe(dev, PTR_ERR(priv->xfi_rst), "failed to get xfi reset lines\n");
- 
--	/* For Ethernet PCS, read the AN7581 SoC revision to check if
--	 * manual rx calibration is needed. This is only limited to
--	 * any SoC revision before E2.
-+	/* Read the AN7581 revision for pre-E2 manual RX calibration.
-+	 * PON calibration is restricted to USXGMII during bring-up.
- 	 */
--	if (device_is_compatible(dev, "airoha,an7581-pcs-eth")) {
-+	if (device_is_compatible(dev, "airoha,an7581-pcs-eth") ||
-+	    device_is_compatible(dev, "airoha,an7581-pcs-pon")) {
- 		u32 val;
- 
- 		ret = regmap_read(priv->scu, AIROHA_SCU_PDIDR, &val);
+---
 --- a/drivers/net/pcs/airoha/pcs-an7581.c
 +++ b/drivers/net/pcs/airoha/pcs-an7581.c
-@@ -3219,8 +3219,14 @@
+@@ -3347,8 +3347,14 @@
  				   int index, phy_interface_t interface)
  {
  	struct regmap *pcs_pma = priv->pcs_pma[index];
@@ -59,7 +34,7 @@ Assisted-by: Codex:GPT-6
  
  	an7581_pcs_tx_bringup(priv, index, interface);
  	an7581_pcs_rx_bringup(priv, index, interface);
-@@ -3230,7 +3236,7 @@
+@@ -3358,7 +3364,7 @@
  	usleep_range(100, 200);
  
  retry_calibration:
@@ -68,9 +43,9 @@ Assisted-by: Codex:GPT-6
  
  	/* Global reset clear */
  	regmap_update_bits(pcs_pma, AIROHA_PCS_PMA_SW_RST_SET,
-@@ -3272,7 +3278,7 @@
- 	/* Manual RX calibration is required only for SoC before E2
- 	 * revision. E2+ SoC autocalibrate RX and only CDR reset is needed.
+@@ -3400,7 +3406,7 @@
+ 	/* Manual RX calibration is required for SoC revisions through E2.
+ 	 * E3+ SoCs autocalibrate RX and only CDR reset is needed.
  	 */
 -	if (!priv->manual_rx_calib)
 +	if (!manual_rx_calib)
