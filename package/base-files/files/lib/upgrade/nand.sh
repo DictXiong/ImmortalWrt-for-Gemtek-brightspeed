@@ -251,6 +251,10 @@ nand_upgrade_prepare_ubi() {
 		fi
 	fi
 
+	if type platform_reserve_nand_state >/dev/null 2>&1; then
+		platform_reserve_nand_state "$data_ubidev" || return 1
+	fi
+
 	# create rootfs_data vol for non-ubifs rootfs
 	if [ "$rootfs_type" != "ubifs" ]; then
 		local rootfs_data_size_param="-m"

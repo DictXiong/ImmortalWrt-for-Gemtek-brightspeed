@@ -1,0 +1,143 @@
+--- a/tools/fit_check_sign.c
++++ b/tools/fit_check_sign.c
+@@ -21,14 +21,93 @@
+ #include "mkimage.h"
+ #include "fit_common.h"
+ #include <image.h>
++#include <linux/libfdt.h>
+ #include <u-boot/crc.h>
++
++/* A distinct result keeps unmarked third-party FITs on the old upgrade path. */
++#define XR_RECOVERY_UNMARKED 2
++
++static int xr_recovery_fit(const void *fit, size_t file_size)
++{
++	const fdt32_t *protocol;
++	const char *id, *selected;
++	const void *data, *dtb = NULL;
++	size_t size, dtb_size = 0;
++	int configs, config, images, fdt, node, protocol_len, id_len, default_len, i;
++
++	if (fdt_check_full(fit, file_size))
++		return EXIT_FAILURE;
++
++	configs = fdt_path_offset(fit, "/configurations");
++	if (configs < 0)
++		return XR_RECOVERY_UNMARKED;
++	config = fdt_subnode_offset(fit, configs, "config-1");
++	if (config < 0)
++		return XR_RECOVERY_UNMARKED;
++
++	protocol = fdt_getprop(fit, config, "dictxiong,boot-recovery-protocol",
++			       &protocol_len);
++	id = fdt_getprop(fit, config, "dictxiong,boot-recovery-image", &id_len);
++	if (!protocol && !id && protocol_len == -FDT_ERR_NOTFOUND &&
++	    id_len == -FDT_ERR_NOTFOUND)
++		return XR_RECOVERY_UNMARKED;
++	selected = fdt_getprop(fit, configs, "default", &default_len);
++	if (!protocol || protocol_len != sizeof(*protocol) ||
++	    fdt32_to_cpu(*protocol) != 1 || !id || id_len != 65 || id[64] ||
++	    !selected || default_len != sizeof("config-1") ||
++	    memcmp(selected, "config-1", sizeof("config-1")))
++		return EXIT_FAILURE;
++
++	for (i = 0; i < 64; i++) {
++		if ((id[i] < '0' || id[i] > '9') && (id[i] < 'a' || id[i] > 'f'))
++			return EXIT_FAILURE;
++	}
++
++	images = fdt_path_offset(fit, "/images");
++	fdt = fit_conf_get_prop_node(fit, config, "fdt", IH_PHASE_NONE);
++	if (images < 0 || fdt < 0)
++		return EXIT_FAILURE;
++
++	/* Check mapped-file bounds before the host verifier hashes each image. */
++	fdt_for_each_subnode(node, fit, images) {
++		uintptr_t offset;
++		const char * const cells[] = {
++			"data-position", "data-offset", "data-size"
++		};
++
++		for (i = 0; i < ARRAY_SIZE(cells); i++) {
++			int len;
++			const void *p = fdt_getprop(fit, node, cells[i], &len);
++
++			if (p ? len != sizeof(fdt32_t) : len != -FDT_ERR_NOTFOUND)
++				return EXIT_FAILURE;
++		}
++		if (fit_image_get_data(fit, node, &data, &size))
++			return EXIT_FAILURE;
++		offset = (uintptr_t)data - (uintptr_t)fit;
++		if (offset > file_size || size > file_size - offset)
++			return EXIT_FAILURE;
++		if (node == fdt) {
++			dtb = data;
++			dtb_size = size;
++		}
++	}
++	if (!dtb || fdt_check_full(dtb, dtb_size) ||
++	    fdt_node_check_compatible(dtb, 0, "gemtek,xr1710g") ||
++	    !fdt_node_check_compatible(dtb, 0, "gemtek,xr1710g-ubi"))
++		return EXIT_FAILURE;
++
++	return EXIT_SUCCESS;
++}
+ 
+ static void usage(char *cmdname)
+ {
+-	fprintf(stderr, "Usage: %s -f fit file -k key file -c config name\n"
++	fprintf(stderr, "Usage: %s -f fit file -k key file -c config name [-R]\n"
+ 			 "          -f ==> set fit file which should be checked'\n"
+ 			 "          -k ==> set key .dtb file which contains the key'\n"
+-			 "          -c ==> set the configuration name'\n",
++			 "          -c ==> set the configuration name'\n"
++			 "          -R ==> require an XR1710G legacy AP recovery FIT"
++			 " (exit 2 if unmarked)\n",
+ 		cmdname);
+ 	exit(EXIT_FAILURE);
+ }
+@@ -46,11 +125,12 @@
+ 	char cmdname[256];
+ 	int ret;
+ 	void *key_blob = NULL;
++	bool xr_recovery = false;
+ 	int c;
+ 
+ 	strncpy(cmdname, *argv, sizeof(cmdname) - 1);
+ 	cmdname[sizeof(cmdname) - 1] = '\0';
+-	while ((c = getopt(argc, argv, "f:k:c:")) != -1)
++	while ((c = getopt(argc, argv, "f:k:c:R")) != -1)
+ 		switch (c) {
+ 		case 'f':
+ 			fdtfile = optarg;
+@@ -60,6 +140,9 @@
+ 			break;
+ 		case 'c':
+ 			config_name = optarg;
++			break;
++		case 'R':
++			xr_recovery = true;
+ 			break;
+ 		default:
+ 			usage(cmdname);
+@@ -79,6 +162,12 @@
+ 		if (kfd < 0)
+ 			return EXIT_FAILURE;
+ 	}
++	if (xr_recovery) {
++		ret = xr_recovery_fit(fit_blob, fsbuf.st_size);
++		if (ret != EXIT_SUCCESS)
++			goto out;
++		config_name = "config-1";
++	}
+ 	image_set_host_blob(key_blob);
+ 	ret = fit_check_sign(fit_blob, key_blob, config_name);
+ 	if (!ret) {
+@@ -89,6 +178,7 @@
+ 		fprintf(stderr, "Signature check bad (error %d)\n", ret);
+ 	}
+ 
++out:
+ 	(void) munmap((void *)fit_blob, fsbuf.st_size);
+ 
+ 	if (key_blob)

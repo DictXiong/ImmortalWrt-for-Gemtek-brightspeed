@@ -41,6 +41,9 @@ platform_check_image() {
 	[ "$#" -gt 1 ] && return 1
 
 	case "$board" in
+	gemtek,xr1710g)
+		xr1710g_boot_state_check_upgrade "$1" || return 74
+		;;
 	nokia,xg-040g-md)
 		nand_do_platform_check "$board" "$1"
 		return $?
@@ -71,6 +74,9 @@ platform_do_upgrade() {
 	local board=$(board_name)
 
 	case "$board" in
+	gemtek,xr1710g)
+		xr1710g_boot_state_check_upgrade "$1" && fit_do_upgrade "$1"
+		;;
 		gemtek,xg2010g-ubi|\
 		gemtek,xg2010g-2g-ubi|\
 		gemtek,xg2010g-2g|\
@@ -80,8 +86,7 @@ platform_do_upgrade() {
 			;;
 		gemtek,w1700k-ubi|\
 		gemtek,xg2010g|\
-		gemtek,xr1710g|\
-		nokia,xg-040g-md-ubi|\
+			nokia,xg-040g-md-ubi|\
 		nokia,xg-040g-tf-ubi|\
 		quantum,q1000k-ubi)
 			case "$board" in
