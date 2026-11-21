@@ -5,7 +5,9 @@ that path unless bridge hairpin is enabled. Resolve physical ingress
 through VLAN and br_netfilter contexts and reject unknown or disabled
 bridge ports. Ordinary cross-port and permitted wireless hairpin paths
 continue to use PPE. Add an RCU-safe STP reader for the RX path,
-preserving the existing RTNL-only bridge API.
+preserving the existing RTNL-only bridge API. Respect isolation between
+bridge ports, and apply standalone isolation changes synchronously
+on a down port so enablement cannot race switchdev programming.
 
 This file was generated entirely by AI.
 It has not been reviewed line by line by a human.
@@ -117,7 +119,7 @@ It has not been reviewed line by line by a human.
  		   !br_vlan_get_proto(master, &proto)) {
  		ctx.vlan[0].id = vid;
  		ctx.vlan[0].proto = htons(proto);
-@@ -1626,7 +1649,14 @@
+@@ -1626,7 +1649,16 @@
  	 * GDM netdev, or a DSA user port.
  	 */
  	egress = (struct net_device *)stack.path[1].dev;
@@ -128,8 +130,29 @@ It has not been reviewed line by line by a human.
 +	if (!egress ||
 +	    (egress == ingress &&
 +	     !br_port_flag_is_set(ingress, BR_HAIRPIN_MODE)) ||
++	    (br_port_flag_is_set(ingress, BR_ISOLATED) &&
++	     br_port_flag_is_set(egress, BR_ISOLATED)) ||
 +	    br_port_get_stp_state_rcu(ingress) != BR_STATE_FORWARDING ||
 +	    br_port_get_stp_state_rcu(egress) != BR_STATE_FORWARDING) {
  		rcu_read_unlock();
  		dev_put(master);
  		return false;
+--- a/net/bridge/br_switchdev.c
++++ b/net/bridge/br_switchdev.c
+@@ -112,9 +112,15 @@
+ 	}
+ 
+ 	attr.id = SWITCHDEV_ATTR_ID_PORT_BRIDGE_FLAGS;
+-	attr.flags = SWITCHDEV_F_DEFER;
++	/* A down port can be enabled as soon as its isolation is acknowledged. */
++	if (mask == BR_ISOLATED && !netif_running(p->dev))
++		switchdev_deferred_process();
++	else
++		attr.flags = SWITCHDEV_F_DEFER;
+ 
+ 	err = switchdev_port_attr_set(p->dev, &attr, extack);
++	if (!(attr.flags & SWITCHDEV_F_DEFER) && err == -EOPNOTSUPP)
++		return 0;
+ 	if (err) {
+ 		NL_SET_ERR_MSG_WEAK_MOD(extack,
+ 					"error setting offload flag on port");

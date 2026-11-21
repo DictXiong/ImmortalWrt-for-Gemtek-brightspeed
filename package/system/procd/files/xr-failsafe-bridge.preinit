@@ -1,0 +1,139 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+. /lib/functions/xr-failsafe-network.sh
+
+xr_failsafe_join_port() {
+	local bridge_dev="$1" port="$2"
+
+	[ -e "/sys/class/net/$port" ] && [ ! -e "/sys/class/net/$port/master" ] &&
+		ip link set dev "$port" down &&
+		ip link set dev "$port" master "$bridge_dev" &&
+		bridge link set dev "$port" isolated on &&
+		[ -e "/sys/class/net/$bridge_dev/brif/$port" ] &&
+		[ "$(cat "/sys/class/net/$port/brport/isolated")" = 1 ] &&
+		ip link set dev "$port" up
+}
+
+xr_failsafe_leave_port() {
+	local port="$2" member="/sys/class/net/$1/brif/$2"
+
+	[ -e "$member" ] || return 0
+	ip link set dev "$port" down
+	ip link set dev "$port" nomaster
+	[ ! -e "$member" ]
+}
+
+xr_failsafe_close_bridge() {
+	local bridge_dev="$1" member
+
+	[ -e "/sys/class/net/$bridge_dev" ] || return 0
+	ip link set dev "$bridge_dev" down
+	ip -4 address flush dev "$bridge_dev" to 192.168.1.1/32
+	for member in "/sys/class/net/$bridge_dev/brif/"*; do
+		[ -e "$member" ] && xr_failsafe_leave_port "$bridge_dev" "${member##*/}"
+	done
+	ip link del dev "$bridge_dev"
+	[ ! -e "/sys/class/net/$bridge_dev" ] && return 0
+	printf '%s\n' 'XR1710G: cannot remove failed failsafe bridge' >&2
+	return 1
+}
+
+xr_failsafe_release_preinit_address() {
+	local original="$1" owner
+
+	# Query the address globally so failure of one interface lookup cannot
+	# block unrelated ports. Do not move addresses from unknown layouts.
+	owner="$(xr_failsafe_address_owner)" || return 1
+	[ -n "$owner" ] || return 0
+	xr_failsafe_independent_port "$original" &&
+		[ "$owner" = "$original 192.168.1.1/24" ] || return 1
+
+	if ! ip -4 address del 192.168.1.1/24 dev "$original" &&
+	   [ -e "/sys/class/net/$original" ]; then
+		xr_failsafe_independent_port "$original" &&
+			ip link set dev "$original" down &&
+			ip -4 address flush dev "$original" to 192.168.1.1/32 || return 1
+	fi
+
+	owner="$(xr_failsafe_address_owner)" && [ -z "$owner" ]
+}
+
+xr_failsafe_restore_port() {
+	local port="$1" owner
+
+	xr_failsafe_independent_port "$port" || return 1
+	owner="$(xr_failsafe_address_owner)" || return 1
+	case "$owner" in
+		"$port 192.168.1.1/24") ;;
+		'') ip -4 address add 192.168.1.1/24 broadcast 192.168.1.255 dev "$port" || return 1 ;;
+		*) return 1 ;;
+	esac
+	ip link set dev "$port" up && xr_failsafe_single_ready "$port" && return 0
+	ip -4 address del 192.168.1.1/24 dev "$port"
+	return 1
+}
+
+xr_failsafe_bridge() {
+	local bridge_dev=br-xr-rescue original="$pi_ifname" fallback= port mac
+
+	[ "$FAILSAFE" = true ] && xr_failsafe_is_ap &&
+		[ "$pi_ip" = 192.168.1.1 ] && [ "$pi_netmask" = 255.255.255.0 ] || return 0
+	case "$original" in
+		''|wan|lan2|lan3|lan4|br-xr-rescue) ;;
+		*) return 0 ;;
+	esac
+
+	pi_ifname=
+	# Only reuse a bridge previously selected by this hook.
+	if [ -e "/sys/class/net/$bridge_dev" ]; then
+		if [ "$original" = "$bridge_dev" ]; then
+			if xr_failsafe_bridge_ready "$bridge_dev"; then
+				pi_ifname="$bridge_dev"
+			else
+				xr_failsafe_close_bridge "$bridge_dev"
+			fi
+		fi
+		return 0
+	fi
+	xr_failsafe_forwarding_off || return 0
+	xr_failsafe_single_ready "$original" && fallback="$original"
+
+	if ! ip link add name "$bridge_dev" type bridge; then
+		# No address was moved. Never remove a bridge we did not create.
+		[ -n "$fallback" ] && xr_failsafe_single_ready "$fallback" &&
+			pi_ifname="$fallback"
+		return 0
+	fi
+	# Prefer the established rescue MAC when present, otherwise let the
+	# kernel choose from the available bridge members.
+	mac="$(cat /sys/class/net/wan/address 2>/dev/null)" &&
+		[ -n "$mac" ] && ip link set dev "$bridge_dev" address "$mac" || :
+	if xr_failsafe_release_preinit_address "$original" &&
+	   ip -4 address add 192.168.1.1/24 broadcast 192.168.1.255 dev "$bridge_dev" &&
+	   ip link set dev "$bridge_dev" up; then
+		for port in wan lan2 lan3 lan4; do
+			[ -e "/sys/class/net/$port" ] || continue
+			if ! xr_failsafe_join_port "$bridge_dev" "$port"; then
+				printf 'XR1710G: failsafe cannot enable %s\n' "$port" >&2
+				if ! xr_failsafe_leave_port "$bridge_dev" "$port" &&
+				   [ "$(cat "/sys/class/net/$port/brport/isolated")" != 1 ]; then
+					break
+				fi
+			fi
+		done
+		if xr_failsafe_bridge_ready "$bridge_dev"; then
+			pi_ifname="$bridge_dev"
+			return 0
+		fi
+	fi
+
+	if xr_failsafe_close_bridge "$bridge_dev" && [ -n "$fallback" ]; then
+		if xr_failsafe_restore_port "$fallback"; then
+			pi_ifname="$fallback"
+		fi
+	fi
+
+	return 0
+}
+
+boot_hook_add failsafe xr_failsafe_bridge

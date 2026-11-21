@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 
 . /lib/functions.sh
+. /lib/functions/xr-failsafe-network.sh
 . /lib/upgrade/nand.sh
 
 recovery_state_device() {
@@ -25,9 +26,10 @@ rescue_interface="$2"
 rescue_address="$3"
 
 ssh_listening() {
-	netstat -lntp 2>/dev/null | awk -v port="$1" '
+	netstat -lntp 2>/dev/null | awk -v port="$1" -v address="${2:-}" '
 		$6 == "LISTEN" && $7 ~ /^[0-9]+\/dropbear$/ &&
-		$4 !~ /^(127\.|\[?::1\]?:)/ && (port == "" || $4 ~ (":" port "$")) {
+		$4 !~ /^(127\.|\[?::1\]?:)/ && (port == "" || $4 ~ (":" port "$")) &&
+		(address == "" || $4 == ("0.0.0.0:" port) || $4 == (address ":" port)) {
 			found = 1
 		}
 		END { exit !found }
@@ -71,6 +73,14 @@ normal_ready() {
 }
 
 failsafe_ready() {
+	if xr_failsafe_is_ap; then
+		[ "$rescue_address" = 192.168.1.1 ] &&
+			ssh_listening 22 "$rescue_address" || return 1
+		xr_failsafe_bridge_ready "$rescue_interface" ||
+			{ /sbin/xr-boot-recovery waiting normal &&
+			  xr_failsafe_single_ready "$rescue_interface"; }
+		return
+	fi
 	[ -n "$rescue_interface" ] && [ -n "$rescue_address" ] || return 1
 	ip -4 -o addr show dev "$rescue_interface" | awk -v address="$rescue_address" '
 		index($4, address "/") == 1 { found = 1 }

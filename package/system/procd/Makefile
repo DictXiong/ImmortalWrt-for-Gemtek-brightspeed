@@ -138,6 +138,8 @@ define Package/procd/install
 		$(INSTALL_BIN) ./files/reboot-to-uboot $(1)/sbin/; \
 		$(INSTALL_BIN) ./files/xr-boot-recovery.sh $(1)/lib/xr-boot-recovery; \
 		$(INSTALL_BIN) ./files/xr-boot-recovery.init $(1)/etc/init.d/xr-boot-recovery; \
+		$(INSTALL_DATA) ./files/xr-failsafe-network.sh $(1)/lib/functions/; \
+		$(INSTALL_DATA) ./files/xr-failsafe-bridge.preinit $(1)/lib/preinit/09_xr_failsafe_bridge; \
 		$(INSTALL_DATA) ./files/xr-boot-recovery.preinit $(1)/lib/preinit/99_20_xr_boot_recovery; )
 endef
 
