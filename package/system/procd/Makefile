@@ -135,6 +135,7 @@ define Package/procd/install
 	$(if $(XR_BOOT_RECOVERY), \
 		$(INSTALL_DIR) $(1)/etc/init.d $(1)/lib/preinit; \
 		$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/sbin/xr-boot-recovery $(1)/sbin/; \
+		$(INSTALL_BIN) ./files/reboot-to-uboot $(1)/sbin/; \
 		$(INSTALL_BIN) ./files/xr-boot-recovery.sh $(1)/lib/xr-boot-recovery; \
 		$(INSTALL_BIN) ./files/xr-boot-recovery.init $(1)/etc/init.d/xr-boot-recovery; \
 		$(INSTALL_DATA) ./files/xr-boot-recovery.preinit $(1)/lib/preinit/99_20_xr_boot_recovery; )

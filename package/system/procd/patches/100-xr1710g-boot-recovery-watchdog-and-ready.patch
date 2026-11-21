@@ -259,7 +259,7 @@
 +#endif
 --- /dev/null
 +++ b/xr-boot-recovery.c
-@@ -0,0 +1,193 @@
+@@ -0,0 +1,266 @@
 +/* SPDX-License-Identifier: LGPL-2.1-only */
 +
 +#include <mtd/ubi-user.h>
@@ -273,6 +273,7 @@
 +#define XR_RECORD_SIZE 48
 +#define XR_READY 1
 +#define XR_FAILSAFE 1
++#define XR_ONE_SHOT XR_RECOVERY_CHOSEN "-oneshot"
 +
 +static uint32_t read_be32(const uint8_t *p)
 +{
@@ -387,6 +388,70 @@
 +	return verified;
 +}
 +
++static bool oneshot_supported(const struct xr_recovery_boot *boot)
++{
++	uint8_t seq[5];
++	int fd = open(XR_ONE_SHOT, O_RDONLY | O_CLOEXEC);
++	ssize_t len;
++
++	if (fd < 0)
++		return false;
++	len = read(fd, seq, sizeof(seq));
++	close(fd);
++	return len == 4 && read_be32(seq) == boot->seq;
++}
++
++static int reboot_to_uboot(const struct xr_recovery_boot *boot, const char *volume)
++{
++	uint8_t ready[XR_RECORD_SIZE], request[XR_RECORD_SIZE];
++	int fd, result = 1;
++
++	if (geteuid() || boot->mode || !access("/tmp/.failsafe", F_OK) ||
++	    errno != ENOENT || !oneshot_supported(boot)) {
++		fputs("XR1710G: a supported normal boot is required\n", stderr);
++		return 1;
++	}
++	fd = lock_volume(volume);
++	if (fd < 0) {
++		fputs("XR1710G: boot state is not writable or is busy\n", stderr);
++		return 1;
++	}
++	if (pread(fd, ready, sizeof(ready), 0) != sizeof(ready) ||
++	    !record_matches(boot, ready) || ready[7] != XR_READY ||
++	    !record_is(fd, ready)) {
++		fputs("XR1710G: the current boot is not confirmed or a request already exists\n",
++		      stderr);
++		goto out;
++	}
++
++	/* Legacy U-Boot ignores the reserved confirmed-failsafe tuple. */
++	memcpy(request, ready, sizeof(request));
++	request[5] = XR_FAILSAFE;
++	request[6] = 0;
++	write_be32(request + 44, record_crc(request));
++	if (!write_record(fd, request)) {
++		fputs("XR1710G: could not verify the recovery request; reboot not run\n",
++		      stderr);
++	} else if (!system("/sbin/reboot")) {
++		result = 0;
++		goto out;
++	} else {
++		fputs("XR1710G: reboot command failed\n", stderr);
++	}
++
++	/* Keep the same lock and never replace any different new record. */
++	if (record_is(fd, ready) ||
++	    (record_is(fd, request) && write_record(fd, ready))) {
++		fputs("XR1710G: no recovery request remains\n", stderr);
++	} else {
++		fputs("XR1710G: request cancellation unverified; a later boot may enter recovery\n",
++		      stderr);
++	}
++out:
++	close(fd);
++	return result;
++}
++
 +static bool signal_watchdog(const struct xr_recovery_boot *boot)
 +{
 +	char tmp[] = XR_RECOVERY_READY ".XXXXXX";
@@ -418,6 +483,14 @@
 +			return 1;
 +		len = strlen(boot.token) + 1;
 +		return write(STDOUT_FILENO, boot.token, len) != (ssize_t)len;
++	}
++
++	if (argc == 3 && !strcmp(argv[1], "reboot-to-uboot")) {
++		if (!xr_recovery_read_boot(&boot)) {
++			fputs("XR1710G: no current boot-recovery handoff\n", stderr);
++			return 1;
++		}
++		return reboot_to_uboot(&boot, argv[2]);
 +	}
 +
 +	if ((argc != 3 && argc != 4) || !xr_recovery_read_boot(&boot))
