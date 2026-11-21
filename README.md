@@ -4,7 +4,7 @@
 
 [English →](README.en.md) · **简体中文**
 
-[![Build Status](https://img.shields.io/github/actions/workflow/status/naoki66/ImmortalWrt-for-Gemtek-brightspeed/build-firmware.yml?branch=master&label=Build)](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/actions/workflows/build-firmware.yml)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/DictXiong/ImmortalWrt-for-Gemtek-brightspeed/xr1710g-release.yml?branch=master&label=Full%20build)](https://github.com/DictXiong/ImmortalWrt-for-Gemtek-brightspeed/actions/workflows/xr1710g-release.yml)
 [![Upstream](https://img.shields.io/badge/upstream-immortalwrt-blue)](https://github.com/immortalwrt/immortalwrt)
 [![Kernel](https://img.shields.io/badge/kernel-6.18-red)](https://www.kernel.org/)
 [![SoC](https://img.shields.io/badge/SoC-Airoha%20AN7581-orange)]()
@@ -23,15 +23,13 @@
 无线默认关闭，不包含个人公钥、密码、维护地址或私人 AP 策略。
 [双角色发布流程](docs/xr1710g-releases.md)从同一份 Full 源码构建 `gateway` 网关和
 `ap` 接入点两种镜像，共用驱动、软件包与 wrtix，仅默认网络配置不同。
-Fixes 通用修复版已停止维护和新增构建；历史标签及发布附件保留。
-
-`master` 是后续开发主线；维护分支及已有 tags 保留。当前开发版本为 `3.1.1-alpha.1`，不代表正式发布或新基线已通过设备验收。
+Fixes 通用修复版已停止维护和新增构建；历史标签及发布附件保留。主开发分支为 `master`。
 
 ## 速览
 
 | 设备 | 定位 | 种子配置 | 当前启用的 profile | 引导方式 / 状态   |
 |------|------|----------|--------------------|------------------ |
-| XR1710G（原厂 U-Boot 分区 + chainloader） | 10G Wi-Fi 7 路由器 | [`1710.config`](1710.config) | `gemtek_xr1710g` | [naoki66/Gemtek-brightspeed-chainloader](https://github.com/naoki66/Gemtek-brightspeed-chainloader) · [AP 容错配套分支](https://github.com/DictXiong/Gemtek-brightspeed-chainloader/tree/main)   |
+| XR1710G（原厂 U-Boot 分区 + chainloader） | 10G Wi-Fi 7 路由器 | [`1710.config`](1710.config) | `gemtek_xr1710g` | [naoki66/Gemtek-brightspeed-chainloader](https://github.com/naoki66/Gemtek-brightspeed-chainloader) · [Full AP 配套二级 U-Boot](https://github.com/DictXiong/Gemtek-brightspeed-chainloader)   |
 | XR1710G（OpenWrt U-Boot UBI 布局） | 整盘 UBI 引导方案 | [`1710.config`](1710.config) | profile 已定义，种子配置未启用 | **暂未完成：缺少 trueKey**   |
 | XG2010G（1 GiB / 2 GiB 自适应） | XG(S)-PON 网关 | [`2010.config`](2010.config) | `gemtek_xg2010g-ubi` | [naoki66/uboot-an758x](https://github.com/naoki66/uboot-an758x)   |
 | Nokia XG-040G-MD / XG-040G-TF（UBI，512 MiB / 1 GiB 自适应） | 附加设备配置 | [`040.config`](040.config) / [`040-tf.config`](040-tf.config) | 各自独立配置，CI 不提供 | [naoki66/uboot-an758x](https://github.com/naoki66/uboot-an758x)   |
@@ -43,22 +41,13 @@ Fixes 通用修复版已停止维护和新增构建；历史标签及发布附�
 
 ## 目录
 
-[快速开始](#快速开始) · [支持设备](#支持设备) · [XR1710G AP 启动容错](#xr1710g-ap-启动容错) · [首次启动默认设置](#首次启动默认设置) · [构建与发布](#构建与发布) · [刷写与升级注意事项](#刷写与升级注意事项) · [致谢](#致谢) · [许可证](#许可证)
+[快速开始](#快速开始) · [支持设备](#支持设备) · [安装、升级与恢复](#安装升级与恢复) · [首次启动默认设置](#首次启动默认设置) · [构建与发布](#构建与发布) · [刷写与升级注意事项](#刷写与升级注意事项) · [致谢](#致谢) · [许可证](#许可证)
 
 ## 快速开始
 
-**1. 下载并校验镜像。** 打开 [Releases 页面](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/releases)，选择与设备、分区布局完全匹配的 `*-squashfs-sysupgrade.itb`，并下载同批次按配置区分的 `sha256sums-<配置文件名>`。在镜像所在目录执行：
-
-```bash
-sha256sum -c sha256sums-1710.config   # XR1710G
-sha256sum -c sha256sums-2010.config   # XG2010G
-```
-
-Release 同时提供软件包 manifest，可用来确认镜像预装内容；不同构建配置共用同一个 Release 时，请使用与固件对应的校验文件。
-
-**2. 刷写。** 从已有系统升级时，在 LuCI 中打开「系统 → 备份/升级 → 刷写固件」并选择镜像。首次从原厂固件刷入、或改用 UBI 布局时，请先阅读[刷写与升级注意事项](#刷写与升级注意事项)，XG2010G 必须先通过串口确认启动状态并备份原厂分区；XR1710G 需先按[引导方案](#引导方案与完成状态)写入 chainloader，UBI 布局镜像当前不可用。
-
-**3. 首次登录后立即修改凭据。** 默认 `root` 无密码，Wi-Fi 使用出厂 SSID 和统一密码。先设置管理密码，再修改无线密码与区域码，然后到 NPU / 风扇页面确认硬件加速和温控状态。
+1. 确认机型和分区布局。XR1710G Full 在[本仓 Releases](https://github.com/DictXiong/ImmortalWrt-for-Gemtek-brightspeed/releases)选择 **gateway** 或 **ap**，使用[同批发布的校验文件](docs/xr1710g-releases.md)核对镜像。[上游 Releases](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/releases)提供原种子配置的镜像及对应校验文件。
+2. 根据现有引导器和机型选择[安装、升级与恢复](#安装升级与恢复)路径。运行中的 OpenWrt 先通过原生镜像检查，再执行升级。
+3. 首次启动后通过[镜像默认管理地址](#首次启动默认设置)登录，设置 root 密码，检查无线和远程访问配置。
 
 ## 支持设备
 
@@ -89,7 +78,7 @@ Release 同时提供软件包 manifest，可用来确认镜像预装内容；不
 
 | 设备 / 布局 | 引导实现 | 状态 |
 |-------------|----------|------|
-| XR1710G（原厂 U-Boot 分区 + chainloader） | [naoki66/Gemtek-brightspeed-chainloader](https://github.com/naoki66/Gemtek-brightspeed-chainloader) | 当前方案；保留原厂前 6 MiB，在 NAND `0x600000` 写入 1 MiB chainloader 槽位 |
+| XR1710G（原厂 U-Boot 分区 + chainloader） | [二级 U-Boot](https://github.com/DictXiong/Gemtek-brightspeed-chainloader)（[naoki 上游](https://github.com/naoki66/Gemtek-brightspeed-chainloader)） | 当前方案；保留原厂前 6 MiB，在 NAND `0x600000` 写入 1 MiB chainloader 槽位 |
 | XR1710G（OpenWrt U-Boot UBI 布局） | 需从 `0x0` 重建引导区 | **暂未完成：缺少 trueKey**，请勿刷写该布局镜像 |
 | XG2010G（1 GiB / 2 GiB 自适应） | [naoki66/uboot-an758x](https://github.com/naoki66/uboot-an758x)（`xg2010g` / `xg2010g-2g`） | 使用中 |
 | Nokia XG-040G-MD / XG-040G-TF（UBI，512 MiB / 1 GiB 自适应） | [naoki66/uboot-an758x](https://github.com/naoki66/uboot-an758x)（`xg-040g-md` / `xg-040g-tf` 及 `-1g` target） | 使用中 |
@@ -97,27 +86,16 @@ Release 同时提供软件包 manifest，可用来确认镜像预装内容；不
 > [!WARNING]
 > XR1710G 的 OpenWrt U-Boot UBI 布局暂未完成（缺少 trueKey）。当前请只使用「原厂 U-Boot 分区 + chainloader」方案，不要刷写 `gemtek_xr1710g-ubi` 镜像。XG2010G 与 Nokia 设备由 `naoki66/uboot-an758x` 引导，其引导区布局与 chainloader 方案不同，不可混用。
 
-## XR1710G AP 启动容错
+## 安装、升级与恢复
 
-Full Legacy AP 搭配 [DictXiong 的二级 U-Boot](https://github.com/DictXiong/Gemtek-brightspeed-chainloader) 后，支持 **普通启动 → OpenWrt failsafe → U-Boot 网页恢复**。原厂一级和 Legacy NAND 布局继续沿用。容错只在配套启动器识别到带恢复协议标记的 Legacy AP FIT 时启用。Gateway、其他设备与未完成的 XR1710G 全盘 UBI 布局不在适用范围内。
+| 要做什么 | 指南 |
+| --- | --- |
+| 在原厂分区布局上安装 XR1710G Full | [二级 U-Boot 安装与升级](https://github.com/DictXiong/Gemtek-brightspeed-chainloader/blob/main/README.md#安装与升级) |
+| 升级 Full AP，或从旧升级器保留配置迁移 | [Full AP 安装与保留配置](docs/xr1710g-ap-operations.md) |
+| XR1710G AP 故障恢复，或在 OpenWrt 中主动进入网页恢复 | [Full AP 日常维护与恢复](docs/xr1710g-ap-operations.md#日常维护与恢复) |
+| 安装或升级 XG2010G 与 Nokia 配置 | 核对[引导方案](#引导方案与完成状态)与[刷写注意事项](#刷写与升级注意事项)。 |
 
-| 阶段 | 如何进入 | 如何恢复 |
-| --- | --- | --- |
-| 普通启动 | 启动器与 OpenWrt 记录本次启动，OpenWrt 在就绪后确认。连续两次普通启动未确认时，看门狗复位并进入 failsafe。 | 正常运行时沿用原管理地址和配置。 |
-| OpenWrt failsafe | 自动进入，或使用原有的手动 failsafe 方式。 | 直连网线后通过 `192.168.1.1:22` SSH 维护。自动 failsafe 也未确认时，看门狗复位到 U-Boot 网页。 |
-| U-Boot 网页恢复 | 自动降级、按引导仓库说明使用硬件按键，或在已确认的正常系统中以 root 执行一次 `reboot-to-uboot`。 | 打开 `http://192.168.0.1/`。维护完成后可从网页重启。软件请求由配套启动器消费一次。 |
-
-救援访问覆盖 10G WAN、10G LAN 和两个 1G LAN。OpenWrt failsafe 逐口启用并隔离可用端口，U-Boot 自动模式从可用端口提供网页。桥端口隔离只限制设备自身的端口转发。failsafe 提供无需密码的 root SSH，U-Boot 网页可刷写且默认提供 DHCP。请在可信隔离网络或直连环境使用恢复功能，尤其注意自动进入恢复时仍连接的网络。
-
-### 首次安装和保留配置
-
-两条安装路径都先做外部备份。若当前使用其他 U-Boot，先核对它接受的二级升级包、实际写入范围，以及是否会清理引导环境或配置。按当前引导器支持的方式将[配套二级 U-Boot](https://github.com/DictXiong/Gemtek-brightspeed-chainloader/tree/main)写入 Legacy 的 1 MiB 二级槽，保留原厂一级。在隔离网络上通过恢复页核对 build ID，确认后再刷 FIT。
-
-- **全新安装**使用配套二级 U-Boot 的网页恢复。选择 [Full Legacy AP 构建](docs/xr1710g-full.md#building)（`--role ap --layout legacy`）的原始 sysupgrade FIT，并按引导仓库说明操作。网页刷固件会重建系统 UBI，清除现有配置。另请确认已备份设备的原厂数据。
-- **保留配置升级**确认旧系统的原生镜像检查（`sysupgrade -T`）通过，再正常保配置升级。旧升级器可能把全部剩余空间留给 `rootfs_data`，首次启动后先用 `ubinfo -a` 检查 `xr_boot_state` 是动态卷且只占一个 LEB，再执行 `/lib/xr-boot-recovery verify-ready >/dev/null && echo READY`。状态卷有效且显示 READY 时即可结束。仅当新固件已正常启动、状态卷缺失时，才用同一份校验过的 FIT 再做一次正常保配置升级。新升级器会先校验布局和容量，再预留一个 LEB；如状态卷存在但未确认，先检查引导握手或卷状态。
-- **兼容性**正常升级仍以设备和 Legacy 布局匹配为前提。其他 U-Boot 或未标记固件只在原有兼容的组合中按原方式启动。自动容错和一次性入口需要双方支持，请使用未转换设备标识的原始 Legacy AP FIT。
-
-先前的隔离实机验证覆盖普通启动未确认后自动进入 failsafe、WAN 与 10G LAN 上的 SSH 和网页、一次性软件入口与正常回程。四个 failsafe 端口的逐口验证，以及 failsafe 未确认后自动进入网页，使用的是之前的候选版本和专用试验镜像。无状态卷的容量与分配、状态写入失败和单 PHY/QDMA 故障隔离已有离线回放。本文描述的最终配套尚未进行整套实机验证，首次保配置迁移也未做现场复测。
+配套二级 U-Boot、Full Legacy AP 和可写的状态卷可以自动从正常启动切换到 OpenWrt failsafe，再到 U-Boot 网页恢复。AP 指南分别给出三种环境的接入方法。
 
 ## 首次启动默认设置
 
@@ -154,6 +132,8 @@ Full Legacy AP 搭配 [DictXiong 的二级 U-Boot](https://github.com/DictXiong/
 
 ### 本地构建
 
+Full 网关和 AP 按[固定输入和角色说明](docs/xr1710g-full.md#building)构建。以下命令用于上游种子配置。
+
 ```bash
 git clone https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed.git
 cd ImmortalWrt-for-Gemtek-brightspeed
@@ -176,6 +156,8 @@ bash scripts/summarize-build-errors.sh build.log
 
 ### 下载文件
 
+Full 按[双角色发布约定](docs/xr1710g-releases.md#本地构建与配对)命名和核验。下表为上游种子配置的 ITB 文件名。
+
 | 布局 | sysupgrade 文件名 |
 |------|-------------------|
 | XR1710G 原版分区 | `immortalwrt-naoki66-YYYYMMDD-<repo-hash>-airoha-an7581-gemtek_xr1710g-squashfs-sysupgrade.itb` |
@@ -190,7 +172,7 @@ Full 旧布局仍使用各 2 MiB 的 `bootloader`、`uenv`、`dsd`，`chainloade
 
 
 > [!WARNING]
-> **XR1710G 引导**：原厂 U-Boot 分区固件必须配合 [naoki66/Gemtek-brightspeed-chainloader](https://github.com/naoki66/Gemtek-brightspeed-chainloader) 引导（保留原厂前 6 MiB，chainloader 写入 NAND `0x600000`）。OpenWrt U-Boot UBI 布局暂未完成（缺少 trueKey），请勿刷写 `gemtek_xr1710g-ubi` 镜像，它还在测试中。
+> **XR1710G 引导**：原厂 U-Boot 分区固件使用[配套二级引导](https://github.com/DictXiong/Gemtek-brightspeed-chainloader)（保留原厂前 6 MiB，chainloader 写入 NAND `0x600000`）。OpenWrt U-Boot UBI 布局暂未完成（缺少 trueKey），请勿刷写 `gemtek_xr1710g-ubi` 镜像，它还在测试中。
 
 > [!WARNING]
 > **XG2010G 首次刷写**：必须通过串口确认当前启动状态，并完成原厂 NAND/关键分区的只读备份和校验。只允许针对匹配的 `ubi` 分区升级；必须保留 `bootloader`、`uenv`、`dsd` 分区。XG2010G 与 Nokia 设备应使用 [naoki66/uboot-an758x](https://github.com/naoki66/uboot-an758x) 引导，不要和XR1710G混用两套引导布局。

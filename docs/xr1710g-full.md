@@ -1,5 +1,7 @@
 # XR1710G full edition
 
+For AP installation, upgrades and recovery, see the [Full AP operation guide](xr1710g-ap-operations.en.md) or its [Chinese version](xr1710g-ap-operations.md).
+
 The `full` edition combines hardware/driver fixes, LuCI improvements, commonly
 useful command-line tools, `wrtix-agent` and `wrtmesh`. Its `gateway` and `ap`
 build roles use the same source, drivers, packages and wrtix version; only the

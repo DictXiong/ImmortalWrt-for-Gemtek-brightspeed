@@ -4,8 +4,7 @@
 
 **English** · [简体中文 →](README.md)
 
-[![Build Status](https://img.shields.io/github/actions/workflow/status/naoki66/ImmortalWrt-for-Gemtek-brightspeed/build-firmware.yml?branch=master&label=Build)](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/actions/workflows/build-firmware.yml)
-[![Sync Status](https://img.shields.io/github/actions/workflow/status/naoki66/ImmortalWrt-for-Gemtek-brightspeed/sync-upstream.yml?branch=master&label=Sync)](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/actions/workflows/sync-upstream.yml)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/DictXiong/ImmortalWrt-for-Gemtek-brightspeed/xr1710g-release.yml?branch=master&label=Full%20build)](https://github.com/DictXiong/ImmortalWrt-for-Gemtek-brightspeed/actions/workflows/xr1710g-release.yml)
 [![Upstream](https://img.shields.io/badge/upstream-immortalwrt-blue)](https://github.com/immortalwrt/immortalwrt)
 [![Kernel](https://img.shields.io/badge/kernel-6.18-red)](https://www.kernel.org/)
 [![SoC](https://img.shields.io/badge/SoC-Airoha%20AN7581-orange)]()
@@ -13,11 +12,13 @@
 
 > An [ImmortalWrt](https://github.com/immortalwrt/immortalwrt)-based firmware project for the Airoha AN7581 platform. It maintains separate build configs and images for two hardware-isolated Brightspeed/Gemtek devices: the XR1710G (10G Wi-Fi 7 router) and the XG2010G (XG(S)-PON/XE-PON gateway).
 
-**Documentation baseline**: `master` @ `62056707` (verified 2026-11-10). Device profiles, package sets, and feed state are defined by the root-level `*.config` files, [`target/linux/airoha/image/an7581.mk`](target/linux/airoha/image/an7581.mk), and [`feeds.conf.default`](feeds.conf.default). Significant feature, stability, and patch changes are recorded in the [changelog](CHANGELOG.md). The current kernel baseline is `6.18.60` ([`target/linux/generic/kernel-6.18`](target/linux/generic/kernel-6.18)); upstream is merged by a scheduled job, so do not use a pinned commit badge to judge how current a build is.
+Full adds router features, LuCI improvements, command-line tools, optional wrtix management and wired-backhaul roaming. Its gateway and AP images share the same source, drivers and packages. See [Full firmware and defaults](docs/xr1710g-full.md) and the [paired release workflow](docs/xr1710g-releases.md).
+
+The development branch is `master`. This fork integrates naoki `9a70b25731dc` and Linux `6.18.60`. The inherited automated sync workflow is disabled. Historical Fixes releases remain available. See the [integration record](docs/naoki-integration.md) and [changelog](CHANGELOG.md).
 
 ## At a glance
 
-| Device | Role | Seed config | Profile enabled today | Boot scheme / status | Default management URL |
+| Device | Role | Seed config | Profile enabled today | Boot scheme / status | Upstream seed management URL |
 |--------|------|-------------|-----------------------|----------------------|-------------------------|
 | XR1710G (stock U-Boot layout + chainloader) | 10G Wi-Fi 7 router | [`1710.config`](1710.config) | `gemtek_xr1710g` | [naoki66/Gemtek-brightspeed-chainloader](https://github.com/naoki66/Gemtek-brightspeed-chainloader) · [matching AP recovery fork](https://github.com/DictXiong/Gemtek-brightspeed-chainloader/tree/main) | `http://192.168.50.1` |
 | XR1710G (OpenWrt U-Boot UBI layout) | Whole-NAND UBI boot scheme | [`1710.config`](1710.config) | Profile defined, not enabled in the seed | **Not finished: missing trueKey** | `http://192.168.50.1` |
@@ -31,22 +32,13 @@
 
 ## Contents
 
-[Quick start](#quick-start) · [Supported hardware](#supported-hardware) · [XR1710G AP boot recovery](#xr1710g-ap-boot-recovery) · [Factory defaults](#factory-defaults) · [Build and release](#build-and-release) · [Flashing and upgrade caveats](#flashing-and-upgrade-caveats) · [Credits](#credits) · [License](#license)
+[Quick start](#quick-start) · [Supported hardware](#supported-hardware) · [Install, upgrade and recover](#install-upgrade-and-recover) · [Factory defaults](#factory-defaults) · [Build and release](#build-and-release) · [Flashing and upgrade caveats](#flashing-and-upgrade-caveats) · [Credits](#credits) · [License](#license)
 
 ## Quick start
 
-**1. Download and verify an image.** Open the [Releases page](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/releases), pick the `*-squashfs-sysupgrade.itb` that exactly matches your device *and* partition layout, and download the matching per-config `sha256sums-<config>` file from the same release. Run this from the directory containing the images:
-
-```bash
-sha256sum -c sha256sums-1710.config   # XR1710G
-sha256sum -c sha256sums-2010.config   # XG2010G
-```
-
-Each release also ships a package manifest so you can inspect what the image contains. When several build configs share one release, use the checksum file that matches your firmware.
-
-**2. Flash.** To upgrade an existing installation, open LuCI → System → Backup / Flash Firmware → Flash image and select the file. For a first flash from stock firmware, or when switching to the UBI layout, read [Flashing and upgrade caveats](#flashing-and-upgrade-caveats) first. On the XG2010G you must confirm the boot state over serial and back up the stock partitions before proceeding. The XR1710G needs the chainloader written first (see [Boot scheme and status](#boot-scheme-and-status)), and its UBI-layout image is currently unusable.
-
-**3. Change the credentials immediately.** The `root` account has no password and Wi-Fi uses well-known factory SSIDs and a shared default key. Set the admin password, change the wireless keys and regulatory domain, then check hardware offload and thermal status on the NPU and fan pages.
+1. Match the image to the device and partition layout. For XR1710G Full, choose **gateway** or **AP** from [this fork's releases](https://github.com/DictXiong/ImmortalWrt-for-Gemtek-brightspeed/releases) and verify the matching [release assets and checksums](docs/xr1710g-releases.md). The [upstream releases](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/releases) cover the inherited build profiles and their per-config checksums.
+2. Follow [Install, upgrade and recover](#install-upgrade-and-recover) for your device and current bootloader. When upgrading from a working OpenWrt installation, use the native image test before flashing.
+3. On first boot, use the [management address for your image](#factory-defaults), set a root password and review Wi-Fi and remote-access settings.
 
 ## Supported hardware
 
@@ -78,7 +70,7 @@ Each release also ships a package manifest so you can inspect what the image con
 
 | Device / layout | Boot implementation | Status |
 |-----------------|---------------------|--------|
-| XR1710G (stock U-Boot layout + chainloader) | [naoki66/Gemtek-brightspeed-chainloader](https://github.com/naoki66/Gemtek-brightspeed-chainloader) | Current scheme; preserves the stock first 6 MiB and writes a 1 MiB chainloader slot at NAND `0x600000` |
+| XR1710G (stock U-Boot layout + chainloader) | [Second-stage U-Boot](https://github.com/DictXiong/Gemtek-brightspeed-chainloader) ([naoki upstream](https://github.com/naoki66/Gemtek-brightspeed-chainloader)) | Current scheme; preserves the stock first 6 MiB and writes a 1 MiB chainloader slot at NAND `0x600000` |
 | XR1710G (OpenWrt U-Boot UBI layout) | Requires rebuilding the boot area from `0x0` | **Not finished: missing trueKey**; do not flash images for this layout |
 | XG2010G (1 GiB / 2 GiB auto-detect) | [naoki66/uboot-an758x](https://github.com/naoki66/uboot-an758x) (`xg2010g` / `xg2010g-2g`) | In use |
 | Nokia XG-040G-MD / XG-040G-TF (UBI, 512 MiB / 1 GiB auto-detect) | [naoki66/uboot-an758x](https://github.com/naoki66/uboot-an758x) (`xg-040g-md` / `xg-040g-tf` and `-1g` targets) | In use |
@@ -86,29 +78,22 @@ Each release also ships a package manifest so you can inspect what the image con
 > [!WARNING]
 > The XR1710G OpenWrt U-Boot UBI layout is not finished (missing trueKey). Use only the "stock U-Boot layout + chainloader" scheme today and do not flash `gemtek_xr1710g-ubi` images. XG2010G and Nokia devices boot via `naoki66/uboot-an758x`; its boot-area layout differs from the chainloader scheme, so the two must not be mixed.
 
-## XR1710G AP boot recovery
+## Install, upgrade and recover
 
-The Full Legacy AP image and the [matching second-stage U-Boot](https://github.com/DictXiong/Gemtek-brightspeed-chainloader) support **normal boot → OpenWrt failsafe → U-Boot web recovery**. The device keeps the stock first-stage loader and Legacy NAND layout. This recovery protocol requires a marked Legacy AP FIT and a compatible second-stage loader. Gateway images, other boards, and the unfinished XR1710G full-UBI boot layout are outside its scope.
+| Task | Guide |
+| --- | --- |
+| Install XR1710G Full on the legacy layout | [XR1710G installation in the chainloader repository](https://github.com/DictXiong/Gemtek-brightspeed-chainloader/blob/main/README.en.md#installation-and-upgrades) |
+| Upgrade an XR1710G Full AP or migrate from an older upgrader | [Full AP installation and settings-preserving upgrades](docs/xr1710g-ap-operations.en.md) |
+| Recover an XR1710G AP or enter web recovery from OpenWrt | [Full AP operation and recovery](docs/xr1710g-ap-operations.en.md#daily-operation-and-recovery) |
+| Install or upgrade XG2010G or a Nokia configuration | Use the matching [boot scheme](#boot-scheme-and-status) and [flashing notes](#flashing-and-upgrade-caveats). |
 
-| Stage | Entry | Management |
-| --- | --- | --- |
-| Normal boot | OpenWrt acknowledges the current boot when ready. After two consecutive unconfirmed normal starts, the hardware watchdog leads to failsafe. | Use the normal management address and configuration. |
-| OpenWrt failsafe | Automatic fallback or the standard manual failsafe entry. | Connect directly and use SSH at `192.168.1.1:22`. An unconfirmed automatic failsafe boot falls back to the U-Boot page. |
-| U-Boot web recovery | Automatic fallback, the documented loader button sequence, or `reboot-to-uboot` as root from a confirmed normal boot. | Open `http://192.168.0.1/`. The page can reboot the device when maintenance is complete. The loader consumes a software entry request once. |
-
-Recovery can use 10G WAN, 10G LAN, and the two 1G LAN sockets. OpenWrt enables and isolates usable ports individually, and U-Boot auto mode serves the page on available ports. Bridge port isolation limits forwarding within the device. Failsafe allows passwordless root SSH, and the U-Boot page can write flash and runs its own DHCP server by default. Use a trusted isolated network or direct cable, including when automatic fallback may occur.
-
-### Clean installation and configuration-preserving migration
-
-For either path, make an external backup first. If you use another U-Boot, check which update package it accepts, exactly what it writes, and whether it clears the boot environment or configuration. Use the supported method to install the [matching second-stage U-Boot](https://github.com/DictXiong/Gemtek-brightspeed-chainloader/tree/main) in the Legacy 1 MiB second-stage slot, preserving the stock first stage. Verify its build ID on the isolated recovery page before installing the FIT.
-
-- **Clean installation.** Use web recovery on the matching U-Boot and the original sysupgrade FIT from the [Full Legacy AP build](docs/xr1710g-full.md#building) (`--role ap --layout legacy`). A web firmware installation rebuilds the system UBI and clears the existing configuration. Back up the device factory data externally as well.
-- **Keep the configuration.** Confirm the native image check on the current system succeeds (`sysupgrade -T`), and use the standard configuration-preserving upgrade. Older upgrade scripts may allocate all remaining space to `rootfs_data`. After the first normal boot, use `ubinfo -a` to check that `xr_boot_state` is a one-LEB dynamic volume. Run `/lib/xr-boot-recovery verify-ready >/dev/null && echo READY`. A valid volume and READY complete the migration. When the new firmware boots normally but the volume is absent, use the same verified FIT once more with the normal configuration-preserving upgrade. The new upgrader checks the layout and capacity before reserving one LEB. If the volume is present without READY, check the handoff or volume status first.
-- **Compatibility.** The normal installation still requires a compatible board and Legacy layout. Other U-Boot variants and unmarked firmware continue to use their previously supported boot combinations. Automatic recovery and one-shot entry require support on both sides. Use the original Legacy AP FIT with its device identity intact.
-
-Earlier isolated hardware tests covered automatic normal-to-failsafe fallback, SSH and the web page on WAN and 10G LAN, one-shot entry, and return to OpenWrt. Earlier candidates covered the four failsafe sockets individually and automatic failsafe-to-web fallback using a dedicated test image. Capacity and allocation without a state volume, state write failures, and single PHY/QDMA failure isolation were covered by offline tests. The final pair and the configuration-preserving migration still await integrated hardware validation.
+With the matching second-stage U-Boot and writable state volume, a compatible XR1710G Full AP can fall back from normal boot to OpenWrt failsafe and then to U-Boot web recovery. The AP guide explains the setup and access for each stage.
 
 ## Factory defaults
+
+**Full gateway** serves DHCP on LAN at `192.168.1.1` with WAN DHCP/NAT. **Full AP** bridges all four ports, receives its management address from upstream DHCP and runs no DHCP server. Both start with Wi-Fi disabled. These role defaults apply after a clean install or factory reset. A settings-preserving upgrade retains the existing configuration. See [Full firmware and defaults](docs/xr1710g-full.md).
+
+The table below describes upstream seed images.
 
 | Item | XR1710G | XG2010G |
 |------|---------|---------|
@@ -139,7 +124,11 @@ IPv6 uses SLAAC/EUI-64 with DHCPv6/NDP and RA DNS/extra flags disabled to reduce
 
 ### Local build
 
+Use the [Full build guide](docs/xr1710g-full.md#building) for the gateway and AP images.
+
 ```bash
+# Full builds use the pinned inputs in docs/xr1710g-full.md.
+# Recreate an inherited seed build from the upstream repository.
 git clone https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed.git
 cd ImmortalWrt-for-Gemtek-brightspeed
 ./scripts/feeds update -a
@@ -161,6 +150,8 @@ The build pipeline runs `cp <config> .config && make defconfig && bash scripts/s
 
 ### Download files
 
+Full images use the [paired release naming and assets](docs/xr1710g-releases.md#本地构建与配对). The following names are for inherited seed builds.
+
 | Layout | sysupgrade filename |
 |--------|---------------------|
 | XR1710G stock layout | `immortalwrt-naoki66-YYYYMMDD-<repo-hash>-airoha-an7581-gemtek_xr1710g-squashfs-sysupgrade.itb` |
@@ -172,7 +163,7 @@ The XR1710G UBI layout is **not finished (missing trueKey)**; even if enabling t
 ## Flashing and upgrade caveats
 
 > [!WARNING]
-> **XR1710G boot**: stock-layout firmware must be booted with [naoki66/Gemtek-brightspeed-chainloader](https://github.com/naoki66/Gemtek-brightspeed-chainloader) (preserves the stock first 6 MiB, chainloader at NAND `0x600000`). The OpenWrt U-Boot UBI layout is not finished (missing trueKey); do not flash `gemtek_xr1710g-ubi` images. XG2010G and Nokia devices use [naoki66/uboot-an758x](https://github.com/naoki66/uboot-an758x) — never mix the two boot layouts.
+> **XR1710G boot**: stock-layout firmware must be booted with [the matching chainloader](https://github.com/DictXiong/Gemtek-brightspeed-chainloader) (preserves the stock first 6 MiB, chainloader at NAND `0x600000`). The OpenWrt U-Boot UBI layout is not finished (missing trueKey); do not flash `gemtek_xr1710g-ubi` images. XG2010G and Nokia devices use [naoki66/uboot-an758x](https://github.com/naoki66/uboot-an758x) — never mix the two boot layouts.
 
 > [!WARNING]
 > **First flash on XG2010G**: confirm the current boot state over serial and make a verified read-only backup of the stock NAND / critical partitions. Upgrade only the matching `ubi` partition; preserve `bootloader`, `uenv`, `dsd`, and `reserved_bmt`. Never use an XR1710G image or partition table on the XG2010G, and never force an upgrade from the legacy `0x00600000` layout.
