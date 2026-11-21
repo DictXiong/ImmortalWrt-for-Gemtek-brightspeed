@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+xr_boot_recovery_failsafe() {
+	/sbin/xr-boot-recovery waiting failsafe || return 0
+	/lib/xr-boot-recovery failsafe "$pi_ifname" "$pi_ip" > /dev/kmsg 2>&1 &
+}
+
+boot_hook_add failsafe xr_boot_recovery_failsafe

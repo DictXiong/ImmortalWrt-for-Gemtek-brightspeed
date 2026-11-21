@@ -222,6 +222,9 @@ define Device/gemtek_xr1710g
   DEVICE_DTS := an7581-xr1710g
   $(call Device/gemtek_xr1710g-common)
   SUPPORTED_DEVICES := gemtek,xr1710g
+  IMAGE/sysupgrade.itb := append-kernel | \
+	fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-static-with-rootfs $(if $(filter y,$(CONFIG_XR1710G_DEFAULT_ROLE_AP)),boot-recovery) | \
+	append-metadata
 endef
 TARGET_DEVICES += gemtek_xr1710g
 

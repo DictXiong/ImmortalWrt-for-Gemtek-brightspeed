@@ -31,6 +31,7 @@ usage() {
 	printf "\n\t-n ==> fdt unit-address 'address'"
 	printf "\n\t-d ==> include Device Tree Blob 'dtb'"
 	printf "\n\t-r ==> include RootFS blob 'rootfs'"
+	printf "\n\t-R ==> identify a kernel/DTB/RootFS image for boot recovery"
 	printf "\n\t-H ==> specify hash algo instead of SHA1"
 	printf "\n\t-l ==> legacy mode character (@ etc otherwise -)"
 	printf "\n\t-o ==> create output file 'its_file'"
@@ -48,8 +49,10 @@ HASH=sha1
 LOADABLES=
 DTOVERLAY=
 DTADDR=
+BOOT_RECOVERY=
+BOOT_RECOVERY_PROP=
 
-while getopts ":A:a:c:C:D:d:e:f:i:k:l:n:o:O:v:r:s:H:" OPTION
+while getopts ":A:a:c:C:D:d:e:f:i:k:l:n:o:O:v:r:Rs:H:" OPTION
 do
 	case $OPTION in
 		A ) ARCH=$OPTARG;;
@@ -67,6 +70,7 @@ do
 		o ) OUTPUT=$OPTARG;;
 		O ) DTOVERLAY="$DTOVERLAY ${OPTARG}";;
 		r ) ROOTFS=$OPTARG;;
+		R ) BOOT_RECOVERY=1;;
 		s ) FDTADDR=$OPTARG;;
 		H ) HASH=$OPTARG;;
 		v ) VERSION=$OPTARG;;
@@ -85,6 +89,22 @@ fi
 if [ -n "${ROOTFS}" ] && [ ! -f "${ROOTFS}".pagesync ]; then
 	echo "Missing .pagesync blob for RootFS blob '${ROOTFS}'"
 	exit 1
+fi
+
+if [ "$BOOT_RECOVERY" = 1 ]; then
+	if [ "$CONFIG" != config-1 ] || [ -z "$DTB" ] || [ -z "$ROOTFS" ]; then
+		echo "Boot recovery requires config-1, a DTB and a rootfs" >&2
+		exit 1
+	fi
+	kernel_hash=$(sha256sum < "$KERNEL") || exit 1
+	dtb_hash=$(sha256sum < "$DTB") || exit 1
+	rootfs_hash=$(sha256sum < "${ROOTFS}.pagesync") || exit 1
+	image_hash=$(printf '%s\n' "${kernel_hash%% *}" "${dtb_hash%% *}" \
+		"${rootfs_hash%% *}" | sha256sum) || exit 1
+	BOOT_RECOVERY_PROP="
+			dictxiong,boot-recovery-protocol = <1>;
+			dictxiong,boot-recovery-image = \"${image_hash%% *}\";
+	"
 fi
 
 ARCH_UPPER=$(echo "$ARCH" | tr '[:lower:]' '[:upper:]')
@@ -235,6 +255,7 @@ ${ROOTFS_NODE}
 			${LOADABLES:+loadables = ${LOADABLES};}
 			${COMPATIBLE_PROP}
 			${INITRD_PROP}
+			${BOOT_RECOVERY_PROP}
 		};
 		${OVCONFIGS}
 	};

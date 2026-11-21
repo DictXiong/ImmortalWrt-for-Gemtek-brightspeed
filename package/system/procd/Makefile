@@ -8,7 +8,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=procd
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL=$(PROJECT_GIT)/project/procd.git
@@ -26,7 +26,10 @@ PKG_BUILD_FLAGS:=lto
 PKG_ASLR_PIE_REGULAR:=1
 PKG_CONFIG_DEPENDS:= \
 	CONFIG_TARGET_INIT_PATH CONFIG_KERNEL_SECCOMP CONFIG_PROCD_SHOW_BOOT \
-	CONFIG_KERNEL_NAMESPACES CONFIG_PACKAGE_procd-ujail CONFIG_PACKAGE_procd-seccomp
+	CONFIG_KERNEL_NAMESPACES CONFIG_PACKAGE_procd-ujail CONFIG_PACKAGE_procd-seccomp \
+	CONFIG_TARGET_airoha_an7581_DEVICE_gemtek_xr1710g \
+	CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_gemtek_xr1710g \
+	CONFIG_XR1710G_DEFAULT_ROLE_AP
 
 include $(INCLUDE_DIR)/package.mk
 include $(INCLUDE_DIR)/cmake.mk
@@ -36,6 +39,13 @@ ifeq ($(DUMP),)
 endif
 
 CMAKE_OPTIONS += -DEARLY_PATH="$(TARGET_INIT_PATH)"
+
+XR_BOOT_RECOVERY:=$(and $(CONFIG_XR1710G_DEFAULT_ROLE_AP), \
+	$(or $(CONFIG_TARGET_airoha_an7581_DEVICE_gemtek_xr1710g), \
+	     $(CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_gemtek_xr1710g)))
+ifneq ($(XR_BOOT_RECOVERY),)
+  CMAKE_OPTIONS += -DXR_BOOT_RECOVERY=ON
+endif
 
 define Package/procd/Default
   SECTION:=base
@@ -122,6 +132,12 @@ define Package/procd/install
 	$(INSTALL_CONF) ./files/hotplug*.json $(1)/etc/
 	$(INSTALL_DATA) ./files/procd.sh $(1)/lib/functions/
 	$(INSTALL_BIN) ./files/service $(1)/sbin/service
+	$(if $(XR_BOOT_RECOVERY), \
+		$(INSTALL_DIR) $(1)/etc/init.d $(1)/lib/preinit; \
+		$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/sbin/xr-boot-recovery $(1)/sbin/; \
+		$(INSTALL_BIN) ./files/xr-boot-recovery.sh $(1)/lib/xr-boot-recovery; \
+		$(INSTALL_BIN) ./files/xr-boot-recovery.init $(1)/etc/init.d/xr-boot-recovery; \
+		$(INSTALL_DATA) ./files/xr-boot-recovery.preinit $(1)/lib/preinit/99_20_xr_boot_recovery; )
 endef
 
 Package/procd-selinux/install = $(Package/procd/install)

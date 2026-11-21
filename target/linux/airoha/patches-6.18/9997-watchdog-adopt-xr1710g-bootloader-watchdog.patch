@@ -1,0 +1,45 @@
+--- a/drivers/watchdog/airoha_wdt.c
++++ b/drivers/watchdog/airoha_wdt.c
+@@ -124,6 +124,34 @@
+ 	.get_timeleft = airoha_wdt_get_timeleft,
+ };
+ 
++static void airoha_wdt_boot_handover(struct airoha_wdt_desc *airoha_wdt)
++{
++	struct watchdog_device *wdog_dev = &airoha_wdt->wdog_dev;
++	struct device_node *chosen;
++	bool negotiated;
++	u32 ctrl, ticks;
++
++	chosen = of_find_node_by_path("/chosen");
++	negotiated = of_property_present(chosen, "dictxiong,boot-recovery");
++	of_node_put(chosen);
++	if (!negotiated)
++		return;
++
++	ctrl = readl(airoha_wdt->base + TIMER_CTRL);
++	if ((ctrl & (WDT_ENABLE | WDT_TIMER_ENABLE)) !=
++	    (WDT_ENABLE | WDT_TIMER_ENABLE))
++		return;
++
++	ticks = readl(airoha_wdt->base + WDT_TIMER_LOAD_VALUE);
++	if (!ticks || !wdog_dev->max_timeout)
++		return;
++	wdog_dev->timeout = clamp_val(DIV_ROUND_UP_ULL((u64)ticks,
++						     airoha_wdt->wdt_freq),
++				       1, wdog_dev->max_timeout);
++	airoha_wdt_ping(wdog_dev);
++	set_bit(WDOG_HW_RUNNING, &wdog_dev->status);
++}
++
+ static int airoha_wdt_probe(struct platform_device *pdev)
+ {
+ 	struct airoha_wdt_desc *airoha_wdt;
+@@ -163,6 +191,7 @@
+ 	watchdog_set_drvdata(wdog_dev, airoha_wdt);
+ 	watchdog_set_nowayout(wdog_dev, nowayout);
+ 	watchdog_stop_on_unregister(wdog_dev);
++	airoha_wdt_boot_handover(airoha_wdt);
+ 
+ 	ret = devm_watchdog_register_device(dev, wdog_dev);
+ 	if (ret)

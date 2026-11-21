@@ -1,0 +1,455 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -68,6 +68,12 @@
+ ELSE()
+ ADD_EXECUTABLE(init initd/init.c initd/early.c initd/preinit.c initd/mkdev.c sysupgrade.c watchdog.c
+ 	utils/utils.c)
++IF(XR_BOOT_RECOVERY)
++  TARGET_COMPILE_DEFINITIONS(init PRIVATE XR_BOOT_RECOVERY)
++  TARGET_COMPILE_DEFINITIONS(procd PRIVATE XR_BOOT_RECOVERY)
++  ADD_EXECUTABLE(xr-boot-recovery xr-boot-recovery.c)
++  INSTALL(TARGETS xr-boot-recovery RUNTIME DESTINATION ${CMAKE_INSTALL_SBINDIR})
++ENDIF()
+ TARGET_INCLUDE_DIRECTORIES(init PUBLIC ${SELINUX_INCLUDE_DIRS})
+ TARGET_LINK_LIBRARIES(init ${LIBS} ${SELINUX_LIBRARIES})
+ INSTALL(TARGETS init
+--- a/watchdog.c
++++ b/watchdog.c
+@@ -25,6 +25,9 @@
+ 
+ #include "procd.h"
+ #include "watchdog.h"
++#ifdef XR_BOOT_RECOVERY
++#include "xr-boot-recovery.h"
++#endif
+ 
+ #define WDT_PATH	"/dev/watchdog"
+ 
+@@ -34,8 +37,97 @@
+ static int wdt_frequency = 5;
+ static bool wdt_magicclose = false;
+ 
++#ifdef XR_BOOT_RECOVERY
++static struct xr_recovery_boot recovery_boot;
++static bool recovery_initialized;
++static bool recovery_pending;
++static bool recovery_expired;
++static int recovery_verify_fd = -1;
++
++static bool recovery_verify_async(void)
++{
++	int result[2];
++	pid_t pid;
++
++	if (pipe2(result, O_CLOEXEC | O_NONBLOCK))
++		return false;
++	pid = fork();
++	if (!pid) {
++		close(result[0]);
++		close(wdt_fd);
++		if (dup2(result[1], STDOUT_FILENO) < 0 ||
++		    fcntl(STDOUT_FILENO, F_SETFD, 0) < 0)
++			_exit(EXIT_FAILURE);
++		if (result[1] != STDOUT_FILENO)
++			close(result[1]);
++		execl("/lib/xr-boot-recovery", "xr-boot-recovery", "verify-ready", NULL);
++		_exit(EXIT_FAILURE);
++	}
++
++	close(result[1]);
++	if (pid < 0) {
++		close(result[0]);
++		return false;
++	}
++	recovery_verify_fd = result[0];
++	return true;
++}
++
++static bool recovery_can_ping(void)
++{
++	char token[sizeof(recovery_boot.token)];
++	ssize_t n;
++	int fd;
++
++	if (!recovery_pending)
++		return true;
++	if (recovery_expired)
++		return false;
++
++	if (recovery_verify_fd >= 0) {
++		n = read(recovery_verify_fd, token, sizeof(token));
++		if (n < 0 && (errno == EAGAIN || errno == EINTR))
++			return false;
++		close(recovery_verify_fd);
++		recovery_verify_fd = -1;
++		if (n == (ssize_t)strlen(recovery_boot.token) + 1 &&
++		    !memcmp(token, recovery_boot.token, n)) {
++			recovery_pending = false;
++			return true;
++		}
++		goto expire;
++	}
++
++	fd = open(XR_RECOVERY_READY, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC);
++	if (fd >= 0) {
++		n = read(fd, token, sizeof(token));
++		close(fd);
++		if (n == (ssize_t)strlen(recovery_boot.token) + 1 &&
++		    !memcmp(token, recovery_boot.token, n)) {
++			recovery_pending = false;
++			return true;
++		}
++	}
++
++	if (xr_recovery_running(&recovery_boot))
++		return true;
++	/* A lost tmpfs notification must not block the watchdog event loop. */
++	if (recovery_verify_async())
++		return false;
++
++expire:
++	LOG("XR1710G boot readiness deadline expired; leaving watchdog armed\n");
++	recovery_expired = true;
++	return false;
++}
++#endif
++
+ void watchdog_ping(void)
+ {
++#ifdef XR_BOOT_RECOVERY
++	if (!recovery_can_ping())
++		return;
++#endif
+ 	DEBUG(4, "Ping\n");
+ 	if (wdt_fd >= 0 && write(wdt_fd, "X", 1) < 0)
+ 		ERROR("WDT failed to write: %m\n");
+@@ -142,6 +234,10 @@
+ 
+ void watchdog_set_stopped(bool val)
+ {
++#ifdef XR_BOOT_RECOVERY
++	if (recovery_pending && val)
++		return;
++#endif
+ 	if (val) {
+ 		uloop_timeout_cancel(&wdt_timeout);
+ 
+@@ -198,11 +294,23 @@
+ {
+ 	wdt_timeout.cb = watchdog_timeout_cb;
+ 
++#ifdef XR_BOOT_RECOVERY
++	if (!recovery_initialized) {
++		recovery_pending = xr_recovery_read_boot(&recovery_boot);
++		recovery_initialized = true;
++	}
++#endif
+ 	if (watchdog_open(!preinit) < 0)
+ 		return;
+ 
+ 	LOG("- watchdog -\n");
+-	watchdog_set_drv_timeout();
++#ifdef XR_BOOT_RECOVERY
++	/* Adopt the hardware timeout already programmed for the handover. */
++	if (recovery_pending)
++		ioctl(wdt_fd, WDIOC_GETTIMEOUT, &wdt_drv_timeout);
++	else
++#endif
++		watchdog_set_drv_timeout();
+ 	watchdog_timeout_cb(&wdt_timeout);
+ 
+ 	DEBUG(4, "Opened watchdog with timeout %ds\n", watchdog_timeout(0));
+--- /dev/null
++++ b/xr-boot-recovery.h
+@@ -0,0 +1,95 @@
++/* SPDX-License-Identifier: LGPL-2.1-only */
++
++#ifndef XR_BOOT_RECOVERY_H
++#define XR_BOOT_RECOVERY_H
++
++#include <errno.h>
++#include <fcntl.h>
++#include <stdbool.h>
++#include <stdint.h>
++#include <stdlib.h>
++#include <string.h>
++#include <time.h>
++#include <unistd.h>
++
++#define XR_RECOVERY_CHOSEN "/sys/firmware/devicetree/base/chosen/dictxiong,boot-recovery"
++#define XR_RECOVERY_READY "/tmp/run/xr-boot-recovery.ready"
++#define XR_RECOVERY_NORMAL_SECONDS 120
++#define XR_RECOVERY_FAILSAFE_SECONDS 60
++
++struct xr_recovery_boot {
++	char token[88];
++	uint8_t image[32];
++	uint32_t seq;
++	uint8_t mode;
++};
++
++static inline int xr_hex_digit(char c)
++{
++	if (c >= '0' && c <= '9')
++		return c - '0';
++	if (c >= 'a' && c <= 'f')
++		return c - 'a' + 10;
++	return -1;
++}
++
++static inline bool xr_recovery_parse(struct xr_recovery_boot *boot, const char *token)
++{
++	const char *seq = token + 67;
++	char *end;
++	unsigned long n;
++	int hi, lo, i;
++
++	if (strlen(token) < 75 || strncmp(token, "1:", 2) ||
++	    token[66] != ':' || *seq < '1' || *seq > '9')
++		return false;
++
++	for (i = 0; i < 32; i++) {
++		hi = xr_hex_digit(token[2 + i * 2]);
++		lo = xr_hex_digit(token[3 + i * 2]);
++		if (hi < 0 || lo < 0)
++			return false;
++		boot->image[i] = (hi << 4) | lo;
++	}
++
++	errno = 0;
++	n = strtoul(seq, &end, 10);
++	if (errno || n > UINT32_MAX || *end++ != ':')
++		return false;
++	boot->seq = n;
++
++	if (!strcmp(end, "normal"))
++		boot->mode = 0;
++	else if (!strcmp(end, "failsafe"))
++		boot->mode = 1;
++	else
++		return false;
++
++	return true;
++}
++
++static inline bool xr_recovery_read_boot(struct xr_recovery_boot *boot)
++{
++	int fd = open(XR_RECOVERY_CHOSEN, O_RDONLY | O_CLOEXEC);
++	ssize_t n;
++
++	if (fd < 0)
++		return false;
++	n = read(fd, boot->token, sizeof(boot->token));
++	close(fd);
++
++	return n > 0 && (size_t)n < sizeof(boot->token) &&
++	       strnlen(boot->token, n) == (size_t)n - 1 &&
++	       xr_recovery_parse(boot, boot->token);
++}
++
++static inline bool xr_recovery_running(const struct xr_recovery_boot *boot)
++{
++	struct timespec now;
++	int seconds = boot->mode ? XR_RECOVERY_FAILSAFE_SECONDS : XR_RECOVERY_NORMAL_SECONDS;
++
++	/* This budget starts at kernel boot and survives the exec into procd. */
++	return !clock_gettime(CLOCK_BOOTTIME, &now) && now.tv_sec < seconds;
++}
++
++#endif
+--- /dev/null
++++ b/xr-boot-recovery.c
+@@ -0,0 +1,193 @@
++/* SPDX-License-Identifier: LGPL-2.1-only */
++
++#include <mtd/ubi-user.h>
++#include <stdio.h>
++#include <sys/file.h>
++#include <sys/ioctl.h>
++#include <sys/stat.h>
++
++#include "xr-boot-recovery.h"
++
++#define XR_RECORD_SIZE 48
++#define XR_READY 1
++#define XR_FAILSAFE 1
++
++static uint32_t read_be32(const uint8_t *p)
++{
++	return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 |
++	       (uint32_t)p[2] << 8 | p[3];
++}
++
++static void write_be32(uint8_t *p, uint32_t value)
++{
++	p[0] = value >> 24;
++	p[1] = value >> 16;
++	p[2] = value >> 8;
++	p[3] = value;
++}
++
++static uint32_t record_crc(const uint8_t *p)
++{
++	uint32_t crc = UINT32_MAX;
++	int i, bit;
++
++	for (i = 0; i < XR_RECORD_SIZE - 4; i++) {
++		crc ^= p[i];
++		for (bit = 0; bit < 8; bit++)
++			crc = (crc >> 1) ^ (crc & 1 ? 0xedb88320U : 0);
++	}
++	return ~crc;
++}
++
++static bool record_matches(const struct xr_recovery_boot *boot, const uint8_t *p)
++{
++	return !memcmp(p, "XRR1", 4) && p[4] == 1 && p[5] == boot->mode &&
++	       p[6] <= 2 && p[7] <= XR_READY && read_be32(p + 8) == boot->seq &&
++	       !memcmp(p + 12, boot->image, sizeof(boot->image)) &&
++	       read_be32(p + 44) == record_crc(p);
++}
++
++static int lock_volume(const char *volume)
++{
++	struct stat st;
++	int fd;
++
++	fd = open(volume, O_RDWR | O_CLOEXEC | O_NOFOLLOW);
++	if (fd < 0)
++		return -1;
++
++	if (fstat(fd, &st) < 0 || !S_ISCHR(st.st_mode) ||
++	    flock(fd, LOCK_EX | LOCK_NB) < 0) {
++		close(fd);
++		return -1;
++	}
++	return fd;
++}
++
++static bool record_is(int fd, const uint8_t *expected)
++{
++	uint8_t record[XR_RECORD_SIZE];
++
++	return pread(fd, record, sizeof(record), 0) == sizeof(record) &&
++	       !memcmp(record, expected, sizeof(record));
++}
++
++static bool write_record(int fd, const uint8_t *record)
++{
++	struct ubi_leb_change_req change = { .lnum = 0, .bytes = XR_RECORD_SIZE, .dtype = 3 };
++
++	return !ioctl(fd, UBI_IOCEBCH, &change) &&
++	       write(fd, record, XR_RECORD_SIZE) == XR_RECORD_SIZE &&
++	       !fsync(fd) && record_is(fd, record);
++}
++
++static bool persist_ready(const struct xr_recovery_boot *boot, const char *volume)
++{
++	uint8_t record[XR_RECORD_SIZE];
++	bool success = false;
++	int fd = lock_volume(volume);
++
++	if (fd < 0)
++		return false;
++	if (pread(fd, record, sizeof(record), 0) != sizeof(record) ||
++	    !record_matches(boot, record) || !record_is(fd, record) ||
++	    !xr_recovery_running(boot))
++		goto out;
++
++	if (record[7] != XR_READY) {
++		record[7] = XR_READY;
++		write_be32(record + 44, record_crc(record));
++		if (!write_record(fd, record))
++			goto out;
++	}
++	success = true;
++out:
++	close(fd);
++	return success;
++}
++
++static bool verify_ready(const struct xr_recovery_boot *boot, const char *volume)
++{
++	uint8_t record[XR_RECORD_SIZE];
++	struct stat st;
++	bool verified;
++	int fd = open(volume, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
++
++	if (fd < 0)
++		return false;
++	/* A writer already in progress gets to finish. This runs off the event loop. */
++	verified = !fstat(fd, &st) && S_ISCHR(st.st_mode) && !flock(fd, LOCK_SH) &&
++		   pread(fd, record, sizeof(record), 0) == sizeof(record) &&
++		   record_matches(boot, record) && record[7] == XR_READY &&
++		   /* FAILSAFE/READY/0 is the explicit one-shot command. */
++		   (record[5] != XR_FAILSAFE || record[6]);
++	close(fd);
++	return verified;
++}
++
++static bool signal_watchdog(const struct xr_recovery_boot *boot)
++{
++	char tmp[] = XR_RECOVERY_READY ".XXXXXX";
++	size_t len = strlen(boot->token) + 1;
++	int fd = mkstemp(tmp);
++	bool written;
++
++	if (fd < 0)
++		return false;
++	written = write(fd, boot->token, len) == (ssize_t)len;
++	if (close(fd) < 0)
++		written = false;
++	if (written && rename(tmp, XR_RECOVERY_READY) == 0)
++		return true;
++
++	unlink(tmp);
++	return false;
++}
++
++int main(int argc, char **argv)
++{
++	struct xr_recovery_boot boot;
++	bool failsafe;
++
++	if (argc == 3 && !strcmp(argv[1], "verify-ready")) {
++		size_t len;
++
++		if (!xr_recovery_read_boot(&boot) || !verify_ready(&boot, argv[2]))
++			return 1;
++		len = strlen(boot.token) + 1;
++		return write(STDOUT_FILENO, boot.token, len) != (ssize_t)len;
++	}
++
++	if ((argc != 3 && argc != 4) || !xr_recovery_read_boot(&boot))
++		return 1;
++
++	failsafe = !strcmp(argv[2], "failsafe");
++	if (failsafe) {
++		/* A manual preinit failsafe request can override a normal boot. */
++		if (!boot.mode && access("/tmp/.failsafe", F_OK))
++			return 1;
++	} else if (strcmp(argv[2], "normal") || boot.mode) {
++		return 1;
++	}
++
++	if (!xr_recovery_running(&boot))
++		return 1;
++
++	if (argc == 3 && !strcmp(argv[1], "waiting"))
++		return 0;
++	if (argc != 4 || strcmp(argv[1], "ready"))
++		return 1;
++
++	if (!persist_ready(&boot, argv[3])) {
++		fprintf(stderr, "XR1710G: could not record %s readiness\n", argv[2]);
++		return 1;
++	}
++	if (!signal_watchdog(&boot)) {
++		fputs("XR1710G: READY persisted, watchdog notification pending\n", stderr);
++		return 1;
++	}
++
++	fprintf(stderr, "XR1710G: %s ready\n",
++		failsafe && !boot.mode ? "manual failsafe" : argv[2]);
++	return 0;
++}
