@@ -19,7 +19,7 @@
 
 | Device | Role | Seed config | Profile enabled today | Boot scheme / status | Default management URL |
 |--------|------|-------------|-----------------------|----------------------|-------------------------|
-| XR1710G (stock U-Boot layout + chainloader) | 10G Wi-Fi 7 router | [`1710.config`](1710.config) | `gemtek_xr1710g` | [naoki66/Gemtek-brightspeed-chainloader](https://github.com/naoki66/Gemtek-brightspeed-chainloader) | `http://192.168.50.1` |
+| XR1710G (stock U-Boot layout + chainloader) | 10G Wi-Fi 7 router | [`1710.config`](1710.config) | `gemtek_xr1710g` | [naoki66/Gemtek-brightspeed-chainloader](https://github.com/naoki66/Gemtek-brightspeed-chainloader) · [matching AP recovery fork](https://github.com/DictXiong/Gemtek-brightspeed-chainloader/tree/main) | `http://192.168.50.1` |
 | XR1710G (OpenWrt U-Boot UBI layout) | Whole-NAND UBI boot scheme | [`1710.config`](1710.config) | Profile defined, not enabled in the seed | **Not finished: missing trueKey** | `http://192.168.50.1` |
 | XG2010G (1 GiB / 2 GiB auto-detect) | XG(S)-PON gateway | [`2010.config`](2010.config) | `gemtek_xg2010g-ubi` | [naoki66/uboot-an758x](https://github.com/naoki66/uboot-an758x) | `http://192.168.1.1` |
 | Nokia XG-040G-MD / XG-040G-TF (UBI, 512 MiB / 1 GiB auto-detect) | Additional device configs | [`040.config`](040.config) / [`040-tf.config`](040-tf.config) | Separate configs, not built by CI | [naoki66/uboot-an758x](https://github.com/naoki66/uboot-an758x) | `http://192.168.1.1` |
@@ -31,7 +31,7 @@
 
 ## Contents
 
-[Quick start](#quick-start) · [Supported hardware](#supported-hardware) · [Factory defaults](#factory-defaults) · [Build and release](#build-and-release) · [Flashing and upgrade caveats](#flashing-and-upgrade-caveats) · [Credits](#credits) · [License](#license)
+[Quick start](#quick-start) · [Supported hardware](#supported-hardware) · [XR1710G AP boot recovery](#xr1710g-ap-boot-recovery) · [Factory defaults](#factory-defaults) · [Build and release](#build-and-release) · [Flashing and upgrade caveats](#flashing-and-upgrade-caveats) · [Credits](#credits) · [License](#license)
 
 ## Quick start
 
@@ -85,6 +85,28 @@ Each release also ships a package manifest so you can inspect what the image con
 
 > [!WARNING]
 > The XR1710G OpenWrt U-Boot UBI layout is not finished (missing trueKey). Use only the "stock U-Boot layout + chainloader" scheme today and do not flash `gemtek_xr1710g-ubi` images. XG2010G and Nokia devices boot via `naoki66/uboot-an758x`; its boot-area layout differs from the chainloader scheme, so the two must not be mixed.
+
+## XR1710G AP boot recovery
+
+The Full Legacy AP image and the [matching second-stage U-Boot](https://github.com/DictXiong/Gemtek-brightspeed-chainloader) support **normal boot → OpenWrt failsafe → U-Boot web recovery**. The device keeps the stock first-stage loader and Legacy NAND layout. This recovery protocol requires a marked Legacy AP FIT and a compatible second-stage loader. Gateway images, other boards, and the unfinished XR1710G full-UBI boot layout are outside its scope.
+
+| Stage | Entry | Management |
+| --- | --- | --- |
+| Normal boot | OpenWrt acknowledges the current boot when ready. After two consecutive unconfirmed normal starts, the hardware watchdog leads to failsafe. | Use the normal management address and configuration. |
+| OpenWrt failsafe | Automatic fallback or the standard manual failsafe entry. | Connect directly and use SSH at `192.168.1.1:22`. An unconfirmed automatic failsafe boot falls back to the U-Boot page. |
+| U-Boot web recovery | Automatic fallback, the documented loader button sequence, or `reboot-to-uboot` as root from a confirmed normal boot. | Open `http://192.168.0.1/`. The page can reboot the device when maintenance is complete. The loader consumes a software entry request once. |
+
+Recovery can use 10G WAN, 10G LAN, and the two 1G LAN sockets. OpenWrt enables and isolates usable ports individually, and U-Boot auto mode serves the page on available ports. Bridge port isolation limits forwarding within the device. Failsafe allows passwordless root SSH, and the U-Boot page can write flash and runs its own DHCP server by default. Use a trusted isolated network or direct cable, including when automatic fallback may occur.
+
+### Clean installation and configuration-preserving migration
+
+For either path, make an external backup first. If you use another U-Boot, check which update package it accepts, exactly what it writes, and whether it clears the boot environment or configuration. Use the supported method to install the [matching second-stage U-Boot](https://github.com/DictXiong/Gemtek-brightspeed-chainloader/tree/main) in the Legacy 1 MiB second-stage slot, preserving the stock first stage. Verify its build ID on the isolated recovery page before installing the FIT.
+
+- **Clean installation.** Use web recovery on the matching U-Boot and the original sysupgrade FIT from the [Full Legacy AP build](docs/xr1710g-full.md#building) (`--role ap --layout legacy`). A web firmware installation rebuilds the system UBI and clears the existing configuration. Back up the device factory data externally as well.
+- **Keep the configuration.** Confirm the native image check on the current system succeeds (`sysupgrade -T`), and use the standard configuration-preserving upgrade. Older upgrade scripts may allocate all remaining space to `rootfs_data`. After the first normal boot, use `ubinfo -a` to check that `xr_boot_state` is a one-LEB dynamic volume. Run `/lib/xr-boot-recovery verify-ready >/dev/null && echo READY`. A valid volume and READY complete the migration. When the new firmware boots normally but the volume is absent, use the same verified FIT once more with the normal configuration-preserving upgrade. The new upgrader checks the layout and capacity before reserving one LEB. If the volume is present without READY, check the handoff or volume status first.
+- **Compatibility.** The normal installation still requires a compatible board and Legacy layout. Other U-Boot variants and unmarked firmware continue to use their previously supported boot combinations. Automatic recovery and one-shot entry require support on both sides. Use the original Legacy AP FIT with its device identity intact.
+
+Earlier isolated hardware tests covered automatic normal-to-failsafe fallback, SSH and the web page on WAN and 10G LAN, one-shot entry, and return to OpenWrt. Earlier candidates covered the four failsafe sockets individually and automatic failsafe-to-web fallback using a dedicated test image. Capacity and allocation without a state volume, state write failures, and single PHY/QDMA failure isolation were covered by offline tests. The final pair and the configuration-preserving migration still await integrated hardware validation.
 
 ## Factory defaults
 
