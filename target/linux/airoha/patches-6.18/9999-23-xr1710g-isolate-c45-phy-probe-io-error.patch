@@ -1,0 +1,193 @@
+From: Codex <codex@localhost>
+Subject: net: mdio: isolate a failed XR1710G external PHY ID read
+
+The two external C45 PHYs share the EN7581 switch MDIO bus. A fatal
+ID read at either address currently unregisters the entire bus and
+prevents the switch from starting. Enumerate both PHYs and tolerate
+this error only if the other PHY responds again with its known ID.
+Preserve probe deferral and errors from all other registration steps.
+
+--- a/include/linux/fwnode_mdio.h
++++ b/include/linux/fwnode_mdio.h
+@@ -16,6 +16,10 @@
+ int fwnode_mdiobus_register_phy(struct mii_bus *bus,
+ 				struct fwnode_handle *child, u32 addr);
+ 
++int fwnode_mdiobus_register_phy_report(struct mii_bus *bus,
++				      struct fwnode_handle *child, u32 addr,
++				      bool *id_io_error);
++
+ #else /* CONFIG_FWNODE_MDIO */
+ int fwnode_mdiobus_phy_device_register(struct mii_bus *mdio,
+ 				       struct phy_device *phy,
+@@ -30,6 +34,14 @@
+ {
+ 	return -EINVAL;
+ }
++
++static inline int
++fwnode_mdiobus_register_phy_report(struct mii_bus *bus,
++				  struct fwnode_handle *child, u32 addr,
++				  bool *id_io_error)
++{
++	return -EINVAL;
++}
+ #endif
+ 
+ #endif /* __LINUX_FWNODE_MDIO_H */
+--- a/drivers/net/mdio/fwnode_mdio.c
++++ b/drivers/net/mdio/fwnode_mdio.c
+@@ -129,14 +129,19 @@
+ }
+ EXPORT_SYMBOL(fwnode_mdiobus_phy_device_register);
+ 
+-int fwnode_mdiobus_register_phy(struct mii_bus *bus,
+-				struct fwnode_handle *child, u32 addr)
++int fwnode_mdiobus_register_phy_report(struct mii_bus *bus,
++				      struct fwnode_handle *child, u32 addr,
++				      bool *id_io_error)
+ {
+ 	struct mii_timestamper *mii_ts = NULL;
+ 	struct phy_device *phy;
+ 	bool is_c45;
+ 	u32 phy_id;
+ 	int rc;
++
++	/* An error obtaining reset, IRQ or other resources is not an ID read. */
++	if (id_io_error)
++		*id_io_error = false;
+ 
+ 	mii_ts = fwnode_find_mii_timestamper(child);
+ 	if (IS_ERR(mii_ts))
+@@ -153,6 +158,8 @@
+ 		phy = phy_device_create(bus, addr, phy_id, 0, NULL);
+ 	if (IS_ERR(phy)) {
+ 		rc = PTR_ERR(phy);
++		if (id_io_error && is_c45 && rc == -EIO)
++			*id_io_error = true;
+ 		goto clean_mii_ts;
+ 	}
+ 	if (rc == 0)
+@@ -195,4 +202,11 @@
+ 
+ 	return rc;
+ }
++EXPORT_SYMBOL_GPL(fwnode_mdiobus_register_phy_report);
++
++int fwnode_mdiobus_register_phy(struct mii_bus *bus,
++				struct fwnode_handle *child, u32 addr)
++{
++	return fwnode_mdiobus_register_phy_report(bus, child, addr, NULL);
++}
+ EXPORT_SYMBOL(fwnode_mdiobus_register_phy);
+--- a/drivers/net/mdio/of_mdio.c
++++ b/drivers/net/mdio/of_mdio.c
+@@ -44,9 +44,11 @@
+ EXPORT_SYMBOL(of_mdiobus_phy_device_register);
+ 
+ static int of_mdiobus_register_phy(struct mii_bus *mdio,
+-				    struct device_node *child, u32 addr)
+-{
+-	return fwnode_mdiobus_register_phy(mdio, of_fwnode_handle(child), addr);
++				    struct device_node *child, u32 addr,
++				    bool *id_io_error)
++{
++	return fwnode_mdiobus_register_phy_report(mdio, of_fwnode_handle(child),
++						 addr, id_io_error);
+ }
+ 
+ static int of_mdiobus_register_device(struct mii_bus *mdio,
+@@ -139,14 +141,41 @@
+ }
+ EXPORT_SYMBOL(of_mdiobus_child_is_phy);
+ 
++static bool xr1710g_mdio_peer_responds(struct mii_bus *mdio, int failed_addr)
++{
++	struct phy_device *peer;
++	int peer_addr = failed_addr == 5 ? 8 : 5;
++	u32 id;
++
++	peer = mdiobus_get_phy(mdio, peer_addr);
++	if (!peer || !peer->is_c45)
++		return false;
++
++	id = peer->c45_ids.device_ids[MDIO_MMD_PMAPMD];
++	if (!id || id == U32_MAX)
++		return false;
++
++	if (mdiobus_c45_read(mdio, peer_addr, MDIO_MMD_PMAPMD, MII_PHYSID1) !=
++	    (u16)(id >> 16))
++		return false;
++
++	return mdiobus_c45_read(mdio, peer_addr, MDIO_MMD_PMAPMD, MII_PHYSID2) ==
++	       (u16)id;
++}
++
+ static int __of_mdiobus_parse_phys(struct mii_bus *mdio, struct device_node *np,
+ 				   bool *scanphys)
+ {
++	bool xr1710g_bus = of_machine_is_compatible("gemtek,xr1710g") &&
++			   of_node_name_eq(np, "mdio") &&
++			   of_device_is_compatible(np->parent, "airoha,en7581-switch");
++	int addr, failed_addr = -1, rc = 0;
+ 	struct device_node *child;
+-	int addr, rc = 0;
+ 
+ 	/* Loop over the child nodes and register a phy_device for each phy */
+ 	for_each_available_child_of_node(np, child) {
++		bool id_io_error = false, external_phy;
++
+ 		if (of_node_name_eq(child, "ethernet-phy-package")) {
+ 			/* Ignore invalid ethernet-phy-package node */
+ 			if (!of_property_present(child, "reg"))
+@@ -167,10 +196,18 @@
+ 			continue;
+ 		}
+ 
+-		if (of_mdiobus_child_is_phy(child))
+-			rc = of_mdiobus_register_phy(mdio, child, addr);
+-		else
++		external_phy = xr1710g_bus && (addr == 5 || addr == 8);
++		if (of_mdiobus_child_is_phy(child)) {
++			rc = of_mdiobus_register_phy(mdio, child, addr,
++						    external_phy ? &id_io_error : NULL);
++		} else {
+ 			rc = of_mdiobus_register_device(mdio, child, addr);
++		}
++
++		if (id_io_error) {
++			failed_addr = addr;
++			continue;
++		}
+ 
+ 		if (rc == -ENODEV)
+ 			dev_err(&mdio->dev,
+@@ -180,6 +217,19 @@
+ 			goto exit;
+ 	}
+ 
++	/*
++	 * Scan both external PHYs before deciding whether this is a port
++	 * fault. A fresh matching ID from the peer after the failed read
++	 * shows the shared C45 bus is still responding.
++	 */
++	if (failed_addr >= 0) {
++		if (!xr1710g_mdio_peer_responds(mdio, failed_addr))
++			return -EIO;
++
++		dev_warn(&mdio->dev, "skipping PHY at address %d after ID read failed\n",
++			 failed_addr);
++	}
++
+ 	return 0;
+ exit:
+ 	of_node_put(child);
+@@ -255,7 +305,7 @@
+ 				 * standardized on to indicate that bus
+ 				 * scanning should continue.
+ 				 */
+-				rc = of_mdiobus_register_phy(mdio, child, addr);
++				rc = of_mdiobus_register_phy(mdio, child, addr, NULL);
+ 				if (!rc)
+ 					break;
+ 				if (rc != -ENODEV)
