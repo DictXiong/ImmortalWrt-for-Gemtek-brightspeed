@@ -12,6 +12,13 @@
 
 > 基于 [ImmortalWrt](https://github.com/immortalwrt/immortalwrt) 的 Airoha AN7581 固件项目，为两款硬件相互隔离的 Brightspeed/Gemtek 设备维护独立的构建配置与镜像：XR1710G（10G Wi-Fi 7 路由器）和 XG2010G（XG(S)-PON/XE-PON 网关）。
 
+> [!NOTE]
+> **相对 naoki 上游的改动**
+>
+> - [XR1710G Full 固件](docs/xr1710g-full.md)提供网关和 AP 两种默认角色，加入 LuCI 改进与命令行工具，并集成 wrtix 声明式配置和 wrtmesh 有线回程漫游。
+> - [Airoha 桥接卸载修复](docs/airoha-bridge-fallback-lifecycle.md)涵盖转发策略和 FDB 老化。
+> - Full Legacy AP 搭配二级 U-Boot，支持[自动分级恢复、一次性网页入口和保配置迁移](docs/xr1710g-ap-operations.md)。
+
 **文档基线**：
 >naoki `master` @ `9a70b25731dc`（2026-11-15 核对）。
 >重要功能与稳定性变更见 [更新日志](CHANGELOG.md)。

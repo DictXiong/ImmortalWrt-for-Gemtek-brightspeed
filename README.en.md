@@ -12,6 +12,13 @@
 
 > An [ImmortalWrt](https://github.com/immortalwrt/immortalwrt)-based firmware project for the Airoha AN7581 platform. It maintains separate build configs and images for two hardware-isolated Brightspeed/Gemtek devices: the XR1710G (10G Wi-Fi 7 router) and the XG2010G (XG(S)-PON/XE-PON gateway).
 
+> [!NOTE]
+> **Changes from naoki upstream**
+>
+> - [XR1710G Full](docs/xr1710g-full.md) offers gateway and AP defaults, LuCI improvements, command-line tools, wrtix declarative configuration and wrtmesh wired-backhaul roaming.
+> - [Airoha bridge offload fixes](docs/airoha-bridge-fallback-lifecycle.md) cover forwarding policy and FDB aging.
+> - With the matching second stage, Full Legacy AP supports [automatic recovery, one-shot web recovery and settings-preserving migration](docs/xr1710g-ap-operations.en.md).
+
 Full adds router features, LuCI improvements, command-line tools, optional wrtix management and wired-backhaul roaming. Its gateway and AP images share the same source, drivers and packages. See [Full firmware and defaults](docs/xr1710g-full.md) and the [paired release workflow](docs/xr1710g-releases.md).
 
 The development branch is `master`. This fork integrates naoki `9a70b25731dc` and Linux `6.18.60`. The inherited automated sync workflow is disabled. Historical Fixes releases remain available. See the [integration record](docs/naoki-integration.md) and [changelog](CHANGELOG.md).
