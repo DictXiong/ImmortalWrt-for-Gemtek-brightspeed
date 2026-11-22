@@ -3,19 +3,4 @@
 
 [ "$#" -eq 0 ] || { echo "Usage: reboot-to-uboot" >&2; exit 1; }
 
-. /lib/functions.sh
-. /lib/upgrade/nand.sh
-
-ubidev="$(nand_find_ubi ubi)"
-volume="$(nand_find_volume "$ubidev" xr_boot_state)"
-sysfs="/sys/class/ubi/$volume"
-if [ -z "$ubidev" ] || [ -z "$volume" ] ||
-   [ "$(cat "/sys/class/ubi/$ubidev/ro_mode")" != 0 ] ||
-   [ "$(cat "$sysfs/type")" != dynamic ] ||
-   [ "$(cat "$sysfs/reserved_ebs")" != 1 ] ||
-   [ "$(cat "$sysfs/upd_marker")" != 0 ] ||
-   [ "$(cat "$sysfs/corrupted")" != 0 ]; then
-	echo "XR1710G: writable boot state volume unavailable" >&2
-	exit 1
-fi
-exec /sbin/xr-boot-recovery reboot-to-uboot "/dev/$volume"
+exec /lib/xr-boot-recovery reboot-to-uboot

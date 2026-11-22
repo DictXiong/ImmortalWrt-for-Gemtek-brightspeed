@@ -16,10 +16,44 @@ recovery_state_device() {
 	printf '/dev/%s\n' "$volume"
 }
 
-if [ "$1" = verify-ready ]; then
-	volume="$(recovery_state_device)" || exit 1
-	exec /sbin/xr-boot-recovery verify-ready "$volume"
-fi
+recovery_state_writable() {
+	local volume="${1#/dev/}" ubidev sysfs
+
+	[ -n "$volume" ] || return 1
+	ubidev="${volume%_*}"
+	sysfs="/sys/class/ubi/$volume"
+	[ "$(cat "/sys/class/ubi/$ubidev/ro_mode")" = 0 ] &&
+	[ "$(cat "$sysfs/reserved_ebs")" = 1 ] &&
+	[ "$(cat "$sysfs/upd_marker")" = 0 ] &&
+	[ "$(cat "$sysfs/corrupted")" = 0 ]
+}
+
+case "$1" in
+	verify-ready)
+		volume="$(recovery_state_device)" || exit 1
+		exec /sbin/xr-boot-recovery verify-ready "$volume"
+		;;
+	reboot-to-uboot)
+		volume="$(recovery_state_device)" && recovery_state_writable "$volume" || {
+			echo "XR1710G: writable boot state volume unavailable" >&2
+			exit 1
+		}
+		exec /sbin/xr-boot-recovery reboot-to-uboot "$volume"
+		;;
+	status)
+		# The NAND helpers may create missing device nodes. A read-only
+		# status request only inspects nodes that already exist.
+		volume="$(
+			ubi_mknod() { :; }
+			recovery_state_device
+		)" 2>/dev/null || volume=
+		[ -c "$volume" ] || volume=
+		if recovery_state_writable "$volume" 2>/dev/null; then
+			exec /sbin/xr-boot-recovery status "$volume" writable
+		fi
+		exec /sbin/xr-boot-recovery status "$volume"
+		;;
+esac
 
 mode="$1"
 rescue_interface="$2"

@@ -67,8 +67,26 @@
     "firmware-build-time-translation": {
       "target": "modules/luci-base/po/zh_Hans/base.po",
       "source_sha256": "057b6bf2103ea4cc12a7b45e275c9cece1c37e0adb1b1b6b3b6b42ac019e502e",
-      "patched_sha256": "e29be933afdec75788ad308711f8181f6700155a8245c8865058c8b16ea6cfa5",
-      "patch": "patches/feeds/luci/modules/luci-base/po/zh_Hans/120-firmware-build-time.patch"
+      "patched_sha256": "f5077889b0a288aeeb6ddc77bbbb9f935bfc6743659963fbc16531a8f3d6c20e",
+      "patch": "patches/feeds/luci/modules/luci-base/po/zh_Hans/120-dicttech-system-strings.patch"
+    },
+    "boot-recovery-reboot-view": {
+      "target": "modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js",
+      "source_sha256": "dd7e1ad72d2da510e53b194d40d9b45ec2a901939cdf655a4fc930cf42fba079",
+      "patched_sha256": "75c2f7f2a5db0c0d555362f4f9f19ab0fcc3c74e42f8da96eb3f2ee2a02603d7",
+      "patch": "patches/feeds/luci/modules/luci-mod-system/130-xr1710g-boot-recovery.patch"
+    },
+    "boot-recovery-reboot-acl": {
+      "target": "modules/luci-mod-system/root/usr/share/rpcd/acl.d/luci-mod-system.json",
+      "source_sha256": "e8816aeecc4f1a3d30476fbe626c5eab89f516358c89602cc5740e13456d3379",
+      "patched_sha256": "2f71c86e092eb467a98c7ffe35baf0f700b1f90952d970c353f25222ac2fc0f1",
+      "patch": "patches/feeds/luci/modules/luci-mod-system/130-xr1710g-boot-recovery.patch"
+    },
+    "boot-recovery-reboot-rpc": {
+      "target": "modules/luci-mod-system/root/usr/libexec/rpcd/xr.boot-recovery",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "patched_sha256": "5a9698d0f0f92a85295e2e51c3a583bbcc992cb88dae810ad8e50d2a3ed91e9a",
+      "patch": "patches/feeds/luci/modules/luci-mod-system/130-xr1710g-boot-recovery.patch"
     }
   },
   "feed_app_airoha_revision": "d496614002cf21f83e96e4741716eab1e5333ede"

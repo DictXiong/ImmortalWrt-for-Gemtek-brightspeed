@@ -259,7 +259,7 @@
 +#endif
 --- /dev/null
 +++ b/xr-boot-recovery.c
-@@ -0,0 +1,266 @@
+@@ -0,0 +1,300 @@
 +/* SPDX-License-Identifier: LGPL-2.1-only */
 +
 +#include <mtd/ubi-user.h>
@@ -401,13 +401,41 @@
 +	return len == 4 && read_be32(seq) == boot->seq;
 +}
 +
++static bool normal_oneshot_supported(const struct xr_recovery_boot *boot)
++{
++	return !geteuid() && !boot->mode && access("/tmp/.failsafe", F_OK) < 0 &&
++	       errno == ENOENT && oneshot_supported(boot);
++}
++
++static void recovery_status(const char *volume, bool writable)
++{
++	struct xr_recovery_boot boot;
++	const char *state;
++	bool can_reboot = false;
++
++	if (!xr_recovery_read_boot(&boot))
++		state = "no-handoff";
++	else if (!*volume)
++		state = "state-unavailable";
++	else if (!verify_ready(&boot, volume))
++		state = "unconfirmed";
++	else if (!writable)
++		state = "ready-readonly";
++	else {
++		state = "ready";
++		can_reboot = normal_oneshot_supported(&boot);
++	}
++
++	printf("{\"state\":\"%s\",\"can_reboot_to_uboot\":%s}\n",
++	       state, can_reboot ? "true" : "false");
++}
++
 +static int reboot_to_uboot(const struct xr_recovery_boot *boot, const char *volume)
 +{
 +	uint8_t ready[XR_RECORD_SIZE], request[XR_RECORD_SIZE];
 +	int fd, result = 1;
 +
-+	if (geteuid() || boot->mode || !access("/tmp/.failsafe", F_OK) ||
-+	    errno != ENOENT || !oneshot_supported(boot)) {
++	if (!normal_oneshot_supported(boot)) {
 +		fputs("XR1710G: a supported normal boot is required\n", stderr);
 +		return 1;
 +	}
@@ -475,6 +503,12 @@
 +{
 +	struct xr_recovery_boot boot;
 +	bool failsafe;
++
++	if ((argc == 3 || (argc == 4 && !strcmp(argv[3], "writable"))) &&
++	    !strcmp(argv[1], "status")) {
++		recovery_status(argv[2], argc == 4);
++		return 0;
++	}
 +
 +	if (argc == 3 && !strcmp(argv[1], "verify-ready")) {
 +		size_t len;

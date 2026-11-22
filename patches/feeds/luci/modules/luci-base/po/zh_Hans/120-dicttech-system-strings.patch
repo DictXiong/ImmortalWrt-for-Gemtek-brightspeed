@@ -1,0 +1,75 @@
+diff --git a/modules/luci-base/po/zh_Hans/base.po b/modules/luci-base/po/zh_Hans/base.po
+index 5a2bce2..9290c49 100644
+--- a/modules/luci-base/po/zh_Hans/base.po
++++ b/modules/luci-base/po/zh_Hans/base.po
+@@ -5033,6 +5033,10 @@ msgstr "固件文件"
+ msgid "Firmware Version"
+ msgstr "固件版本"
+ 
++#: modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/10_system.js
++msgid "Firmware Build Time"
++msgstr "固件构建时间"
++
+ #: modules/luci-mod-network/htdocs/luci-static/resources/view/network/dns.js:248
+ msgid "First answer wins."
+ msgstr "以首个应答为准。"
+@@ -16581,3 +16585,59 @@ msgstr "温度"
+ 
+ #~ msgid "Set Static"
+ #~ msgstr "设为静态"
++
++#: modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
++msgid "Boot recovery"
++msgstr "启动容错"
++
++#: modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
++msgid "Boot recovery is not available on this firmware."
++msgstr "此固件不支持启动容错。"
++
++#: modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
++msgid "No valid boot recovery handoff for the current boot."
++msgstr "本次启动没有收到有效的容错引导信息。"
++
++#: modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
++msgid "The boot recovery state volume is unavailable."
++msgstr "启动容错状态卷不可用。"
++
++#: modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
++msgid "The current boot could not be confirmed."
++msgstr "本次启动尚未通过容错确认。"
++
++#: modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
++msgid "The current boot is confirmed."
++msgstr "本次启动已通过容错确认。"
++
++#: modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
++msgid "Could not read the boot recovery status."
++msgstr "无法读取启动容错状态。"
++
++#: modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
++msgid "Reboot to U-Boot is unavailable in the current boot."
++msgstr "本次启动无法使用重启到 U-Boot。"
++
++#: modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
++msgid "Reboot to U-Boot"
++msgstr "重启到 U-Boot"
++
++#: modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
++msgid "The connection will be interrupted and the next boot will enter U-Boot web recovery."
++msgstr "连接将暂时中断，下一次启动将进入 U-Boot 网页恢复。"
++
++#: modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
++msgid "The U-Boot reboot request was rejected."
++msgstr "重启到 U-Boot 的请求被拒绝。"
++
++#: modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
++msgid "After reboot, open the U-Boot recovery page at:"
++msgstr "设备重启后，请打开以下 U-Boot 恢复地址："
++
++#: modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
++msgid "Could not verify whether the reboot request was accepted."
++msgstr "无法确认重启请求是否已受理。"
++
++#: modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
++msgid "The current boot is confirmed, but the boot recovery state volume is not writable."
++msgstr "本次启动已通过容错确认，但启动容错状态卷不可写。"

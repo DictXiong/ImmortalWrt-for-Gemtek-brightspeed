@@ -1,0 +1,177 @@
+diff --git a/modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js b/modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
+index 92e1dd4..1103834 100644
+--- a/modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
++++ b/modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
+@@ -10,12 +10,46 @@ var callReboot = rpc.declare({
+ 	expect: { result: 0 }
+ });
+ 
++var callRecoveryStatus = rpc.declare({
++	object: 'xr.boot-recovery',
++	method: 'status',
++	reject: true
++});
++
++var callRecoveryReboot = rpc.declare({
++	object: 'xr.boot-recovery',
++	method: 'reboot_to_uboot',
++	reject: true
++});
++
++var recoveryStatus = {
++	unsupported: _('Boot recovery is not available on this firmware.'),
++	'no-handoff': _('No valid boot recovery handoff for the current boot.'),
++	'state-unavailable': _('The boot recovery state volume is unavailable.'),
++	unconfirmed: _('The current boot could not be confirmed.'),
++	'ready-readonly': _('The current boot is confirmed, but the boot recovery state volume is not writable.'),
++	ready: _('The current boot is confirmed.')
++};
++
++function recoveryAddress() {
++	var url = 'http://192.168.0.1/';
++
++	return E('p', [
++		_('After reboot, open the U-Boot recovery page at:'), ' ',
++		E('a', { 'href': url }, url)
++	]);
++}
++
+ return view.extend({
+ 	load: function() {
+-		return uci.changes();
++		return Promise.all([uci.changes(), L.resolveDefault(callRecoveryStatus(), null)]);
+ 	},
+ 
+-	render: function(changes) {
++	render: function(data) {
++		var changes = data[0], recovery = data[1];
++		var state = recovery && recovery.state;
++		var canReboot = state === 'ready' && recovery.can_reboot_to_uboot === true;
++		var canWrite = L.hasViewPermission();
+ 		var body = E([
+ 			E('h2', _('Reboot')),
+ 			E('p', {}, _('Reboots the operating system of your device'))
+@@ -30,12 +64,62 @@ return view.extend({
+ 		body.appendChild(E('hr'));
+ 		body.appendChild(E('button', {
+ 			'class': 'cbi-button cbi-button-action important',
++			'disabled': !canWrite ? '' : null,
+ 			'click': ui.createHandlerFn(this, 'handleReboot')
+ 		}, _('Perform reboot')));
+ 
++		body.appendChild(E('hr'));
++		body.appendChild(E('h3', _('Boot recovery')));
++		body.appendChild(E('p', Object.hasOwn(recoveryStatus, state) ? recoveryStatus[state] :
++			_('Could not read the boot recovery status.')));
++		if (state === 'ready' && !canReboot)
++			body.appendChild(E('p', _('Reboot to U-Boot is unavailable in the current boot.')));
++		body.appendChild(E('button', {
++			'class': 'cbi-button cbi-button-action',
++			'disabled': !canReboot || !canWrite ? '' : null,
++			'click': ui.createHandlerFn(this, 'confirmRecoveryReboot')
++		}, _('Reboot to U-Boot')));
++
+ 		return body;
+ 	},
+ 
++	confirmRecoveryReboot: function() {
++		ui.showModal(_('Reboot to U-Boot'), [
++			E('p', _('The connection will be interrupted and the next boot will enter U-Boot web recovery.')),
++			recoveryAddress(),
++			E('div', { 'class': 'right' }, [
++				E('button', { 'class': 'btn', 'click': ui.hideModal }, _('Cancel')),
++				' ',
++				E('button', {
++					'class': 'btn cbi-button-action important',
++					'click': ui.createHandlerFn(this, 'requestRecoveryReboot')
++				}, _('Reboot to U-Boot'))
++			])
++		]);
++	},
++
++	requestRecoveryReboot: function() {
++		return callRecoveryReboot().then(function(result) {
++			if (!result || result.code !== 0) {
++				ui.hideModal();
++				ui.addNotification(null, E('p', [
++					_('The U-Boot reboot request was rejected.'),
++					result && result.error ? ' ' + result.error : ''
++				]));
++				return;
++			}
++			ui.showModal(_('Reboot to U-Boot'), [recoveryAddress()]);
++		}).catch(function() {
++			ui.showModal(_('Reboot to U-Boot'), [
++				E('p', _('Could not verify whether the reboot request was accepted.')),
++				recoveryAddress(),
++				E('div', { 'class': 'right' }, [
++					E('button', { 'class': 'btn', 'click': ui.hideModal }, _('Close'))
++				])
++			]);
++		});
++	},
++
+ 	handleReboot: function(ev) {
+ 		return callReboot().then(function(res) {
+ 			if (res != 0) {
+diff --git a/modules/luci-mod-system/root/usr/libexec/rpcd/xr.boot-recovery b/modules/luci-mod-system/root/usr/libexec/rpcd/xr.boot-recovery
+new file mode 100755
+index 0000000..ab27d04
+--- /dev/null
++++ b/modules/luci-mod-system/root/usr/libexec/rpcd/xr.boot-recovery
+@@ -0,0 +1,28 @@
++#!/bin/sh
++
++case "$1:$2" in
++	list:)
++		printf '%s\n' '{"status":{},"reboot_to_uboot":{}}'
++		;;
++	call:status)
++		if [ -x /lib/xr-boot-recovery ]; then
++			exec /lib/xr-boot-recovery status
++		fi
++		printf '%s\n' '{"state":"unsupported","can_reboot_to_uboot":false}'
++		;;
++	call:reboot_to_uboot)
++		. /usr/share/libubox/jshn.sh
++		if [ -x /sbin/reboot-to-uboot ]; then
++			error="$(/sbin/reboot-to-uboot 2>&1)"
++			code=$?
++		else
++			error='XR1710G: boot recovery is not installed'
++			code=1
++		fi
++		json_init
++		json_add_int code "$code"
++		[ "$code" -eq 0 ] || json_add_string error "$error"
++		json_dump
++		;;
++	*) exit 1;;
++esac
+diff --git a/modules/luci-mod-system/root/usr/share/rpcd/acl.d/luci-mod-system.json b/modules/luci-mod-system/root/usr/share/rpcd/acl.d/luci-mod-system.json
+index ce8437f..8f506f6 100644
+--- a/modules/luci-mod-system/root/usr/share/rpcd/acl.d/luci-mod-system.json
++++ b/modules/luci-mod-system/root/usr/share/rpcd/acl.d/luci-mod-system.json
+@@ -212,14 +212,20 @@
+ 	},
+ 
+ 	"luci-mod-system-reboot": {
+-		"description": "Allow rebooting the device",
++		"description": "Allow checking boot recovery and rebooting the device",
++		"read": {
++			"ubus": {
++				"xr.boot-recovery": [ "status" ]
++			}
++		},
+ 		"write": {
+ 			"file": {
+ 				"/sbin/reboot": [ "exec" ]
+ 			},
+ 			"ubus": {
+ 				"file": [ "exec" ],
+-				"system": [ "reboot" ]
++				"system": [ "reboot" ],
++				"xr.boot-recovery": [ "reboot_to_uboot" ]
+ 			}
+ 		}
+ 	},
