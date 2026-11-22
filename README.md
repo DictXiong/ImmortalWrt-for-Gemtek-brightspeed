@@ -2,9 +2,20 @@
 
 [![构建](https://github.com/DictXiong/ImmortalWrt-for-Gemtek-brightspeed/actions/workflows/xr1710g-release.yml/badge.svg?branch=master)](https://github.com/DictXiong/ImmortalWrt-for-Gemtek-brightspeed/actions/workflows/xr1710g-release.yml)
 [![最新发布](https://img.shields.io/github/v/release/DictXiong/ImmortalWrt-for-Gemtek-brightspeed?sort=date)](https://github.com/DictXiong/ImmortalWrt-for-Gemtek-brightspeed/releases/latest)
+[![Upstream](https://img.shields.io/badge/upstream-naoki66%20%40%209a70b257-blue)](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/commit/9a70b25731dc64822dcb24cf9a7dbe7a84ed1ba1)
+[![Kernel](https://img.shields.io/badge/kernel-Linux%206.18-red)](target/linux/generic/kernel-6.18)
+[![SoC](https://img.shields.io/badge/SoC-Airoha%20AN7581GT-orange)](target/linux/airoha/dts/an7581-xr1710g.dts)
+[![License](https://img.shields.io/badge/license-GPL--2.0--only-green)](COPYING)
 [English](README.en.md)
 
 面向 Gemtek XR1710G 的 ImmortalWrt 固件。支持三频 Wi-Fi 7、两只 10G 和两只 1G 电口，集成 Airoha 管理页、LuCI、可选的有线回程漫游管理 [wrtmesh](https://github.com/DictXiong/wrtmesh) 和声明式配置工具 [wrtix](https://github.com/DictXiong/wrtix)。本仓只维护并发布 XR1710G 固件，XG2010G 和其他机型不在维护范围。
+
+> [!NOTE]
+> **本仓在上游基础上加入的功能**
+>
+> - [网关与 AP 两种默认角色](docs/xr1710g-full.md)，集成 LuCI 改进、命令行工具、wrtix 和 wrtmesh。
+> - [AP 分级启动容错](docs/xr1710g-ap-operations.md)、保配置迁移，以及 LuCI 的容错状态和一次性「重启到 U-Boot」。
+> - [Airoha 桥接卸载修复](docs/airoha-bridge-fallback-lifecycle.md)，覆盖转发状态、FDB 生命周期及老化。
 
 ## 下载和初始网络
 
