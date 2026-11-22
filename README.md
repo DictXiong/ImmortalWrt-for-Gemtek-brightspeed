@@ -6,6 +6,13 @@
 
 面向 Gemtek XR1710G 的 ImmortalWrt 固件。支持三频 Wi-Fi 7、两只 10G 和两只 1G 电口，集成 Airoha 管理页、LuCI、可选的有线回程漫游管理 [wrtmesh](https://github.com/DictXiong/wrtmesh) 和声明式配置工具 [wrtix](https://github.com/DictXiong/wrtix)。本仓只维护并发布 XR1710G 固件，XG2010G 和其他机型不在维护范围。
 
+> [!NOTE]
+> **本仓在上游基础上加入的功能**
+>
+> - [网关与 AP 两种默认角色](docs/xr1710g-full.md)，集成 LuCI 改进、命令行工具、wrtix 和 wrtmesh。
+> - [AP 分级启动容错](docs/xr1710g-ap-operations.md)、保配置迁移，以及 LuCI 的容错状态和一次性「重启到 U-Boot」。
+> - [Airoha 桥接卸载修复](docs/airoha-bridge-fallback-lifecycle.md)，覆盖转发状态、FDB 生命周期及老化。
+
 ## 下载和初始网络
 
 从[最新发布](https://github.com/DictXiong/ImmortalWrt-for-Gemtek-brightspeed/releases/latest)选择角色和匹配设备的 Legacy 镜像。直接升级使用 `-sysupgrade.itb`，配套 APK、精确源码与构建清单见同一 Release。刷机前核对 `sha256sums` 并备份配置。

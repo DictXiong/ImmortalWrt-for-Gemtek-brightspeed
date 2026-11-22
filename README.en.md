@@ -6,6 +6,13 @@
 
 ImmortalWrt firmware for the Gemtek XR1710G. It supports tri-band Wi-Fi 7, two 10 GbE and two 1 GbE ports, Airoha management pages and LuCI. It includes [wrtmesh](https://github.com/DictXiong/wrtmesh) for optional wired-backhaul roaming management and [wrtix](https://github.com/DictXiong/wrtix) for optional declarative configuration. This repository maintains and releases firmware for the XR1710G. The XG2010G and other models are outside its maintenance scope.
 
+> [!NOTE]
+> **What this fork adds**
+>
+> - [Gateway and AP defaults](docs/xr1710g-full.md), with LuCI improvements, command-line tools, wrtix and wrtmesh.
+> - [Staged AP boot recovery](docs/xr1710g-ap-operations.en.md), settings-preserving migration, and recovery status and one-shot **Reboot to U-Boot** in LuCI.
+> - [Airoha bridge offload fixes](docs/airoha-bridge-fallback-lifecycle.md) for forwarding state, FDB lifecycle and aging.
+
 ## Downloads and initial network settings
 
 Choose a role and the matching legacy image from the [latest release](https://github.com/DictXiong/ImmortalWrt-for-Gemtek-brightspeed/releases/latest). Use the `-sysupgrade.itb` for an upgrade. The release also includes matching APKs, exact source archives and build manifests. Verify `sha256sums` and back up your settings before flashing.
