@@ -51,9 +51,9 @@ class ReleaseTests(unittest.TestCase):
         d={k:v for k,v in r.plan(self.repo).items() if k!='feed_text'}
         d.update(schema_version=r.ARTIFACT_SCHEMA, flavor='full',role=role,layout='legacy',
                  source_commit=self.head,source_tree=self.tree,
-                 build_version='3.1.0-alpha.1-'+self.head[:12],feed_lock_sha256='e'*64)
+                 build_version=d['version']+'-'+self.head[:12],feed_lock_sha256='e'*64)
         if update:d.update(update)
-        prefix='xr1710g-full-'+role+'-legacy-'+d['build_version']; image=prefix+'-squashfs-sysupgrade.itb'
+        prefix=r.asset_prefix(d); image=prefix+'-squashfs-sysupgrade.itb'
         members={'source.json':json.dumps(d).encode(),image:b'image fixture '+role.encode(),
                  image.removesuffix('-squashfs-sysupgrade.itb')+'.manifest':manifest.encode(),
                  'config.buildinfo':(config+('CONFIG_XR1710G_DEFAULT_ROLE_AP=y\n' if role=='ap' else '# CONFIG_XR1710G_DEFAULT_ROLE_AP is not set\n')).encode(),
@@ -125,8 +125,24 @@ class ReleaseTests(unittest.TestCase):
 
     def test_version_mapping(self):
         for tag,expected in [('3.0.0','3.0.0'),('3.1.0-alpha.1','3.1.0_alpha1'),('3.1.0-beta.2','3.1.0_beta2'),('3.1.0-rc.3','3.1.0_rc3')]:self.assertEqual(r.package_version(tag),expected)
-        for tag in ['3.0','3.0.0-alpha.0','3.0.0;echo secret','v3.0.0']:
+        for tag in ['3.0','3.0.0-alpha.0','3.0.0;echo secret','v3.0.0','20260229','20261131','20261301']:
             with self.assertRaises(ValueError):r.package_version(tag)
+        self.assertEqual(r.release_tag('3.1.0-rc.3'), 'v3.1.0-rc.3')
+        self.assertEqual(r.release_tag('20280229'), '20280229')
+
+    def test_calendar_release_assembles_both_roles_with_dated_names(self):
+        version = '20261122'
+        self.put('configs/xr1710g-release.json', json.dumps(
+            {'schema_version': 3, 'version': version, 'upstream_base': self.base}))
+        self.put('package/dicttech/xr1710g-full/Makefile', f'PKG_VERSION:={version}\n')
+        self.head = self.commit('Calendar release')
+        self.tree = r.git(self.repo, 'rev-parse', 'HEAD^{tree}')
+        self.pair()
+        self.assemble()
+        names = {path.name for path in self.output().iterdir()}
+        for role in r.ROLES:
+            self.assertIn(f'immortalwrt-xr1710g-{role}-legacy-{version}-{self.head[:12]}-sysupgrade.itb', names)
+        self.assertEqual(len(names), 10)
 
     def test_pair_accepts_roles_and_writes_checked_public_assets(self):
         self.pair();self.assemble();x=json.loads((self.output()/'release-pair.json').read_text())

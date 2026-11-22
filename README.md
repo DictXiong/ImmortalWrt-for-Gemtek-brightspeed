@@ -1,230 +1,30 @@
-<img src="https://avatars.githubusercontent.com/u/53193414?s=200&v=4" alt="logo" width="200" height="200" align="right">
+# ImmortalWrt for XR1710G
 
-# ImmortalWrt for Brightspeed / Gemtek：XR1710G 与 XG2010G
+[![构建](https://github.com/DictXiong/ImmortalWrt-for-Gemtek-brightspeed/actions/workflows/xr1710g-release.yml/badge.svg?branch=master)](https://github.com/DictXiong/ImmortalWrt-for-Gemtek-brightspeed/actions/workflows/xr1710g-release.yml)
+[![最新发布](https://img.shields.io/github/v/release/DictXiong/ImmortalWrt-for-Gemtek-brightspeed?sort=date)](https://github.com/DictXiong/ImmortalWrt-for-Gemtek-brightspeed/releases/latest)
+[English](README.en.md)
 
-[English →](README.en.md) · **简体中文**
+面向 Gemtek XR1710G 的 ImmortalWrt 固件。支持三频 Wi-Fi 7、两只 10G 和两只 1G 电口，集成 Airoha 管理页、LuCI、可选的有线回程漫游管理 [wrtmesh](https://github.com/DictXiong/wrtmesh) 和声明式配置工具 [wrtix](https://github.com/DictXiong/wrtix)。本仓只维护并发布 XR1710G 固件，XG2010G 和其他机型不在维护范围。
 
-[![Build Status](https://img.shields.io/github/actions/workflow/status/DictXiong/ImmortalWrt-for-Gemtek-brightspeed/xr1710g-release.yml?branch=master&label=Full%20build)](https://github.com/DictXiong/ImmortalWrt-for-Gemtek-brightspeed/actions/workflows/xr1710g-release.yml)
-[![Upstream](https://img.shields.io/badge/upstream-immortalwrt-blue)](https://github.com/immortalwrt/immortalwrt)
-[![Kernel](https://img.shields.io/badge/kernel-6.18-red)](https://www.kernel.org/)
-[![SoC](https://img.shields.io/badge/SoC-Airoha%20AN7581-orange)]()
-[![License](https://img.shields.io/badge/license-GPL--2.0-green)](https://spdx.org/licenses/GPL-2.0-only.html)
+## 下载和初始网络
 
-> 基于 [ImmortalWrt](https://github.com/immortalwrt/immortalwrt) 的 Airoha AN7581 固件项目，为两款硬件相互隔离的 Brightspeed/Gemtek 设备维护独立的构建配置与镜像：XR1710G（10G Wi-Fi 7 路由器）和 XG2010G（XG(S)-PON/XE-PON 网关）。
+从[最新发布](https://github.com/DictXiong/ImmortalWrt-for-Gemtek-brightspeed/releases/latest)选择角色和匹配设备的 Legacy 镜像。直接升级使用 `-sysupgrade.itb`，配套 APK、精确源码与构建清单见同一 Release。刷机前核对 `sha256sums` 并备份配置。
 
-> [!NOTE]
-> **相对 naoki 上游的改动**
->
-> - [XR1710G Full 固件](docs/xr1710g-full.md)提供网关和 AP 两种默认角色，加入 LuCI 改进与命令行工具，并集成 wrtix 声明式配置和 wrtmesh 有线回程漫游。
-> - [Airoha 桥接卸载修复](docs/airoha-bridge-fallback-lifecycle.md)涵盖转发策略和 FDB 老化。
-> - Full Legacy AP 搭配二级 U-Boot，支持[自动分级恢复、一次性网页入口和保配置迁移](docs/xr1710g-ap-operations.md)。
-
-**文档基线**：
->naoki `master` @ `9a70b25731dc`（2026-11-15 核对）。
->重要功能与稳定性变更见 [更新日志](CHANGELOG.md)。
->当前内核基线为 `6.18.60`（[`target/linux/generic/kernel-6.18`](target/linux/generic/kernel-6.18)），
->本分支固定集成 naoki `9a70b25731dc`；继承的自动同步写入工作流已停用。
-
-[完整版固件](docs/xr1710g-full.md)提供通用路由功能、改进的 WebUI、命令行工具、
-可选的 wrtix 配置管理与有线回程漫游软件包。初始配置沿用 OpenWrt 的 LAN/WAN 行为，
-无线默认关闭，不包含个人公钥、密码、维护地址或私人 AP 策略。
-[双角色发布流程](docs/xr1710g-releases.md)从同一份 Full 源码构建 `gateway` 网关和
-`ap` 接入点两种镜像，共用驱动、软件包与 wrtix，仅默认网络配置不同。
-Fixes 通用修复版已停止维护和新增构建；历史标签及发布附件保留。主开发分支为 `master`。
-
-## 速览
-
-| 设备 | 定位 | 种子配置 | 当前启用的 profile | 引导方式 / 状态   |
-|------|------|----------|--------------------|------------------ |
-| XR1710G（原厂 U-Boot 分区 + chainloader） | 10G Wi-Fi 7 路由器 | [`1710.config`](1710.config) | `gemtek_xr1710g` | [naoki66/Gemtek-brightspeed-chainloader](https://github.com/naoki66/Gemtek-brightspeed-chainloader) · [Full AP 配套二级 U-Boot](https://github.com/DictXiong/Gemtek-brightspeed-chainloader)   |
-| XR1710G（OpenWrt U-Boot UBI 布局） | 整盘 UBI 引导方案 | [`1710.config`](1710.config) | profile 已定义，种子配置未启用 | **暂未完成：缺少 trueKey**   |
-| XG2010G（1 GiB / 2 GiB 自适应） | XG(S)-PON 网关 | [`2010.config`](2010.config) | `gemtek_xg2010g-ubi` | [naoki66/uboot-an758x](https://github.com/naoki66/uboot-an758x)   |
-| Nokia XG-040G-MD / XG-040G-TF（UBI，512 MiB / 1 GiB 自适应） | 附加设备配置 | [`040.config`](040.config) / [`040-tf.config`](040-tf.config) | 各自独立配置，CI 不提供 | [naoki66/uboot-an758x](https://github.com/naoki66/uboot-an758x)   |
-
-> [!WARNING]
-> XR1710G 与 XG2010G 虽然同属 Airoha AN7581 平台，但分区布局、设备树和软件包集合完全不同，**不能互刷固件**；同一设备的原厂分区与 UBI 布局镜像也因 `SUPPORTED_DEVICES` 不同而不能互刷。
->
-> XR1710G 的 OpenWrt U-Boot UBI 布局**暂未完成（缺少 trueKey）**；当前 XR1710G 使用「原厂 U-Boot 分区 + chainloader」方案，详见[引导方案与完成状态](#引导方案与完成状态)。
-
-## 目录
-
-[快速开始](#快速开始) · [支持设备](#支持设备) · [安装、升级与恢复](#安装升级与恢复) · [首次启动默认设置](#首次启动默认设置) · [构建与发布](#构建与发布) · [刷写与升级注意事项](#刷写与升级注意事项) · [致谢](#致谢) · [许可证](#许可证)
-
-## 快速开始
-
-1. 确认机型和分区布局。XR1710G Full 在[本仓 Releases](https://github.com/DictXiong/ImmortalWrt-for-Gemtek-brightspeed/releases)选择 **gateway** 或 **ap**，使用[同批发布的校验文件](docs/xr1710g-releases.md)核对镜像。[上游 Releases](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/releases)提供原种子配置的镜像及对应校验文件。
-2. 根据现有引导器和机型选择[安装、升级与恢复](#安装升级与恢复)路径。运行中的 OpenWrt 先通过原生镜像检查，再执行升级。
-3. 首次启动后通过[镜像默认管理地址](#首次启动默认设置)登录，设置 root 密码，检查无线和远程访问配置。
-
-## 支持设备
-
-### 硬件与配置对比
-
-| 项目 | XR1710G | XG2010G | Nokia XG-040G-MD | Nokia XG-040G-TF |
-|------|---------|---------|------------------|------------------|
-| **定位** | 10G Wi-Fi 7 路由器 | XG(S)-PON 网关 | XG(S)-PON 网关 | XG(S)-PON 网关 |
-| **SoC** | Airoha AN7581GT（1.3 GHz 4 核 + 8 核 NPU） | Airoha AN7581 / EN7581 | Airoha AN7581 / EN7581 | Airoha AN7581 / EN7581 |
-| **内存** | 2 GiB DDR4 | 1 GiB DDR4；自适应魔改 2 GiB | 512 MiB / 自适应魔改 1 GiB | 512 MiB / 自适应魔改 1 GiB |
-| **闪存** | 512 MiB SPI-NAND | 512 MiB SPI-NAND（W25N04KV） | 256 MiB SPI-NAND（`all_flash` 0x10000000） | 同 MD |
-| **以太网** | 2×10G RTL8261BE + 2×1G AN7581 | 2×10G RTL8261N + 1×2.5G EN8811H + 1G 交换端口 | 1×2.5G EN8811H + 3×1G 交换端口（lan2–lan4） | 同 MD |
-| **光接入** | 无（纯网口设备） | EN7572 xPON 前端 | EN7572 xPON 前端 | EN7572 xPON 前端 |
-| **无线** | MT7996AV BE19000，三频 1376 / 5760 / 11520 Mbps | 无 | 无 | 无 |
-| **USB** | 无 | 无 | 2 个 USB 端口 | 无 |
-| **风扇 / 供电** | NCT7802 PWM 风扇；12 V 5 A | — | — | — |
-| **设备树** | [`an7581-xr1710g.dts`](target/linux/airoha/dts/an7581-xr1710g.dts)（另有未完成的 UBI 布局 DTS） | [`an7581-gemtek-xg2010g-ubi.dts`](target/linux/airoha/dts/an7581-gemtek-xg2010g-ubi.dts) | [`an7581-nokia_xg-040g-md-ubi.dts`](target/linux/airoha/dts/an7581-nokia_xg-040g-md-ubi.dts) | [`an7581-nokia_xg-040g-tf-ubi.dts`](target/linux/airoha/dts/an7581-nokia_xg-040g-tf-ubi.dts) |
-| **种子配置** | [`1710.config`](1710.config) | [`2010.config`](2010.config) | [`040.config`](040.config) | [`040-tf.config`](040-tf.config) |
-| **引导 / 状态** | 原厂 U-Boot + chainloader；UBI 布局暂未完成（缺少 trueKey） | naoki66/uboot-an758x | naoki66/uboot-an758x | 同 MD |
-
-> 表中参数取自各设备 DTS、[`an7581.mk`](target/linux/airoha/image/an7581.mk) 与根目录 `*.config`；「—」表示仓库未给出该项。XR1710G 三频芯片为 MT7976GN / MT7977BN / MT7977AN，峰值为 802.11be 理论 PHY 速率，合计约 18.66 Gbps（BE19000 级别）；精确 MCS 记法为 1375 / 5765 / 11530 Mbps，差异仅来自取整。来源：[D-Link DPN-BE19000GR](https://www.dlink.com.sg/products/be19000-tri-band-10g-wi-fi-7-router)、[WikiDevi Brightspeed XR1710G](https://wikidevi.wi-cat.ru/Brightspeed_XR1710G)、[MediaTek Filogic 880](https://www.mediatek.com/zh-tw/products/broadband-wifi/mediatek-filogic-880)。
-
-`1710.config` 当前 `CONFIG_TARGET_MULTI_PROFILE is not set`，一次构建只产出 `gemtek_xr1710g` 一份固件；`2010.config` 只启用 `gemtek_xg2010g-ubi`。CI 的 `config_seed` 输入仅接受 `1710.config` 与 `2010.config`（默认 `1710.config`）。
-
-### 引导方案与完成状态
-
-> 维护者备注（2026-11-10）：引导实现在独立仓库维护，下表说明本固件仓库与它们的对应关系。
-
-| 设备 / 布局 | 引导实现 | 状态 |
-|-------------|----------|------|
-| XR1710G（原厂 U-Boot 分区 + chainloader） | [二级 U-Boot](https://github.com/DictXiong/Gemtek-brightspeed-chainloader)（[naoki 上游](https://github.com/naoki66/Gemtek-brightspeed-chainloader)） | 当前方案；保留原厂前 6 MiB，在 NAND `0x600000` 写入 1 MiB chainloader 槽位 |
-| XR1710G（OpenWrt U-Boot UBI 布局） | 需从 `0x0` 重建引导区 | **暂未完成：缺少 trueKey**，请勿刷写该布局镜像 |
-| XG2010G（1 GiB / 2 GiB 自适应） | [naoki66/uboot-an758x](https://github.com/naoki66/uboot-an758x)（`xg2010g` / `xg2010g-2g`） | 使用中 |
-| Nokia XG-040G-MD / XG-040G-TF（UBI，512 MiB / 1 GiB 自适应） | [naoki66/uboot-an758x](https://github.com/naoki66/uboot-an758x)（`xg-040g-md` / `xg-040g-tf` 及 `-1g` target） | 使用中 |
-
-> [!WARNING]
-> XR1710G 的 OpenWrt U-Boot UBI 布局暂未完成（缺少 trueKey）。当前请只使用「原厂 U-Boot 分区 + chainloader」方案，不要刷写 `gemtek_xr1710g-ubi` 镜像。XG2010G 与 Nokia 设备由 `naoki66/uboot-an758x` 引导，其引导区布局与 chainloader 方案不同，不可混用。
-
-## 安装、升级与恢复
-
-| 要做什么 | 指南 |
+| 角色 | 首次启动或恢复出厂后的网络 |
 | --- | --- |
-| 在原厂分区布局上安装 XR1710G Full | [二级 U-Boot 安装与升级](https://github.com/DictXiong/Gemtek-brightspeed-chainloader/blob/main/README.md#安装与升级) |
-| 升级 Full AP，或从旧升级器保留配置迁移 | [Full AP 安装与保留配置](docs/xr1710g-ap-operations.md) |
-| XR1710G AP 故障恢复，或在 OpenWrt 中主动进入网页恢复 | [Full AP 日常维护与恢复](docs/xr1710g-ap-operations.md#日常维护与恢复) |
-| 安装或升级 XG2010G 与 Nokia 配置 | 核对[引导方案](#引导方案与完成状态)与[刷写注意事项](#刷写与升级注意事项)。 |
+| **网关（gateway）** | WAN 通过 DHCP 获取地址，LAN 管理地址为 `192.168.1.1`，提供 DHCP，IPv4 经 WAN NAT。 |
+| **接入点（AP）** | 四个电口加入同一网桥，从上游获取管理地址。到上游 DHCP 租约表查找地址。设备不提供 DHCP 或 IPv6 RA。 |
 
-配套二级 U-Boot、Full Legacy AP 和可写的状态卷可以自动从正常启动切换到 OpenWrt failsafe，再到 U-Boot 网页恢复。AP 指南分别给出三种环境的接入方法。
+两种角色均以 LAN 侧 SSH 22 和空密码的 `root` 开始，无线与漫游初始关闭。首次启动应在可信网络中进行，登录后设置管理凭据，并按实际地区选择无线监管域和加密参数。保留配置升级沿用设备已有网络。额外手动安装的 APK 需要使用新固件的配套版本重新安装，尤其是内核模块。
 
-## 首次启动默认设置
+## 安装、升级和恢复
 
-以下默认地址与无线设置描述 `1710.config` 上游基线。当前发布的 **Full gateway** 使用 `192.168.1.1` 提供 LAN DHCP，WAN 为 DHCP/NAT；**Full ap** 将四口桥接，自身从上游获取 DHCP 地址，不提供 DHCP 服务。两种 Full 均为 root 空密码、LAN 侧 SSH 22、无线初始关闭。默认角色只在清空配置或恢复出厂后生效；保留配置升级不会切换现有角色。完整说明见 [Full 使用说明](docs/xr1710g-full.md)。
-
-以下表格描述上游种子配置；Full 的默认行为以上述说明为准。
-
-| 项目 | XR1710G | XG2010G / Nokia XG-040G-MD / Nokia XG-040G-TF |
-|------|---------|-------------|
-| 管理地址 | `http://192.168.50.1` 或 `http://immortalwrt.lan` | `http://192.168.1.1` 或 `http://immortalwrt.lan` |
-| 用户名 / 密码 | `root` / 无密码 | `root` / 无密码 |
-| 无线 SSID | `ImmortalWrt-2G`、`ImmortalWrt-5G`、`ImmortalWrt-6G` | 不适用 |
-| 无线密码 | 统一 `12345678` | 不适用 |
-| 加密方式 | 2.4 GHz WPA2 (`psk2`)、5 GHz WPA2/WPA3 (`sae-mixed`)、6 GHz WPA3 (`sae`) | 不适用 |
-| 无线区域码 | `US`（见 [03_wifi_defaults](package/network/config/airoha-an7581-mt7996-board/files/etc/board.d/03_wifi_defaults)） | 不适用 |
-
-默认 IPv6 使用 SLAAC/EUI-64，关闭 DHCPv6/NDP 与 RA DNS/附加标志，减少国内网络环境下的兼容性问题。
-
-> [!WARNING]
-> 出厂凭据是公开信息。首次登录后请立即修改 root 密码与无线密码；在暴露到公网前，也请检查防火墙与 SSH 设置。
+1. **首次安装**采用原厂分区布局及配套的[二级 U-Boot](https://github.com/DictXiong/Gemtek-brightspeed-chainloader#安装与升级)。先确认当前引导器接受的槽位格式。XR1710G 的整盘 UBI 布局尚不适用于本发行版。
+2. **已有可用系统**按[保留配置的升级说明](docs/xr1710g-ap-operations.md#保留配置升级)验签和核对布局。原生升级不会替换二级 U-Boot 或转换分区。
+3. **AP 启动容错**在配套二级 U-Boot 和持久状态卷可用时，从正常启动逐级降级到 OpenWrt failsafe 和 U-Boot 网页恢复。LuCI「系统 → 重启」显示容错状态，并在条件满足时提供「重启到 U-Boot」。测试或维护请使用可信直连或隔离链路。步骤和各阶段地址见[日常维护与恢复](docs/xr1710g-ap-operations.md#日常维护与恢复)。
 
 ## 构建与发布
 
-### 种子配置
+`master` 是开发主线。[构建工作流](.github/workflows/xr1710g-release.yml)从同一源码和依赖锁分别生成网关与 AP 镜像。正式发布使用北京时间的八位日期 `YYYYMMDD` 作为标签，设备从概览和 `/etc/openwrt_release` 显示 `ImmortalWrt for XR1710G YYYYMMDD-提交短哈希`。见[本地构建与发布流程](docs/xr1710g-releases.md)和[固件组件与默认配置](docs/xr1710g-full.md)。
 
-| 文件 | 目标 profile | 用途 |
-|------|--------------|------|
-| [`1710.config`](1710.config) | `DEVICE_gemtek_xr1710g` | XR1710G 原厂分区，CI 默认 |
-| [`2010.config`](2010.config) | `DEVICE_gemtek_xg2010g-ubi` | XG2010G UBI 布局，1 GiB / 2 GiB 自适应 |
-| [`040.config`](040.config) | `DEVICE_nokia_xg-040g-md-ubi` | Nokia XG-040G-MD，附加配置（512 MiB / 1 GiB 自适应） |
-| [`040-tf.config`](040-tf.config) | `DEVICE_nokia_xg-040g-tf-ubi` | Nokia XG-040G-TF，附加配置（512 MiB / 1 GiB 自适应） |
-
-种子文件不会被 `make defconfig` 或 `make menuconfig` 改写，它们只用于 `cp <config> .config`。CI 的 `config_seed` 输入只提供前两项。
-
-### 本地构建
-
-Full 网关和 AP 按[固定输入和角色说明](docs/xr1710g-full.md#building)构建。以下命令用于上游种子配置。
-
-```bash
-git clone https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed.git
-cd ImmortalWrt-for-Gemtek-brightspeed
-./scripts/feeds update -a
-./scripts/feeds install -a
-bash scripts/fix-stale-golang-host.sh
-cp 1710.config .config          # 或 2010.config / 040.config / 040-tf.config
-make defconfig
-bash scripts/set-build-version.sh .config
-make -j$(nproc) world 2>&1 | tee build.log
-bash scripts/summarize-build-errors.sh build.log
-```
-
-> [!NOTE]
-> `make defconfig` 与 `make menuconfig` 只会改写 `.config`。如果执行过这两条命令，编译前请重新执行 `bash scripts/set-build-version.sh .config`，恢复 `CONFIG_VERSION_*`、`CONFIG_TARGET_HOSTNAME`、`CONFIG_EXTRA_IMAGE_NAME` 等构建信息，再运行 `make world`。
-
-构建环境：GNU/Linux（推荐 Debian 11+），AMD64 架构，至少 4 GB RAM 与 25 GB 可用磁盘（并行构建建议更高配置）。依赖清单见 [OpenWrt 构建系统文档](https://openwrt.org/docs/guide-developer/build-system/install-buildsystem)。
-
-构建流程使用 `cp <config> .config && make defconfig && bash scripts/set-build-version.sh .config`，即在 `defconfig` **之后**写入版本字段，避免版本/文件名配置被默认值覆盖。[`scripts/set-build-version.sh`](scripts/set-build-version.sh) 同时写入 LuCI 可见的构建日期与 commit hash：文件名只保留 `日期-本机commit`，完整的 `日期-本机commit-上游commit` 写入 `CONFIG_VERSION_CODE`，可在 LuCI 状态页与 `/etc/openwrt_release` 查看。需要把 revision 也拼进文件名时执行 `VERSION_CODE_FILENAMES=y bash scripts/set-build-version.sh .config`。
-
-### 下载文件
-
-Full 按[双角色发布约定](docs/xr1710g-releases.md#本地构建与配对)命名和核验。下表为上游种子配置的 ITB 文件名。
-
-| 布局 | sysupgrade 文件名 |
-|------|-------------------|
-| XR1710G 原版分区 | `immortalwrt-naoki66-YYYYMMDD-<repo-hash>-airoha-an7581-gemtek_xr1710g-squashfs-sysupgrade.itb` |
-| XR1710G OpenWrt U-Boot UBI 布局（**暂未完成，勿刷写**） | `immortalwrt-naoki66-YYYYMMDD-<repo-hash>-airoha-an7581-gemtek_xr1710g-ubi-squashfs-sysupgrade.itb` |
-| XG2010G UBI 布局 | `immortalwrt-naoki66-YYYYMMDD-<repo-hash>-airoha-an7581-gemtek_xg2010g-ubi-squashfs-sysupgrade.itb` |
-
-XR1710G UBI 布局**暂未完成（缺少 trueKey）**，即使启用 `gemtek_xr1710g-ubi` profile 产出镜像也不要刷写；当前只使用「原厂 U-Boot 分区 + chainloader」方案。每个 Release 还提供软件包 manifest 与按配置区分的 `sha256sums-<配置文件名>`。
-
-## 刷写与升级注意事项
-
-Full 旧布局仍使用各 2 MiB 的 `bootloader`、`uenv`、`dsd`，`chainloader`/`ubi` 偏移不变。Factory 页面只读展示 DSD，不提供写入入口。
-
-
-> [!WARNING]
-> **XR1710G 引导**：原厂 U-Boot 分区固件使用[配套二级引导](https://github.com/DictXiong/Gemtek-brightspeed-chainloader)（保留原厂前 6 MiB，chainloader 写入 NAND `0x600000`）。OpenWrt U-Boot UBI 布局暂未完成（缺少 trueKey），请勿刷写 `gemtek_xr1710g-ubi` 镜像，它还在测试中。
-
-> [!WARNING]
-> **XG2010G 首次刷写**：必须通过串口确认当前启动状态，并完成原厂 NAND/关键分区的只读备份和校验。只允许针对匹配的 `ubi` 分区升级；必须保留 `bootloader`、`uenv`、`dsd` 分区。XG2010G 与 Nokia 设备应使用 [naoki66/uboot-an758x](https://github.com/naoki66/uboot-an758x) 引导，不要和XR1710G混用两套引导布局。
-
-> [!WARNING]
-> **跨版本升级**：LuCI 的「保留配置」不会保留额外安装的软件包。升级前备份配置并记录已安装的软件包（`apk list --installed` 或 LuCI 已安装软件包列表），升级后需要重新安装未预装组件（例如 `luci-app-adguardhome`）。请使用与新固件匹配的软件包，不要恢复旧固件的 `kmod-*` 内核模块。
-
-## 致谢
-
-### 上游固件
-
-- [immortalwrt/immortalwrt](https://github.com/immortalwrt/immortalwrt) - ImmortalWrt 主项目
-- [immortalwrt/luci](https://github.com/immortalwrt/luci) - LuCI Web 界面
-- [immortalwrt/packages](https://github.com/immortalwrt/packages) - 社区软件包仓库
-- [openwrt/routing](https://github.com/openwrt/routing) - OpenWrt 路由相关包
-- [openwrt/mt76](https://github.com/openwrt/mt76) - MediaTek WiFi 驱动
-
-### 参考项目
-
-- [YYH2913/openwrt](https://github.com/YYH2913/openwrt) - XR1710G 6.18 内核集成参考
-- [hurrian/openwrt-w1700k](https://github.com/hurrian/openwrt-w1700k) - XR1710G PCIe 3.0 x2 补丁参考（912 Gen3 速度协商）
-- [lvcdy/openwrt_xr1710g](https://github.com/lvcdy/openwrt_xr1710g) - XR1710G 早期移植参考（分区表、PHY 配置）
-- [Gilly1970/Gemtek-W1700K](https://github.com/Gilly1970/Gemtek-W1700K) - Airoha 风扇控制与 FlowSense（commit `db3f1c8`）
-- [pbs05/uboot-an758x](https://github.com/pbs05/uboot-an758x) - OpenWrt U-Boot 与整盘 UBI 引导方案的上游参考，后续分叉到 [naoki66/uboot-an758x](https://github.com/naoki66/uboot-an758x)
-- [naoki66/uboot-an758x](https://github.com/naoki66/uboot-an758x) - XG2010G 与 Nokia XG-040G-MD / XG-040G-TF 使用的 U-Boot / UBI 引导实现
-
-### XG2010G / Nokia XG-040G-MD / XG-040G-TF PON 驱动与用户态
-
-- [pbs05/openwrt-pon-drivers](https://github.com/pbs05/openwrt-pon-drivers) - 早期 6.18 PON 驱动，后续分叉到 [naoki66/openwrt-pon-drivers](https://github.com/naoki66/openwrt-pon-drivers)
-- [pbs05/openwrt-pon-userspace](https://github.com/pbs05/openwrt-pon-userspace) - 早期 6.18 PON 驱动，后续分叉到 [naoki66/OpenWrt_ONU_CONFIG](https://github.com/naoki66/OpenWrt_ONU_CONFIG)
-
-### LuCI 应用来源
-
-**[naoki66/luci-app-airoha](https://github.com/naoki66/luci-app-airoha)** 是本固件 Airoha 设备专属 LuCI 应用的主要来源，提供 `luci-app-airoha-npu`、`luci-app-airoha-fancontrol`、`luci-app-netmode` 等界面；具体预装范围以根目录 `*.config` 为准。
-
-其他来源：
-
-- [sirpdboy/luci-app-lucky](https://github.com/sirpdboy/luci-app-lucky) - Lucky 多功能工具
-
-## 许可证
-
-[GPL-2.0-only](https://spdx.org/licenses/GPL-2.0-only.html)（继承 ImmortalWrt）。
-
-## 赞赏
-
-如果这个固件对你有帮助，可以请作者喝杯咖啡。
-
-<img src="c6ea388c976395326514814f80d512d5.png" alt="微信赞赏码" width="300">
+本项目基于 [ImmortalWrt](https://github.com/immortalwrt/immortalwrt) 与 [naoki66 的 XR1710G 工作](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed)。相关上游包括 [LuCI](https://github.com/immortalwrt/luci)、[mt76](https://github.com/openwrt/mt76) 和 [Airoha LuCI 应用](https://github.com/naoki66/luci-app-airoha)。许可证为 [GPL-2.0-only](https://spdx.org/licenses/GPL-2.0-only.html)。

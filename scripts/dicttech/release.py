@@ -2,6 +2,7 @@
 """Build matching Full gateway/AP images from one immutable source snapshot."""
 from __future__ import annotations
 import argparse
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -29,10 +30,24 @@ def need(value, message):
 
 
 def package_version(version):
-    """Map the public prerelease name to APK's ordered version syntax."""
+    """Validate date releases and map historical prerelease names for APK."""
+    if isinstance(version, str) and re.fullmatch(r'[0-9]{8}', version):
+        datetime.strptime(version, '%Y%m%d')
+        return version
     need(isinstance(version, str) and re.fullmatch(PUBLIC_VERSION, version),
          'Invalid public version')
     return re.sub(r'-(alpha|beta|rc)\.([1-9][0-9]*)$', r'_\1\2', version)
+
+
+def release_tag(version):
+    package_version(version)
+    return version if version.isdigit() else 'v' + version
+
+
+def asset_prefix(receipt):
+    # Historical pairs remain readable in their original naming scheme.
+    project = 'immortalwrt-xr1710g' if receipt['version'].isdigit() else 'xr1710g-full'
+    return f"{project}-{receipt['role']}-{receipt['layout']}-{receipt['build_version']}"
 
 
 def run(args, cwd, *, data=None, capture=True, env=None):
@@ -138,7 +153,7 @@ def prepare(repo, directory, role, layout):
     return receipt
 
 
-def build(directory, jobs, prepare_only=False):
+def build(directory, jobs, prepare_only=False, reuse_feeds=False):
     d = json.loads((directory/'source.json').read_text());source = directory/'source'
     need(isinstance(jobs, int) and 1 <= jobs <= 256, 'Invalid parallelism')
     source_check(directory, d)
@@ -150,12 +165,13 @@ def build(directory, jobs, prepare_only=False):
     command = ['bash', 'scripts/dicttech/build-full.sh', '--layout', d['layout'],
                '--role', d['role'], '--jobs', str(jobs)]
     if prepare_only: command.append('--prepare-only')
+    if reuse_feeds: command.append('--reuse-feeds')
     run(command, source, capture=False, env=env)
     source_check(directory, d)
     if prepare_only: return
     target = source/'bin/targets/airoha/an7581'
     profile = 'gemtek_xr1710g' + ('-ubi' if d['layout']=='ubi' else '')
-    images = list(target.glob('*-'+profile+'-squashfs-sysupgrade.itb'))
+    images = list(target.glob('*-'+d['build_version']+'-airoha-an7581-'+profile+'-squashfs-sysupgrade.itb'))
     need(len(images)==1, 'Expected exactly one current sysupgrade image')
     image = images[0]; manifest = image.with_name(image.name.removesuffix('-squashfs-sysupgrade.itb')+'.manifest')
     need(manifest.is_file(), 'Matching manifest missing')
@@ -168,7 +184,7 @@ def build(directory, jobs, prepare_only=False):
     public = directory/'public';public.mkdir()
     # Flat variant archives prevent collisions between config.buildinfo, APKs,
     # kernel ABI and checksums. Never upload bin/** or builder signing keys.
-    prefix = 'xr1710g-full-'+d['role']+'-'+d['layout']+'-'+d['build_version']
+    prefix = asset_prefix(d)
     bundle=public/(prefix+'.tar.gz')
     with tarfile.open(bundle,'x:gz')as archive:
         for path in [image,manifest,*[target/n for n in ['config.buildinfo','feeds.buildinfo','version.buildinfo']]]:
@@ -189,7 +205,7 @@ def build(directory, jobs, prepare_only=False):
         for path in sorted(package_dir.iterdir()):
             need(path.is_file() and not path.is_symlink() and path.suffix=='.apk', 'Unexpected APK export member')
             archive.add(path,arcname='packages/'+path.name,recursive=False)
-        for path in sorted(target.glob('*.audit.json')):
+        for path in sorted(target.glob(image.stem + '*.audit.json')):
             archive.add(path,arcname='audit/'+path.name,recursive=False)
     release={**d,'passed':True,'image':image.name,'image_sha256':digest(image),
              'bundle':bundle.name,'bundle_sha256':digest(bundle)}
@@ -246,7 +262,8 @@ def assemble(inputs, output, revision, expected_upstream=None, expected_tree=Non
     """Accept only two audited roles with the same code, packages and policy."""
     need(not output.exists(), 'Use a new pair output directory')
     reports, manifests, configs, feed_receipts = [], [], [], []
-    for path in inputs.rglob('xr1710g-*.json'):
+    reports_paths = [*inputs.rglob('xr1710g-*.json'), *inputs.rglob('immortalwrt-xr1710g-*.json')]
+    for path in reports_paths:
         d = json.loads(path.read_text())
         need(d.get('schema_version') == ARTIFACT_SCHEMA and d.get('passed') is True and
              d.get('release_commit') == revision and d.get('source_commit') == revision and
@@ -260,7 +277,7 @@ def assemble(inputs, output, revision, expected_upstream=None, expected_tree=Non
         package_version(d['version'])
         need(d['layout'] in ('legacy','ubi') and d['build_version'] == d['version']+'-'+revision[:12],
              'Invalid artifact layout/version')
-        expected = 'xr1710g-full-'+d['role']+'-'+d['layout']+'-'+d['build_version']
+        expected = asset_prefix(d)
         need(path.name == expected+'.json' and d['bundle'] == expected+'.tar.gz', 'Unexpected artifact name')
         bundle = path.parent/d['bundle']
         download = path.parent/(expected+'-sysupgrade.itb')
@@ -341,19 +358,21 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='action', required=True)
     sub.add_parser('plan')
+    sub.add_parser('tag')
     p=sub.add_parser('prepare');p.add_argument('--role',choices=ROLES,required=True);p.add_argument('--layout',choices=['legacy','ubi'],default='legacy');p.add_argument('--directory',type=Path,required=True)
-    p=sub.add_parser('build');p.add_argument('--directory',type=Path,required=True);p.add_argument('--jobs',type=int,default=2);p.add_argument('--prepare-only',action='store_true')
+    p=sub.add_parser('build');p.add_argument('--directory',type=Path,required=True);p.add_argument('--jobs',type=int,default=2);p.add_argument('--prepare-only',action='store_true');p.add_argument('--reuse-feeds',action='store_true')
     p=sub.add_parser('assemble');p.add_argument('--inputs',type=Path,required=True);p.add_argument('--output',type=Path,required=True)
     p=sub.add_parser('notes');p.add_argument('--pair',type=Path,required=True);p.add_argument('--output',type=Path,required=True)
     args=parser.parse_args()
     if args.action == 'plan':
         p=plan(ROOT);p.pop('feed_text');print(json.dumps(p,indent=2))
+    elif args.action == 'tag': print(release_tag(plan(ROOT)['version']))
     elif args.action == 'prepare': print(json.dumps(prepare(ROOT,args.directory,args.role,args.layout),indent=2))
     elif args.action == 'assemble':
         p=plan(ROOT)
         assemble(args.inputs,args.output,p['release_commit'],p['upstream_base'],git(ROOT,'rev-parse',p['release_commit']+'^{tree}'))
     elif args.action == 'notes': generate_notes(args.pair,args.output)
-    else: build(args.directory.resolve(),args.jobs,args.prepare_only)
+    else: build(args.directory.resolve(),args.jobs,args.prepare_only,args.reuse_feeds)
 
 
 if __name__ == '__main__':

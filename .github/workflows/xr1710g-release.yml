@@ -1,4 +1,4 @@
-name: Build XR1710G Full roles
+name: Build ImmortalWrt for XR1710G
 
 on:
   push:
@@ -16,7 +16,7 @@ on:
         type: choice
         options: [legacy, ubi]
       release_tag:
-        description: 新 Release 标签；留空仅生成候选产物，填写后创建一个中文草稿
+        description: YYYYMMDD 发布标签，留空仅生成候选产物
         required: false
         default: ''
         type: string
@@ -24,7 +24,7 @@ on:
 # New candidate pushes supersede old candidates; an explicit release dispatch
 # keeps its own immutable build and cannot be cancelled by a later push.
 concurrency:
-  group: xr1710g-full-${{ github.event_name }}-${{ github.ref }}-${{ inputs.layout || 'legacy' }}-${{ inputs.release_tag || 'candidate' }}
+  group: xr1710g-${{ github.event_name }}-${{ github.ref }}-${{ inputs.layout || 'legacy' }}-${{ inputs.release_tag || 'candidate' }}
   cancel-in-progress: ${{ github.event_name == 'push' }}
 
 permissions:
@@ -39,6 +39,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       full_commit: ${{ steps.pins.outputs.full_commit }}
+      version: ${{ steps.pins.outputs.version }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -55,6 +56,7 @@ jobs:
           plan = json.load(open(sys.argv[1]))
           assert plan['release_commit'] == os.environ['FULL_SHA']
           print('full_commit=' + plan['release_commit'])
+          print('version=' + plan['version'])
           PY
       - name: Check optional draft-release authorization before compiling
         if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
@@ -62,10 +64,11 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           GH_REPO: ${{ github.repository }}
+          RELEASE_SHA: ${{ steps.pins.outputs.full_commit }}
         run: |
-          [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$ ]] || { echo 'Invalid tag'; exit 1; }
-          expected_tag=$(python3 -c 'import json; print("v" + json.load(open("configs/xr1710g-release.json"))["version"])')
+          expected_tag=$(python3 scripts/dicttech/release.py tag)
           [[ "$RELEASE_TAG" == "$expected_tag" ]] || { echo "Use the configured version tag: $expected_tag" >&2; exit 1; }
+          [[ "$(git ls-remote --heads origin refs/heads/master | cut -f1)" == "$RELEASE_SHA" ]] || { echo 'Push the verified source to master first.' >&2; exit 1; }
           [[ -n "$GH_TOKEN" ]] || { echo 'Set RELEASE_TOKEN with Contents and Workflows write permission, or leave release_tag empty.' >&2; exit 1; }
           # Read only. GitHub checks the token's write permissions when creating
           # the release; do not mistake repository visibility for authorization.
@@ -171,7 +174,7 @@ jobs:
       - name: Upload only the audited public role
         uses: actions/upload-artifact@v7
         with:
-          name: xr1710g-full-${{ matrix.role }}-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.full_commit }}
+          name: immortalwrt-xr1710g-${{ matrix.role }}-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.version }}-${{ needs.plan.outputs.full_commit }}
           if-no-files-found: error
           retention-days: 30
           path: ${{ runner.temp }}/xr-release-${{ matrix.role }}/public/*
@@ -179,7 +182,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: xr1710g-full-${{ matrix.role }}-build-log-${{ needs.plan.outputs.full_commit }}
+          name: xr1710g-build-log-${{ matrix.role }}-${{ needs.plan.outputs.version }}-${{ needs.plan.outputs.full_commit }}
           if-no-files-found: ignore
           retention-days: 14
           path: ${{ runner.temp }}/xr-${{ matrix.role }}-build.log
@@ -187,7 +190,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: xr1710g-validation-${{ matrix.role }}-${{ needs.plan.outputs.full_commit }}
+          name: xr1710g-validation-${{ matrix.role }}-${{ needs.plan.outputs.version }}-${{ needs.plan.outputs.full_commit }}
           if-no-files-found: ignore
           retention-days: 14
           path: |
@@ -203,7 +206,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@v8
         with:
-          pattern: xr1710g-full-*-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.full_commit }}
+          pattern: immortalwrt-xr1710g-*-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.version }}-${{ needs.plan.outputs.full_commit }}
           path: ${{ runner.temp }}/edition-artifacts
       - name: Verify both roles share the pinned source and package policy
         run: |
@@ -211,7 +214,7 @@ jobs:
             --output "$RUNNER_TEMP/release-pair"
       - uses: actions/upload-artifact@v7
         with:
-          name: xr1710g-release-pair-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.full_commit }}
+          name: xr1710g-release-pair-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.version }}-${{ needs.plan.outputs.full_commit }}
           if-no-files-found: error
           retention-days: 30
           path: ${{ runner.temp }}/release-pair/*
@@ -226,7 +229,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@v8
         with:
-          name: xr1710g-release-pair-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.full_commit }}
+          name: xr1710g-release-pair-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.version }}-${{ needs.plan.outputs.full_commit }}
           path: release-pair
       - name: Generate Chinese notes from the verified role pair
         run: |
@@ -239,9 +242,9 @@ jobs:
           RELEASE_SHA: ${{ needs.plan.outputs.full_commit }}
           GH_REPO: ${{ github.repository }}
         run: |
-          [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$ ]] || { echo 'Invalid tag'; exit 1; }
-          expected_tag=$(python3 -c 'import json; print("v" + json.load(open("configs/xr1710g-release.json"))["version"])')
+          expected_tag=$(python3 scripts/dicttech/release.py tag)
           [[ "$RELEASE_TAG" == "$expected_tag" ]] || { echo "Use the configured version tag: $expected_tag" >&2; exit 1; }
+          [[ "$(git ls-remote --heads origin refs/heads/master | cut -f1)" == "$RELEASE_SHA" ]] || { echo 'Push the verified source to master first.' >&2; exit 1; }
           [[ -n "$GH_TOKEN" ]] || { echo 'RELEASE_TOKEN is required for draft creation.' >&2; exit 1; }
           # Repeat existence checks after compiling to avoid overwriting a tag
           # or release created while the two independent role builders were running.
@@ -252,5 +255,5 @@ jobs:
           release_flags=()
           [[ "$RELEASE_TAG" != *-* ]] || release_flags+=(--prerelease)
           gh release create "$RELEASE_TAG" --target "$RELEASE_SHA" --draft "${release_flags[@]}" \
-            --title "XR1710G $RELEASE_TAG（Full gateway／ap）" \
+            --title "ImmortalWrt for XR1710G $RELEASE_TAG" \
             --notes-file "$RUNNER_TEMP/release-notes.md" release-pair/*

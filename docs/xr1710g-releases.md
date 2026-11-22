@@ -1,4 +1,4 @@
-# XR1710G Full 双角色发布
+# ImmortalWrt for XR1710G 双角色发布
 
 当前仅维护 Full 固件，后续开发主线为 `master`。上游更新及通用修复合入 `master`；`dicttech/xr1710g-ap` 维护分支、已提交 PR 的分支、历史 Fixes 分支和已有发布保持原样。Fixes 不再新增构建或发布，重现历史产物时使用对应旧标签的工具。
 
@@ -13,7 +13,7 @@
 
 角色与分区布局是两个独立选择。`legacy`／`ubi` 必须匹配设备现有布局，构建和升级不会转换 U-Boot、Recovery、分区表或校准数据。默认角色仅适用于清空配置或恢复出厂；保留配置升级不重写既有网络。
 
-`configs/xr1710g-release.json` 使用 schema 3，保存 `version` 与固定的 `upstream_base`。当前干净提交同时是发布控制器和两种角色的唯一源码；控制器校验上游基线已合入，拒绝脏源码及 `files/` overlay。公开版本使用 `x.y.z` 或 `x.y.z-alpha.N`／`beta.N`／`rc.N`，标签为 `v` 加版本号；APK 的预发布版本使用其本地排序形式。
+`configs/xr1710g-release.json` 使用 schema 3，保存 `version` 与固定的 `upstream_base`。当前干净提交同时是发布控制器和两种角色的唯一源码；控制器校验上游基线已合入，拒绝脏源码及 `files/` overlay。正式版本与标签均使用北京时间的八位发布日期 `YYYYMMDD`。固件显示名还带源码短哈希。历史发布保留原有标签和附件名。
 
 两种角色保持相同驱动、软件包清单和 feed 版本。`configs/dicttech-feeds.conf` 固定 feed 提交，`configs/wrtix-source.json` 和 `configs/wrtmesh-source.json` 固定两个独立仓库的提交和 Git archive 哈希。本地构建可通过 `WRTIX_SOURCE` 和 `WRTMESH_SOURCE` 指向匹配的干净 checkout。GitHub Actions 默认从 `DictXiong/wrtix` 获取；`wrtix_repository` 输入优先于 `WRTIX_REPOSITORY` 仓库变量，覆盖仓库仍须满足同一提交和哈希。wrtmesh 从 `DictXiong/wrtmesh` 获取。
 
@@ -31,7 +31,7 @@ python3 scripts/dicttech/release.py build --directory /tmp/xr-release-gateway --
 python3 scripts/dicttech/release.py build --directory /tmp/xr-release-ap --jobs 4
 ```
 
-每个构建使用新目录和独立签名密钥。`build --prepare-only` 只安装 feed 并生成配置，不编译镜像。Kconfig 循环依赖会使准备失败；并行编译失败时串行重试并保留错误。完成后检查 FIT／分区布局、rootfs、模块 ABI、APK 签名及软件包清单。
+每个角色使用独立构建目录。签名私钥由各自构建环境持有。`build --prepare-only` 只安装 feed 并生成配置，不编译镜像。Kconfig 循环依赖会使准备失败；并行编译失败时串行重试并保留错误。完成后检查 FIT／分区布局、rootfs、模块 ABI、APK 签名及软件包清单。
 
 将两个构建的 `public/` 复制到一个只包含这两份公开产物的输入目录后配对：
 
@@ -44,13 +44,13 @@ python3 scripts/dicttech/release.py notes --pair /tmp/xr-release-pair/release-pa
 
 配对要求两种角色齐全，准确源码、布局、feed 和 wrtix／wrtmesh 输入一致，软件包及版本清单相同，构建配置仅允许角色开关不同。远端 feed 的 URL／提交必须匹配锁定值；本地 wrtix／wrtmesh feed 以已验证的提交和源码归档哈希识别，忽略隔离构建目录前缀。还会验证实际角色审计结果、镜像／归档哈希和归档成员；不能用改文件名或复用另一角色的镜像凑成一对。
 
-附件前缀为 `xr1710g-full-{gateway|ap}-{layout}-{version}-{commit}`。每种角色提供可直接刷写的 ITB、配套固件／APK 归档、精确源码及来源 JSON。`source.json` 和 `release-pair.json` 使用 schema 5，记录相同的 `source_commit`／`source_tree`、显式 `role` 和两个独立项目的固定构建输入。两个源码归档对应同一提交；GitHub 自动源码包也对应主标签。独立签名密钥不会公开，不同构建的 APK／kmod 不应混用；固定输入不承诺二进制逐字节可重现。
+附件前缀为 `immortalwrt-xr1710g-{gateway|ap}-{layout}-{YYYYMMDD}-{commit}`。每种角色提供可直接刷写的 ITB、配套固件／APK 归档、精确源码及来源 JSON。`source.json` 和 `release-pair.json` 使用 schema 5，记录相同的 `source_commit`／`source_tree`、显式 `role` 和两个独立项目的固定构建输入。两个源码归档对应同一提交；GitHub 自动源码包也对应主标签。独立签名密钥不会公开，不同构建的 APK／kmod 不应混用；固定输入不承诺二进制逐字节可重现。
 
 ## CI 与发布
 
-**Build XR1710G Full roles**（`xr1710g-release.yml`）固定一次源码提交，然后在两个隔离 job 中分别构建 `gateway`／`ap`。只有两份产物均通过且配对检查成功，才汇总 Release 附件。源码、ARM 程序和浏览器检查均由此工作流完成。
+**Build ImmortalWrt for XR1710G**（`xr1710g-release.yml`）固定一次源码提交，然后在两个隔离 job 中分别构建 `gateway`／`ap`。只有两份产物均通过且配对检查成功，才汇总 Release 附件。源码、ARM 程序和浏览器检查均由此工作流完成。
 
-维护线每次推送只触发这一个工作流，构建 gateway／ap 两种 `legacy` 候选；手动运行可以选择布局。源码、ARM 程序和浏览器 UI 回归统一在此流程执行，无独立重复编译的 Full 工作流。新推送会取消同分支尚未完成的旧候选，显式发布调度不受影响。`release_tag` 留空时只生成候选 artifacts，填写新版本标签时创建草稿。发布前补充实际测试结果与已知限制，工作流不会覆盖已有标签或 Release。
+维护线每次推送只触发这一个工作流，构建 gateway／ap 两种 `legacy` 候选；手动运行可以选择布局。源码、ARM 程序和浏览器 UI 回归统一在此流程执行，无独立重复编译的 Full 工作流。新推送会取消同分支尚未完成的旧候选，显式发布调度不受影响。`release_tag` 留空只生成候选产物。正式发布先将验收过的源码合入并推送到 `master`，再在同一提交上创建日期标签，发布已验收的附件。手动填写日期可为当前远端 `master` 生成草稿。重新构建的附件应按自身哈希另做验收。工作流不会覆盖已有标签或 Release。
 
 自动创建草稿需要仓库 Secret `RELEASE_TOKEN`，具有本仓库的 Contents／Workflows 写权限；不使用默认 `GITHUB_TOKEN` 代替。无需创建草稿时保持标签为空。此设置不影响无发布权限的候选构建。
 

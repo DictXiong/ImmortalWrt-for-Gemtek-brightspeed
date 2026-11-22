@@ -95,7 +95,7 @@ python3 scripts/dicttech/check-ui-source.py --jsmin staging_dir/hostpkg/bin/jsmi
 python3 scripts/dicttech/check-build.py --layout "$layout" --output "bin/targets/airoha/an7581/dicttech-$layout-build.json"
 profile=gemtek_xr1710g
 [[ $layout != ubi ]] || profile+=-ubi
-prefix="xr1710g-full-$version-airoha-an7581-$profile"
+prefix="immortalwrt-for-xr1710g-$version-airoha-an7581-$profile"
 image="bin/targets/airoha/an7581/$prefix-squashfs-sysupgrade.itb"
 [[ -f $image ]] || { echo 'Expected current-build image is missing' >&2; exit 1; }
 audit=$(mktemp -d "$PWD/tmp/dicttech-image.XXXXXX")
@@ -108,6 +108,8 @@ python3 scripts/dicttech/check-image.py --layout "$layout" --image "$image" \
 # the build host. The FIT/rootfs bytes (including /dev) were verified above.
 staging_dir/host/bin/unsquashfs4 -no-progress -no-xattrs -excludes \
  -d "$audit/rootfs" "$audit/rootfs.squashfs" dev >"$audit/unsquashfs.log"
+grep -Fx "DISTRIB_DESCRIPTION='ImmortalWrt for XR1710G $version'" "$audit/rootfs/etc/openwrt_release"
+grep -Fx "PRETTY_NAME=\"ImmortalWrt for XR1710G $version\"" "$audit/rootfs/etc/os-release"
 python3 scripts/dicttech/check-rootfs.py --role "$role" --rootfs "$audit/rootfs" \
  --manifest "bin/targets/airoha/an7581/$prefix.manifest" \
  --output "${image%.itb}.rootfs.audit.json"
