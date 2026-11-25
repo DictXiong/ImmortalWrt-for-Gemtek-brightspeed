@@ -24,6 +24,7 @@ REQUIRED = {
     'luci-i18n-wifihistory-zh-cn', 'dnsmasq', 'odhcpd-ipv6only',
     'ppp', 'ppp-mod-pppoe', 'luci-proto-ppp', 'kmod-crypto-hw-eip93',
     'kmod-crypto-cbc', 'kmod-crypto-ctr', 'kmod-crypto-ecb',
+    'kmod-tun', 'openvpn-openssl', 'luci-proto-openvpn',
 }
 FORBIDDEN = {
     # The AN7581 baseline keeps the boot firmware clock after CPU DVFS faults.
