@@ -9,41 +9,57 @@ START=99
 
 find_nct7802()
 {
+	local hwmon
+
 	for hwmon in /sys/class/hwmon/hwmon*; do
 		if [ -f "$hwmon/name" ] && [ "$(cat "$hwmon/name" 2>/dev/null)" = "nct7802" ]; then
 			echo "$hwmon"
-			return
+			return 0
 		fi
 	done
-	echo "/sys/class/hwmon/hwmon5" # fallback
+	return 1
 }
 
 boot()
 {
+	local hwmon curve_status=0
+
 	case $(board_name) in
 	gemtek,w1700k-ubi|\
 	gemtek,xr1710g|\
 	gemtek,xr1710g-ubi)
-		hwmon=$(find_nct7802)
+		hwmon=$(find_nct7802) || {
+			logger -t airoha_fan "NCT7802 not found, fan curve unchanged"
+			return 0
+		}
 
-		# Temporarily disable automatic fan control to configure curve
-		echo 1 > $hwmon/pwm1_enable
+		if ! {
+			# Temporarily disable automatic fan control to configure curve
+			echo 1 > "$hwmon/pwm1_enable" &&
 
-		# Match trigger points from vendor firmware
-		echo 40000 > $hwmon/pwm1_auto_point1_temp
-		echo 50000 > $hwmon/pwm1_auto_point2_temp
-		echo 60000 > $hwmon/pwm1_auto_point3_temp
-		echo 70000 > $hwmon/pwm1_auto_point4_temp
-		echo 80000 > $hwmon/pwm1_auto_point5_temp
+			# Match trigger points from vendor firmware
+			echo 40000 > "$hwmon/pwm1_auto_point1_temp" &&
+			echo 50000 > "$hwmon/pwm1_auto_point2_temp" &&
+			echo 60000 > "$hwmon/pwm1_auto_point3_temp" &&
+			echo 70000 > "$hwmon/pwm1_auto_point4_temp" &&
+			echo 80000 > "$hwmon/pwm1_auto_point5_temp" &&
 
-		# Match fan speed from vendor firmware
-		echo 54  > $hwmon/pwm1_auto_point1_pwm
-		echo 69  > $hwmon/pwm1_auto_point2_pwm
-		echo 95  > $hwmon/pwm1_auto_point3_pwm
-		echo 199 > $hwmon/pwm1_auto_point4_pwm
+			# Match fan speed from vendor firmware
+			echo 54  > "$hwmon/pwm1_auto_point1_pwm" &&
+			echo 69  > "$hwmon/pwm1_auto_point2_pwm" &&
+			echo 95  > "$hwmon/pwm1_auto_point3_pwm" &&
+			echo 199 > "$hwmon/pwm1_auto_point4_pwm"
+		}; then
+			logger -t airoha_fan "Failed to set the fan curve, restoring automatic control"
+			curve_status=1
+		fi
 
 		# Re-enable automatic fan control
-		echo 2 > $hwmon/pwm1_enable
+		echo 2 > "$hwmon/pwm1_enable" || {
+			logger -t airoha_fan "Failed to restore automatic fan control"
+			return 1
+		}
+		return "$curve_status"
 		;;
 	esac
 }
