@@ -57,6 +57,21 @@ supply topology, SSIDs, VLANs, addresses, secrets and roaming policy. The agent
 itself has no such defaults. See [configuration ownership](dicttech-config-format.md),
 [access and maintenance](dicttech-maintenance.md), and [acceptance](dicttech-acceptance.md).
 
+## Optional IRQ affinity
+
+IRQ affinity tuning is off by default on both roles. On one XR1710G with a
+QCN Wi-Fi client, ping during saturated downlink lost 9 of 55 probes in each
+of two runs with tuning enabled. The initial run with kernel defaults lost
+0 of 55 probes under the same load.
+
+To try the tuning on the next boot, run `uci set xr1710g_irq.settings.enabled=1`,
+then `uci commit xr1710g_irq` and reboot. Set the option back to `0`, commit it,
+and reboot to restore the kernel's IRQ placement. An upgrade that retains an
+existing explicit setting keeps that setting.
+
+CAKE and NFQUEUE are available for explicit configuration. Full ships without
+a CAKE shaper or NFQUEUE rule enabled, and bridger remains off by default.
+
 ## Building
 
 ```sh
