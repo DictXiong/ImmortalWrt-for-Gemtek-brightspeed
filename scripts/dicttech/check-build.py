@@ -25,6 +25,7 @@ REQUIRED = {
     'ppp', 'ppp-mod-pppoe', 'luci-proto-ppp', 'kmod-crypto-hw-eip93',
     'kmod-crypto-cbc', 'kmod-crypto-ctr', 'kmod-crypto-ecb',
     'kmod-tun', 'openvpn-openssl', 'luci-proto-openvpn',
+    'bridger', 'kmod-sched-cake', 'tc-full', 'kmod-nfnetlink-queue', 'kmod-nft-queue',
 }
 FORBIDDEN = {
     # The AN7581 baseline keeps the boot firmware clock after CPU DVFS faults.
@@ -90,12 +91,22 @@ def local_feed_source(name, source_root=ROOT):
     return directory, metadata
 
 
-def config(path, layout):
+def config(path, layout, *, generated=False):
     values = dict(re.findall(r'^(CONFIG_[A-Za-z0-9_-]+)=(.*)$', path.read_text(), re.M))
     missing = sorted(p for p in REQUIRED if values.get('CONFIG_PACKAGE_' + p) != 'y')
     extra = sorted(p for p in FORBIDDEN if values.get('CONFIG_PACKAGE_' + p) == 'y')
     if missing or extra:
         raise ValueError('Full package policy mismatch: ' + json.dumps({'missing': missing, 'forbidden': extra}))
+    if any(values.get(option) != 'y' for option in (
+        'CONFIG_KERNEL_DEBUG_INFO', 'CONFIG_KERNEL_DEBUG_INFO_BTF',
+    )) or any(values.get(option) == 'y' for option in (
+        'CONFIG_KERNEL_DEBUG_INFO_REDUCED', 'CONFIG_KERNEL_MODULE_ALLOW_BTF_MISMATCH',
+    )):
+        raise ValueError('Full BTF configuration mismatch')
+    if generated and any(values.get(option) != 'y' for option in (
+        'CONFIG_KERNEL_DEBUG_INFO_BTF_MODULES', 'CONFIG_DWARVES',
+    )):
+        raise ValueError('Generated Full config is missing module BTF or dwarves')
     expected = 'CONFIG_TARGET_airoha_an7581_DEVICE_gemtek_xr1710g' + ('-ubi' if layout == 'ubi' else '')
     if values.get(expected) != 'y':
         raise ValueError('Wrong XR1710G partition profile')
@@ -112,7 +123,7 @@ def main():
     args = parser.parse_args()
     result = {'schema_version': 1, 'feeds': feeds(), **{name: local_feed_source(name)[1] for name in LOCAL_FEEDS}}
     if not args.feeds_only:
-        result.update(config(args.config, args.layout))
+        result.update(config(args.config, args.layout, generated=True))
         result['source_revision'] = git('rev-parse', 'HEAD')
         result['source_date_epoch'] = int(git('show', '-s', '--format=%ct', 'HEAD'))
         result['source_dirty'] = bool(git('status', '--porcelain'))

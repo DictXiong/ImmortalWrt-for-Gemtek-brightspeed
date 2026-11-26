@@ -20,6 +20,8 @@ PKG_MAINTAINER:=Felix Fietkau <nbd@nbd.name>
 PKG_BUILD_DEPENDS:=bpf-headers
 
 PKG_BUILD_PARALLEL:=1
+PKG_RELEASE:=2
+PKG_CONFIG_DEPENDS:=CONFIG_PACKAGE_xr1710g-full
 
 include $(INCLUDE_DIR)/package.mk
 include $(INCLUDE_DIR)/cmake.mk
@@ -58,6 +60,8 @@ define Package/bridger/install
 		$(1)/usr/sbin/
 	$(INSTALL_DATA) ./files/bridger.conf $(1)/etc/config/bridger
 	$(INSTALL_BIN) ./files/bridger.init $(1)/etc/init.d/bridger
+	$(SED) 's/@DEFAULT_ENABLED@/$(if $(filter y,$(CONFIG_PACKAGE_xr1710g-full)),0,1)/g' \
+		$(1)/etc/init.d/bridger $(1)/etc/config/bridger
 endef
 
 $(eval $(call BuildPackage,bridger))

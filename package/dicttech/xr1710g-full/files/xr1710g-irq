@@ -1,0 +1,80 @@
+#!/bin/sh /etc/rc.common
+# SPDX-License-Identifier: GPL-2.0-only
+
+START=99
+
+pin_irq() {
+	local irq="$1" cpu="$2" file effective online
+
+	case "$irq" in ''|*[!0-9]*) return 0 ;; esac
+	[ -d "/sys/devices/system/cpu/cpu$cpu" ] || return 0
+	online="/sys/devices/system/cpu/cpu$cpu/online"
+	if [ -r "$online" ] && [ "$(cat "$online")" != 1 ]; then
+		return 0
+	fi
+
+	file="/proc/irq/$irq/smp_affinity_list"
+	[ -w "$file" ] || return 0
+	# One write keeps the CPU and newline together for the procfs parser.
+	if ! (echo "$cpu" > "$file") 2>/dev/null; then
+		logger -t xr1710g-irq "IRQ $irq: kernel rejected CPU $cpu affinity"
+		return 0
+	fi
+
+	effective=$(cat "/proc/irq/$irq/effective_affinity_list" 2>/dev/null)
+	[ -z "$effective" ] || [ "$effective" = "$cpu" ] ||
+		logger -t xr1710g-irq "IRQ $irq: requested CPU $cpu, effective CPU list $effective"
+}
+
+pin_action() {
+	local action="$1" cpu="$2" irq
+
+	# Match a single dedicated interrupt. Shared or ambiguous actions stay untouched.
+	irq=$(awk -v action="$action" '
+		$1 ~ /^[0-9]+:$/ && $NF == action && $(NF-1) !~ /,$/ {
+			sub(/:$/, "", $1)
+			irq = $1
+			count++
+		}
+		END { if (count == 1) print irq }
+	' /proc/interrupts)
+	pin_irq "$irq" "$cpu"
+}
+
+pin_wifi_msi() {
+	local pci driver action msi irq
+
+	for pci in /sys/bus/pci/devices/*; do
+		[ -r "$pci/vendor" ] && [ "$(cat "$pci/vendor")" = 0x14c3 ] || continue
+		driver=$(readlink "$pci/driver") || continue
+		case "${driver##*/}" in
+			mt7996e) action=mt7996e ;;
+			mt7996e_hif) action=mt7996e-hif ;;
+			*) continue ;;
+		esac
+		for msi in "$pci"/msi_irqs/*; do
+			[ -r "$msi" ] || continue
+			irq=${msi##*/}
+			# Confirm the vector still belongs to this driver and is dedicated.
+			awk -v irq="$irq:" -v action="$action" '
+				$1 == irq && $NF == action && $(NF-1) !~ /,$/ { found = 1 }
+				END { exit !found }
+			' /proc/interrupts && pin_irq "$irq" 0
+		done
+	done
+	return 0
+}
+
+start() {
+	local board enabled
+
+	read -r board < /tmp/sysinfo/board_name || return 0
+	case "$board" in gemtek,xr1710g|gemtek,xr1710g-ubi) ;; *) return 0 ;; esac
+	enabled=$(uci -q get xr1710g_irq.settings.enabled)
+	[ "$enabled" = 1 ] || return 0
+	pin_action airoha_eth.4 1
+	pin_action mt76-npu.0 2
+	pin_action mt76-npu.1 3
+	pin_wifi_msi
+	return 0
+}

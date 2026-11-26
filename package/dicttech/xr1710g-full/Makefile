@@ -5,7 +5,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=xr1710g-full
 PKG_VERSION:=20261126
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 PKG_CONFIG_DEPENDS:=CONFIG_XR1710G_DEFAULT_ROLE_AP
 PKG_LICENSE:=GPL-2.0-only
 PKGARCH:=all
@@ -28,6 +28,10 @@ define Package/xr1710g-full/config
 		default n
 endef
 
+define Package/xr1710g-full/conffiles
+/etc/config/xr1710g_irq
+endef
+
 define Build/Compile
 endef
 
@@ -37,7 +41,9 @@ define Package/xr1710g-full/install
 	chmod 0644 $(1)/etc/xr1710g-full
 	printf '%s\n' '$(if $(CONFIG_XR1710G_DEFAULT_ROLE_AP),ap,gateway)' > $(1)/etc/xr1710g-network-role
 	chmod 0644 $(1)/etc/xr1710g-network-role
-	$(INSTALL_DIR) $(1)/lib/preinit $(1)/etc/uci-defaults
+	$(INSTALL_DIR) $(1)/lib/preinit $(1)/etc/uci-defaults $(1)/etc/init.d $(1)/etc/config
+	$(INSTALL_BIN) ./files/xr1710g-irq $(1)/etc/init.d/xr1710g-irq
+	$(INSTALL_CONF) ./files/xr1710g_irq $(1)/etc/config/xr1710g_irq
 	$(INSTALL_DATA) ./files/81_xr1710g_network_role $(1)/lib/preinit/81_xr1710g_network_role
 	$(INSTALL_DATA) ./files/99-xr1710g-network-role $(1)/etc/uci-defaults/99-xr1710g-network-role
 endef
