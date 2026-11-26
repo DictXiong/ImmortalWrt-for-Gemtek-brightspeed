@@ -139,8 +139,10 @@ load_led() {
 
 		"netdev")
 			[ -n "$dev" ] && {
-				led_netdev_mode_reset "$sysfs"
 				echo $dev > /sys/class/leds/${sysfs}/device_name
+				# Binding can inherit the current PHY mode. Clear it only
+				# when a mode was specified before setting the new bits.
+				[ -n "$mode" ] && led_netdev_mode_reset "$sysfs"
 				for m in $mode; do
 					[ -e "/sys/class/leds/${sysfs}/$m" ] && \
 						echo 1 > /sys/class/leds/${sysfs}/$m
