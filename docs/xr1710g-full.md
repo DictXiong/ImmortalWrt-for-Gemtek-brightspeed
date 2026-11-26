@@ -61,8 +61,9 @@ itself has no such defaults. See [configuration ownership](dicttech-config-forma
 
 IRQ affinity tuning is off by default on both roles. On one XR1710G with a
 QCN Wi-Fi client, ping during saturated downlink lost 9 of 55 probes in each
-of two runs with tuning enabled. The initial run with kernel defaults lost
-0 of 55 probes under the same load.
+of two runs with tuning enabled. Runs with kernel defaults lost 0 of 55 and
+10 of 55 probes. The variation prevented attributing the loss to IRQ tuning,
+and the tests showed no consistent improvement.
 
 To try the tuning on the next boot, run `uci set xr1710g_irq.settings.enabled=1`,
 then `uci commit xr1710g_irq` and reboot. Set the option back to `0`, commit it,
