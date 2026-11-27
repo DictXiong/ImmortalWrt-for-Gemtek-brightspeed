@@ -7,8 +7,9 @@
 . /lib/functions.sh
 . /lib/functions/system.sh
 
-case "$(board_name)" in
-gemtek,xr1710g|gemtek,xr1710g-ubi) ;;
+board="$(board_name)"
+case "$board" in
+gemtek,xr1710g|gemtek,xr1710g-ubi|gemtek,w1701k-ubi) ;;
 *) exit 0 ;;
 esac
 
@@ -131,7 +132,7 @@ migrate_xr1710g_interface() {
 	migrate_xr1710g_words "$config" ifname
 }
 
-set_xr1710g_wan_clientid_default() {
+set_wan_clientid_default() {
 	local clientid proto sendclientid
 
 	config_get proto wan proto
@@ -169,12 +170,16 @@ set_xr1710g_wan_clientid_default() {
 #
 # Everything above is what this script is actually for: migrating the legacy
 # netdev spelling (ae_wan/eth0/eth1/lan1 and their VLAN sub-interfaces) to
-# wan/lan2, plus the wan DHCP clientid default.
+# wan/lan2 on XR1710G. Both boards share the WAN DHCP clientid default.
 #
 config_load network
-config_foreach migrate_xr1710g_device device
-config_foreach migrate_xr1710g_interface interface
-set_xr1710g_wan_clientid_default
+case "$board" in
+gemtek,xr1710g|gemtek,xr1710g-ubi)
+	config_foreach migrate_xr1710g_device device
+	config_foreach migrate_xr1710g_interface interface
+	;;
+esac
+set_wan_clientid_default
 
 [ "$migrated" -eq 1 ] || exit 0
 

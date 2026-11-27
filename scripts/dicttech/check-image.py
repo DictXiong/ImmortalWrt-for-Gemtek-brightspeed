@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only FIT, XR1710G partition, metadata and optional module checks."""
+"""Read-only FIT, board partition, metadata and optional module checks."""
 from __future__ import annotations
 import argparse
 import gzip
@@ -132,16 +132,18 @@ PARTITIONS = {
                ('dsd', 0x400000, 0x200000, False), ('chainloader', 0x600000, 0x100000, True),
                ('ubi', 0x700000, 0x1b700000, False), ('reserved_bmt', 0x1be00000, 0x4200000, True)],
     'ubi': [('bl2', 0, 0x20000, True), ('ubi', 0x20000, 0, False)],
+    'w1701k-ubi': [('vendor', 0, 0x600000, True), ('chainloader', 0x600000, 0x100000, True),
+                  ('ubi', 0x700000, 0x1b700000, False), ('reserved_bmt', 0x1be00000, 0x4200000, True)],
 }
 
 
-def check_tree(blob, layout):
+def check_tree(blob, layout, *, device='xr1710g'):
     _, nodes = fdt(blob)
-    expected_board = 'gemtek,xr1710g' + ('-ubi' if layout == 'ubi' else '')
-    opposite = 'gemtek,xr1710g' if layout == 'ubi' else 'gemtek,xr1710g-ubi'
+    expected_board = 'gemtek,' + device + ('-ubi' if layout == 'ubi' else '')
+    partition_layout = 'w1701k-ubi' if device == 'w1701k' else layout
     compatible = strings(nodes['/'].get('compatible', b''))
     require(compatible and compatible[0] == expected_board, 'DT primary board does not match the selected layout')
-    require(opposite not in compatible, 'DT mixes legacy and UBI board aliases')
+    require(all(not name.startswith('gemtek,') for name in compatible[1:]), 'DT mixes Gemtek board aliases')
     require(all('airoha,en7581-cpufreq' not in strings(props.get('compatible', b'\0')) and
                 'airoha,force-direct-pll' not in props and
                 not (props.get('device_type') == b'cpu\0' and 'operating-points-v2' in props)
@@ -157,7 +159,7 @@ def check_tree(blob, layout):
         label = string(props['label']); offset, size = struct.unpack('>II', props['reg'])
         actual.append((label, offset, size, 'read-only' in props)); partition_paths[label] = path
     actual.sort(key=lambda item: item[1])
-    require(actual == PARTITIONS[layout], 'NAND partitions/offsets/sizes/read-only flags differ from the selected layout')
+    require(actual == PARTITIONS[partition_layout], 'NAND partitions/offsets/sizes/read-only flags differ from the selected layout')
     root = nodes.get('/chosen', {}).get('rootdisk', b'')
     require(len(root) == 4, 'chosen rootdisk phandle missing')
     roots = [path for path, props in nodes.items() if props.get('phandle') == root]
@@ -171,14 +173,15 @@ def check_tree(blob, layout):
         reg = nodes[path].get('reg', b'')
         if len(reg) == 8:
             cells.append(tuple(struct.unpack('>II', reg)))
-    expected_cells = {(0, 0x1e00), (0x5000, 6), (0x6000, 6)} if layout == 'legacy' else {(0x5000, 0x1e00), (0x6c, 0x11), (0x86, 0x11)}
+    expected_cells = ({(0, 0x1e00), (0x5000, 6), (0x6000, 6)} if partition_layout != 'ubi'
+                      else {(0x5000, 0x1e00), (0x6c, 0x11), (0x86, 0x11)})
     require(set(cells) == expected_cells, 'factory EEPROM/MAC cell offsets do not match the selected layout format')
     i2c = '/soc/i2c0@1fbf8000'
     controller = nodes.get(i2c, {})
     require('mediatek,mt7621-i2c' in strings(controller.get('compatible', b'\0')),
             'I2C0 does not select the supported i2c-mt7621 driver')
     require(controller.get('reg') == struct.pack('>4I', 0, 0x1fbf8000, 0, 0x100),
-            'I2C0 register window does not match the XR1710G controller')
+            'I2C0 register window does not match the board controller')
     monitors = [path for path in child_paths(nodes, i2c)
                 if 'nuvoton,nct7802' in strings(nodes[path].get('compatible', b'\0')) and
                 nodes[path].get('reg') == struct.pack('>I', 0x2e)]
@@ -187,22 +190,24 @@ def check_tree(blob, layout):
                 for path in ('/', '/soc', i2c, monitors[0])),
             'I2C0 NCT7802 monitor or its controller is disabled')
     return {'compatible': compatible, 'partitions': [{'name': name, 'offset': offset, 'size': size, 'read_only': ro}
-            for name, offset, size, ro in actual], 'rootdisk_volume': 'fit', 'factory_cell_format': layout,
+            for name, offset, size, ro in actual], 'rootdisk_volume': 'fit', 'factory_cell_format': partition_layout,
             'i2c_hwmon': {'controller': i2c, 'compatible': 'mediatek,mt7621-i2c',
                           'monitor': monitors[0], 'address': 0x2e},
             'cpu_dvfs_provider': False, 'dtb_sha256': hashlib.sha256(blob).hexdigest()}
 
 
-def check_image(blob, layout, rootfs_sink=None):
+def check_image(blob, layout, rootfs_sink=None, *, device='xr1710g'):
+    require((device, layout) in {('xr1710g', 'legacy'), ('xr1710g', 'ubi'), ('w1701k', 'ubi')},
+            'Unsupported Full device and layout')
     metadata, payload_end, signatures = firmware_metadata(blob)
-    expected_board = 'gemtek,xr1710g' + ('-ubi' if layout == 'ubi' else '')
+    expected_board = 'gemtek,' + device + ('-ubi' if layout == 'ubi' else '')
     expected_compat = '1.0' if layout == 'legacy' else '2.0'
     require(metadata.get('compat_version', '1.0') == expected_compat, 'metadata compatibility version does not match the layout')
     supported = metadata.get('supported_devices' if expected_compat == '1.0' else 'new_supported_devices')
     require(supported == [expected_board], 'metadata supported device list does not match the layout')
     version = metadata.get('version', {})
     require(isinstance(version, dict) and version.get('target') == 'airoha/an7581' and
-            version.get('board') == 'gemtek_xr1710g' + ('-ubi' if layout == 'ubi' else ''), 'metadata target/profile does not match XR1710G layout')
+            version.get('board') == expected_board.replace(',', '_', 1), 'metadata target/profile does not match the selected board and layout')
     total, nodes = fdt(blob)
     default = string(nodes.get('/configurations', {}).get('default', b''))
     configuration = nodes.get('/configurations/' + default)
@@ -245,7 +250,7 @@ def check_image(blob, layout, rootfs_sink=None):
     require(len(selected_roots) == 1, 'FIT configurations select different rootfs images')
     selected_root = next(iter(selected_roots))
     require(nodes['/images/' + selected_root].get('compression', b'none\0') == b'none\0', 'FIT rootfs payload is compressed')
-    tree = check_tree(payloads[selected_fdt], layout)
+    tree = check_tree(payloads[selected_fdt], layout, device=device)
     if rootfs_sink is not None:
         rootfs_sink['payload'] = payloads[selected_root]
     return {'schema_version': 1, 'passed': True, 'layout': layout,
@@ -298,6 +303,7 @@ def check_modules(rootfs, kernel_release=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image', type=Path, required=True)
+    parser.add_argument('--device', choices=['xr1710g', 'w1701k'], default='xr1710g')
     parser.add_argument('--layout', choices=['legacy', 'ubi'], required=True)
     parser.add_argument('--rootfs', type=Path, help='optional assembled rootfs for ELF module consistency checks')
     parser.add_argument('--kernel-release')
@@ -310,7 +316,7 @@ def main():
         require(args.output.resolve() != args.image.resolve() and not (args.output.exists() and args.output.samefile(args.image)), 'report output must not overwrite the input image')
         require(args.rootfs_image_output is None or args.output.resolve() != args.rootfs_image_output.resolve(), 'report and rootfs payload outputs must differ')
     sink = {}
-    result = check_image(args.image.read_bytes(), args.layout, rootfs_sink=sink)
+    result = check_image(args.image.read_bytes(), args.layout, rootfs_sink=sink, device=args.device)
     if args.rootfs:
         result['kernel_modules'] = check_modules(args.rootfs, args.kernel_release)
     if args.fwtool:

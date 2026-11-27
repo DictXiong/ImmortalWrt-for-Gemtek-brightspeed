@@ -26,6 +26,7 @@ boot()
 
 	case $(board_name) in
 	gemtek,w1700k-ubi|\
+	gemtek,w1701k-ubi|\
 	gemtek,xr1710g|\
 	gemtek,xr1710g-ubi)
 		hwmon=$(find_nct7802) || {

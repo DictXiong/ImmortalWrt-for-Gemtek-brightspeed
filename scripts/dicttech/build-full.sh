@@ -4,7 +4,8 @@ set -Eeuo pipefail
 umask 022
 cd "$(dirname "$0")/../.."
 
-layout=legacy
+device=xr1710g
+layout=
 role=gateway
 jobs=2
 prepare_only=0
@@ -12,17 +13,28 @@ reuse_feeds=0
 allow_dirty=0
 while (($#)); do
  case "$1" in
+  --device) device=${2:?}; shift 2;;
   --role) role=${2:?}; shift 2;;
- --layout) layout=${2:?}; shift 2;;
+  --layout) layout=${2:?}; shift 2;;
   --jobs) jobs=${2:?}; shift 2;;
   --prepare-only) prepare_only=1; shift;;
   --reuse-feeds) reuse_feeds=1; shift;;
   --allow-dirty) allow_dirty=1; shift;;
-  *) echo 'usage: build-full.sh [--role gateway|ap] [--layout legacy|ubi] [--jobs N] [--prepare-only] [--reuse-feeds] [--allow-dirty]' >&2; exit 2;;
+  *) echo 'usage: build-full.sh [--device xr1710g|w1701k] [--role gateway|ap] [--layout legacy|ubi] [--jobs N] [--prepare-only] [--reuse-feeds] [--allow-dirty]' >&2; exit 2;;
  esac
 done
 [[ $role == gateway || $role == ap ]] || { echo "Unknown network role" >&2; exit 2; }
-[[ $layout == legacy || $layout == ubi ]] || { echo 'Unknown layout' >&2; exit 2; }
+case "$device" in
+  xr1710g) layout=${layout:-legacy};;
+  w1701k) layout=${layout:-ubi};;
+  *) echo 'Unknown device' >&2; exit 2;;
+esac
+case "$device:$layout" in
+  xr1710g:legacy) profile=gemtek_xr1710g;;
+  xr1710g:ubi|w1701k:ubi) profile=gemtek_$device-ubi;;
+  *) echo 'Unsupported device and layout' >&2; exit 2;;
+esac
+version_dist="ImmortalWrt for ${device^^}"
 [[ $jobs =~ ^[1-9][0-9]*$ ]] || { echo 'Invalid jobs' >&2; exit 2; }
 # This public build never consumes local deployment bundles or rootfs overlays.
 [[ ! -d files ]] || { echo 'Refusing a files/ overlay in the public full build' >&2; exit 1; }
@@ -58,14 +70,18 @@ python3 scripts/dicttech/prepare-source-permissions.py
 python3 scripts/dicttech/check-ui-source.py
 bash scripts/fix-stale-golang-host.sh
 cp configs/xr1710g-full.config .config
+if [[ $profile != gemtek_xr1710g ]]; then
+ sed -i '/^CONFIG_TARGET_airoha_an7581_DEVICE_gemtek_xr1710g=y$/d' .config
+ printf 'CONFIG_TARGET_airoha_an7581_DEVICE_%s=y\n' "$profile" >> .config
+fi
+if [[ $device != xr1710g ]]; then
+ sed -i '/^CONFIG_VERSION_DIST=/d' .config
+ printf 'CONFIG_VERSION_DIST="%s"\n' "$version_dist" >> .config
+fi
 if [[ $role == ap ]]; then
  printf '%s\n' 'CONFIG_XR1710G_DEFAULT_ROLE_AP=y' >> .config
 else
  printf '%s\n' '# CONFIG_XR1710G_DEFAULT_ROLE_AP is not set' >> .config
-fi
-if [[ $layout == ubi ]]; then
- sed -i '/^CONFIG_TARGET_airoha_an7581_DEVICE_gemtek_xr1710g=y$/d' .config
- printf '%s\n' 'CONFIG_TARGET_airoha_an7581_DEVICE_gemtek_xr1710g-ubi=y' >>.config
 fi
 revision="$(git rev-parse --short=12 HEAD)"
 profile_version=$(sed -n 's/^PKG_VERSION:=//p' package/dicttech/xr1710g-full/Makefile)
@@ -86,34 +102,32 @@ printf 'CONFIG_VERSION_NUMBER="%s"\nCONFIG_VERSION_CODE="%s"\n' "$version" "$rev
 make defconfig RECURSIVE_DEP_IS_ERROR=1
 python3 scripts/xr1710g/test-squeezelite-metadata.py --feed-revision "$(git -C feeds/packages rev-parse HEAD)"
 python3 scripts/dicttech/test-cli-feed-metadata.py
-python3 scripts/dicttech/check-build.py --layout "$layout" --output "bin/dicttech-$layout-build.json"
+python3 scripts/dicttech/check-build.py --device "$device" --layout "$layout" --output "bin/dicttech-$layout-build.json"
 if [[ $prepare_only == 1 ]]; then exit 0; fi
 make download -j"$jobs"
 make world -j"$jobs" || make world -j1 V=s
 python3 scripts/dicttech/check-ui-source.py --jsmin staging_dir/hostpkg/bin/jsmin \
  --output bin/targets/airoha/an7581/dicttech-ui-source.json
-python3 scripts/dicttech/check-build.py --layout "$layout" --output "bin/targets/airoha/an7581/dicttech-$layout-build.json"
-profile=gemtek_xr1710g
-[[ $layout != ubi ]] || profile+=-ubi
-prefix="immortalwrt-for-xr1710g-$version-airoha-an7581-$profile"
+python3 scripts/dicttech/check-build.py --device "$device" --layout "$layout" --output "bin/targets/airoha/an7581/dicttech-$layout-build.json"
+prefix="immortalwrt-for-$device-$version-airoha-an7581-$profile"
 image="bin/targets/airoha/an7581/$prefix-squashfs-sysupgrade.itb"
 [[ -f $image ]] || { echo 'Expected current-build image is missing' >&2; exit 1; }
 audit=$(mktemp -d "$PWD/tmp/dicttech-image.XXXXXX")
 trap 'rm -rf -- "$audit"' EXIT
 cp bin/dicttech-{wrtix,wrtmesh}-source.{json,tar} bin/targets/airoha/an7581/
-python3 scripts/dicttech/check-image.py --layout "$layout" --image "$image" \
+python3 scripts/dicttech/check-image.py --device "$device" --layout "$layout" --image "$image" \
  --rootfs-image-output "$audit/rootfs.squashfs" \
  --output "${image%.itb}.audit.json"
 # /dev is mounted at runtime; audit the code/data without requiring mknod on
 # the build host. The FIT/rootfs bytes (including /dev) were verified above.
 staging_dir/host/bin/unsquashfs4 -no-progress -no-xattrs -excludes \
  -d "$audit/rootfs" "$audit/rootfs.squashfs" dev >"$audit/unsquashfs.log"
-grep -Fx "DISTRIB_DESCRIPTION='ImmortalWrt for XR1710G $version'" "$audit/rootfs/etc/openwrt_release"
-grep -Fx "PRETTY_NAME=\"ImmortalWrt for XR1710G $version\"" "$audit/rootfs/etc/os-release"
+grep -Fx "DISTRIB_DESCRIPTION='$version_dist $version'" "$audit/rootfs/etc/openwrt_release"
+grep -Fx "PRETTY_NAME=\"$version_dist $version\"" "$audit/rootfs/etc/os-release"
 python3 scripts/dicttech/check-rootfs.py --role "$role" --rootfs "$audit/rootfs" \
  --manifest "bin/targets/airoha/an7581/$prefix.manifest" \
  --output "${image%.itb}.rootfs.audit.json"
-python3 scripts/dicttech/check-image.py --layout "$layout" --image "$image" \
+python3 scripts/dicttech/check-image.py --device "$device" --layout "$layout" --image "$image" \
  --rootfs "$audit/rootfs" --output "${image%.itb}.audit.json"
 python3 scripts/dicttech/check-packages.py \
  --manifest "bin/targets/airoha/an7581/$prefix.manifest" \

@@ -1,0 +1,113 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+
+/* The UBI 2.0 layout, status LEDs and MT7996 match the W1700K. */
+#include "an7581-w1700k-ubi.dts"
+
+/ {
+	model = "Gemtek W1701K (OpenWrt U-Boot layout)";
+	compatible = "gemtek,w1701k-ubi", "airoha,an7581", "airoha,en7581";
+};
+
+&{/leds} {
+	/delete-node/ led-4;
+	/delete-node/ led-5;
+	/delete-node/ led-6;
+	/delete-node/ led-7;
+};
+
+&gdm1 {
+	nvmem-cells = <&lan_mac 4>;
+};
+
+&gdm2 {
+	/delete-property/ managed;
+	phy-handle = <&phy15>;
+	phy-mode = "2500base-x";
+	nvmem-cells = <&lan_mac 5>;
+	openwrt,netdev-name = "lan1";
+};
+
+&gdm4 {
+	/delete-property/ managed;
+	phy-handle = <&phy14>;
+	phy-mode = "2500base-x";
+};
+
+&gsw_phy1 {
+	status = "disabled";
+};
+
+&gsw_phy2 {
+	status = "disabled";
+};
+
+&gsw_port1 {
+	status = "disabled";
+};
+
+&gsw_port2 {
+	status = "disabled";
+};
+
+&switch {
+	mdio {
+		/delete-node/ ethernet-phy@5;
+		/delete-node/ ethernet-phy@8;
+
+		phy14: ethernet-phy@e {
+			reg = <14>;
+			reset-gpios = <&en7581_pinctrl 46 GPIO_ACTIVE_LOW>;
+			reset-assert-us = <10000>;
+			reset-deassert-us = <20000>;
+
+			leds {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				led@0 {
+					reg = <0>;
+					color = <LED_COLOR_ID_GREEN>;
+					function = LED_FUNCTION_LAN;
+					function-enumerator = <2>;
+					default-state = "keep";
+				};
+
+				led@1 {
+					reg = <1>;
+					color = <LED_COLOR_ID_YELLOW>;
+					function = LED_FUNCTION_LAN;
+					function-enumerator = <2>;
+					default-state = "keep";
+				};
+			};
+		};
+
+		phy15: ethernet-phy@f {
+			reg = <15>;
+			reset-gpios = <&en7581_pinctrl 27 GPIO_ACTIVE_LOW>;
+			reset-assert-us = <10000>;
+			reset-deassert-us = <20000>;
+
+			leds {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				led@0 {
+					reg = <0>;
+					color = <LED_COLOR_ID_GREEN>;
+					function = LED_FUNCTION_LAN;
+					function-enumerator = <1>;
+					default-state = "keep";
+				};
+
+				led@1 {
+					reg = <1>;
+					color = <LED_COLOR_ID_YELLOW>;
+					function = LED_FUNCTION_LAN;
+					function-enumerator = <1>;
+					default-state = "keep";
+				};
+			};
+		};
+	};
+};

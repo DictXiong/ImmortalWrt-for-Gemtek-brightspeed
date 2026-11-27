@@ -182,6 +182,27 @@ class ImageChecks(unittest.TestCase):
         with self.assertRaisesRegex(check.ImageError, 'compatibility'):
             check.check_image(fit(device('legacy'), metadata('ubi')), 'legacy')
 
+    def test_w1701k_uses_vendor_layout_and_rejects_the_xr1710g_ubi_layout(self):
+        nodes = device('legacy')
+        nodes['/']['compatible'] = text('gemtek,w1701k-ubi') + text('airoha,an7581')
+        table = '/soc/nand/partitions'
+        for part in ('bootloader@0', 'uenv@200000', 'dsd@400000'):
+            del nodes[table + '/' + part]
+        nodes[table + '/vendor@0'] = {
+            'label': text('vendor'), 'reg': cell(0, 0x600000), 'read-only': b'',
+        }
+        meta = metadata('ubi')
+        meta['new_supported_devices'] = ['gemtek,w1701k-ubi']
+        meta['version']['board'] = 'gemtek_w1701k-ubi'
+        report = check.check_image(fit(nodes, meta), 'ubi', device='w1701k')
+        self.assertEqual(report['factory_cell_format'], 'w1701k-ubi')
+        with self.assertRaisesRegex(check.ImageError, 'supported device'):
+            check.check_image(fit(nodes, meta), 'ubi')
+        wrong = device('ubi')
+        wrong['/']['compatible'] = nodes['/']['compatible']
+        with self.assertRaisesRegex(check.ImageError, 'NAND partitions'):
+            check.check_image(fit(wrong, meta), 'ubi', device='w1701k')
+
     def test_compiled_fit_rejects_retired_an7581_cpu_dvfs_bindings(self):
         for layout in ('legacy', 'ubi'):
             for props in ({'compatible': text('airoha,en7581-cpufreq')},

@@ -1,0 +1,25 @@
+Subject: [PATCH] watchdog: use the 28-second limit on the W1701K
+
+The W1701K clocks the watchdog at 150 MHz. Its 32-bit counter
+supports up to 28 whole seconds, so the usual 30-second request
+fails and init falls back to the driver's 24-second default.
+
+--- a/watchdog.c
++++ b/watchdog.c
+@@ -293,6 +293,16 @@ char* watchdog_fd(void)
+ 
+ void watchdog_init(int preinit)
+ {
++	static const char board[] = "gemtek,w1701k-ubi";
++	char compatible[sizeof(board)];
++	FILE *dt = fopen("/proc/device-tree/compatible", "r");
++
++	if (dt) {
++		if (fread(compatible, 1, sizeof(compatible), dt) == sizeof(compatible) &&
++		    !memcmp(compatible, board, sizeof(board)))
++			wdt_drv_timeout = 28;
++		fclose(dt);
++	}
+ 	wdt_timeout.cb = watchdog_timeout_cb;
+ 
+ #ifdef XR_BOOT_RECOVERY

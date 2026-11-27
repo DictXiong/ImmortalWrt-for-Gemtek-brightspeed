@@ -228,6 +228,19 @@ define Device/gemtek_xr1710g
 endef
 TARGET_DEVICES += gemtek_xr1710g
 
+define Device/gemtek_w1701k-ubi
+  DEVICE_DTS := an7581-w1701k-ubi
+  $(call Device/gemtek_xr1710g-common)
+  DEVICE_MODEL := W1701K
+  DEVICE_VARIANT := UBI
+  DEVICE_DESCRIPTION := Gemtek W1701K, sold by Quantum Fiber
+  DEVICE_PACKAGES += kmod-phy-airoha-en8811h -rtl826x-firmware
+  SUPPORTED_DEVICES := gemtek,w1701k-ubi
+  DEVICE_COMPAT_VERSION := 2.0
+  DEVICE_COMPAT_MESSAGE := Firmware requires the W1701K UBI 2.0 layout with the vendor bootloader and a separate chainloader slot.
+endef
+TARGET_DEVICES += gemtek_w1701k-ubi
+
 define Device/gemtek_xr1710g-ubi
   DEVICE_DTS := an7581-gemtek-xr1710g-ubi
   $(call Device/gemtek_xr1710g-common)

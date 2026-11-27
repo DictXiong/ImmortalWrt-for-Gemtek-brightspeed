@@ -1,0 +1,25 @@
+From: Chukun Pan <amadeus@jmu.edu.cn>
+Subject: [PATCH] wifi: mt76: mt7996: detect W1701K mixed FEM from band 1
+
+The W1701K uses an internal FEM on band 0 and external FEMs on
+bands 1 and 2. Probing only the first A-die classifies the board
+as internal FEM, so validation rejects its factory EEPROM.
+
+Limit the band 1 probe to the W1701K. Some tri-band boards with
+internal FEMs on all bands depend on the band 0 probe.
+
+Link: https://lkml.iu.edu/hypermail/linux/kernel/2511.1/01728.html
+Link: https://lists.infradead.org/pipermail/linux-mediatek/2025-December/102338.html
+---
+--- a/mt7996/init.c
++++ b/mt7996/init.c
+@@ -1256,7 +1256,8 @@ static int mt7996_variant_fem_init(struc
+ 		adie_idx = (val & MT_PAD_GPIO_ADIE_SINGLE) ? 0 : 1;
+ 		adie_comb = u32_get_bits(val, MT_PAD_GPIO_ADIE_COMB_7992);
+ 	} else {
+-		adie_idx = 0;
++		adie_idx = is_mt7996(&dev->mt76) &&
++			of_machine_is_compatible("gemtek,w1701k-ubi") ? 1 : 0;
+ 		adie_comb = u32_get_bits(val, MT_PAD_GPIO_ADIE_COMB);
+ 	}
+ 

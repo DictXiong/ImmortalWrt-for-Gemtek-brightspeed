@@ -70,6 +70,14 @@ elif args[0]!='commit': sys.exit(5)
         self.run_script(MIGRATE, [('/etc/wrtix/identity.json', marker)])
         self.assertEqual(self.state.read_text(), '{}')
 
+    def test_w1701k_uses_hardware_dhcp_client_id_without_xr1710g_port_migration(self):
+        (self.root / 'system.sh').write_text('board_name() { echo gemtek,w1701k-ubi; }\n')
+        functions = self.root / 'functions.sh'
+        functions.write_text('config_load() { :; }\nconfig_foreach() { exit 10; }\n'
+                             'config_get() { case "$3" in proto) proto=dhcp;; esac; }\n')
+        self.run_script(MIGRATE, [('/lib/functions.sh', functions)])
+        self.assertEqual(json.loads(self.state.read_text()), {'network.wan.sendclientid': 'hardware'})
+
     def role_inputs(self, role):
         marker = self.root / 'role'; marker.write_text(role + '\n')
         network = self.root / 'network'
@@ -116,15 +124,19 @@ elif args[0]!='commit': sys.exit(5)
         source = ROOT / 'target/linux/airoha/an7581/base-files/etc/board.d/02_network'
         functions = self.root / 'board-functions.sh'
         functions.write_text('board_config_update() { :; }\nboard_config_flush() { :; }\nucidef_set_hostname() { :; }\nucidef_set_interface_lan() { uci set "network.lan.ports=$1"; uci set "network.lan.proto=$2"; }\nucidef_set_interfaces_lan_wan() { uci set "network.lan.ports=$1"; uci set "network.wan.device=$2"; }\n')
-        for role in ('gateway', 'ap'):
-            marker, _, _ = self.role_inputs(role)
-            self.state.write_text('{}')
-            self.run_script(source, [('/lib/functions/uci-defaults.sh', functions), ('/etc/xr1710g-network-role', marker)])
-            state = json.loads(self.state.read_text())
-            if role == 'ap':
-                self.assertEqual(state, {'network.lan.ports':'wan lan2 lan3 lan4', 'network.lan.proto':'dhcp'})
-            else:
-                self.assertEqual(state, {'network.lan.ports':'lan2 lan3 lan4', 'network.wan.device':'wan'})
+        for board, lan, wan in (('gemtek,xr1710g', 'lan2 lan3 lan4', 'wan'),
+                               ('gemtek,xr1710g-ubi', 'lan2 lan3 lan4', 'wan'),
+                               ('gemtek,w1701k-ubi', 'lan2', 'lan1')):
+            (self.root / 'system.sh').write_text(f'board_name() {{ echo {board}; }}\n')
+            for role in ('gateway', 'ap'):
+                marker, _, _ = self.role_inputs(role)
+                self.state.write_text('{}')
+                self.run_script(source, [('/lib/functions/uci-defaults.sh', functions), ('/etc/xr1710g-network-role', marker)])
+                state = json.loads(self.state.read_text())
+                if role == 'ap':
+                    self.assertEqual(state, {'network.lan.ports': f'{wan} {lan}', 'network.lan.proto': 'dhcp'})
+                else:
+                    self.assertEqual(state, {'network.lan.ports': lan, 'network.wan.device': wan})
 
     def test_full_selection_has_routing_stack_and_no_personal_packages(self):
         spec=importlib.util.spec_from_file_location('full_policy', ROOT / 'scripts/dicttech/check-build.py')
@@ -133,6 +145,16 @@ elif args[0]!='commit': sys.exit(5)
         required=set(result['required_packages'])
         self.assertTrue({'dnsmasq','odhcpd-ipv6only','ppp','ppp-mod-pppoe','luci-proto-ppp'} <= required)
         self.assertTrue({'cli-profile','dicttech-setup','ap-profile'} <= policy.FORBIDDEN)
+        w1701k = self.root / 'w1701k.config'
+        w1701k.write_text((ROOT / 'configs/xr1710g-full.config').read_text().replace(
+            'DEVICE_gemtek_xr1710g=y', 'DEVICE_gemtek_w1701k-ubi=y'))
+        self.assertEqual(policy.config(w1701k, 'ubi', device='w1701k')['required_packages'],
+                         result['required_packages'])
+        with self.assertRaisesRegex(ValueError, 'requested device and layout'):
+            policy.config(w1701k, 'ubi')
+        w1701k.write_text(w1701k.read_text().replace('CONFIG_PACKAGE_luci-theme-glass=y\n', ''))
+        with self.assertRaisesRegex(ValueError, 'luci-theme-glass'):
+            policy.config(w1701k, 'ubi', device='w1701k')
 
 
 if __name__ == '__main__': unittest.main()

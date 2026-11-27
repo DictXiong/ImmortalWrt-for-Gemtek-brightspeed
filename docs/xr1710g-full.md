@@ -84,6 +84,12 @@ WRTMESH_SOURCE=/absolute/path/to/clean/wrtmesh \
 Select `--role ap` for the bridged DHCP-client default. Role and partition layout
 are independent choices. Use `ubi` only for hardware already using that
 bootloader/partition layout.
+For the Gemtek W1701K with its vendor bootloader and separate chainloader
+partition, select `--device w1701k --layout ubi` with either role. This selects
+the board target and image layout while using the same Full package list,
+locked feeds and LuCI defaults. Gateway uses `lan1` as WAN and `lan2` as LAN.
+AP bridges both ports. LuCI-triggered boot recovery currently belongs to
+XR1710G Legacy AP and requires the compatible boot chain and state volume.
 The command leaves the partition layout and bootloader in place. The build pins
 all feeds and rejects a root `files/` overlay. Commit the source before building
 a release. Use `--allow-dirty` for explicitly uncommitted local trials.

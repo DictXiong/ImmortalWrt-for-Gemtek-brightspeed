@@ -1,4 +1,4 @@
-name: Build ImmortalWrt for XR1710G
+name: Build ImmortalWrt for XR1710G and W1701K
 
 on:
   push:
@@ -10,7 +10,7 @@ on:
         required: false
         type: string
       layout:
-        description: 分区布局（不会转换引导程序）
+        description: XR1710G 分区布局（W1701K 固定使用 ubi）
         required: true
         default: legacy
         type: choice
@@ -82,10 +82,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        device: [xr1710g, w1701k]
         role: [gateway, ap]
+    env:
+      DEVICE: ${{ matrix.device }}
+      ROLE: ${{ matrix.role }}
+      LAYOUT: ${{ matrix.device == 'w1701k' && 'ubi' || inputs.layout || 'legacy' }}
     steps:
-      # The release controller always comes from the pinned Full commit.
-      # Both roles build isolated checkouts of this same immutable source.
+      # Every device and role builds an isolated checkout of the same commit.
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.plan.outputs.full_commit }}
@@ -118,22 +122,20 @@ jobs:
         run: sudo --preserve-env=WRTMESH_SOURCE bash scripts/dicttech/check-regressions.sh host
       - name: Prepare the exact role source
         env:
-          ROLE: ${{ matrix.role }}
-          LAYOUT: ${{ inputs.layout || 'legacy' }}
           FULL_SHA: ${{ needs.plan.outputs.full_commit }}
         run: |
-          python3 scripts/dicttech/release.py prepare --role "$ROLE" --layout "$LAYOUT" \
+          python3 scripts/dicttech/release.py prepare --device "$DEVICE" --role "$ROLE" --layout "$LAYOUT" \
             --directory "$RUNNER_TEMP/xr-release-$ROLE"
           python3 - "$RUNNER_TEMP/xr-release-$ROLE/source.json" <<'PY'
           import json, os, sys
           source = json.load(open(sys.argv[1]))
           assert source['release_commit'] == os.environ['FULL_SHA']
           assert source['source_commit'] == os.environ['FULL_SHA']
+          assert source['device'] == os.environ['DEVICE']
           assert source['role'] == os.environ['ROLE']
+          assert source['layout'] == os.environ['LAYOUT']
           PY
       - name: Build and audit matched firmware and APKs
-        env:
-          ROLE: ${{ matrix.role }}
         run: |
           set -o pipefail
           python3 scripts/dicttech/release.py build --directory "$RUNNER_TEMP/xr-release-$ROLE" --jobs "$(nproc)" \
@@ -174,7 +176,7 @@ jobs:
       - name: Upload only the audited public role
         uses: actions/upload-artifact@v7
         with:
-          name: immortalwrt-xr1710g-${{ matrix.role }}-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.version }}-${{ needs.plan.outputs.full_commit }}
+          name: immortalwrt-${{ matrix.device }}-${{ matrix.role }}-${{ env.LAYOUT }}-${{ needs.plan.outputs.version }}-${{ needs.plan.outputs.full_commit }}
           if-no-files-found: error
           retention-days: 30
           path: ${{ runner.temp }}/xr-release-${{ matrix.role }}/public/*
@@ -182,7 +184,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: xr1710g-build-log-${{ matrix.role }}-${{ needs.plan.outputs.version }}-${{ needs.plan.outputs.full_commit }}
+          name: firmware-build-log-${{ matrix.device }}-${{ matrix.role }}-${{ needs.plan.outputs.version }}-${{ needs.plan.outputs.full_commit }}
           if-no-files-found: ignore
           retention-days: 14
           path: ${{ runner.temp }}/xr-${{ matrix.role }}-build.log
@@ -190,7 +192,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: xr1710g-validation-${{ matrix.role }}-${{ needs.plan.outputs.version }}-${{ needs.plan.outputs.full_commit }}
+          name: firmware-validation-${{ matrix.device }}-${{ matrix.role }}-${{ needs.plan.outputs.version }}-${{ needs.plan.outputs.full_commit }}
           if-no-files-found: ignore
           retention-days: 14
           path: |
@@ -206,15 +208,17 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@v8
         with:
-          pattern: immortalwrt-xr1710g-*-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.version }}-${{ needs.plan.outputs.full_commit }}
+          pattern: immortalwrt-*-${{ needs.plan.outputs.version }}-${{ needs.plan.outputs.full_commit }}
           path: ${{ runner.temp }}/edition-artifacts
-      - name: Verify both roles share the pinned source and package policy
+      - name: Verify both devices and both roles against the pinned source
+        env:
+          XR1710G_LAYOUT: ${{ inputs.layout || 'legacy' }}
         run: |
           python3 scripts/dicttech/release.py assemble --inputs "$RUNNER_TEMP/edition-artifacts" \
-            --output "$RUNNER_TEMP/release-pair"
+            --xr1710g-layout "$XR1710G_LAYOUT" --output "$RUNNER_TEMP/release-pair"
       - uses: actions/upload-artifact@v7
         with:
-          name: xr1710g-release-pair-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.version }}-${{ needs.plan.outputs.full_commit }}
+          name: gemtek-release-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.version }}-${{ needs.plan.outputs.full_commit }}
           if-no-files-found: error
           retention-days: 30
           path: ${{ runner.temp }}/release-pair/*
@@ -229,13 +233,13 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@v8
         with:
-          name: xr1710g-release-pair-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.version }}-${{ needs.plan.outputs.full_commit }}
+          name: gemtek-release-${{ inputs.layout || 'legacy' }}-${{ needs.plan.outputs.version }}-${{ needs.plan.outputs.full_commit }}
           path: release-pair
       - name: Generate Chinese notes from the verified role pair
         run: |
           python3 scripts/dicttech/release.py notes --pair release-pair/release-pair.json \
             --output "$RUNNER_TEMP/release-notes.md"
-      - name: Create one new draft containing both Full roles
+      - name: Create one draft containing all four Full images
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           RELEASE_TAG: ${{ inputs.release_tag }}
@@ -255,5 +259,5 @@ jobs:
           release_flags=()
           [[ "$RELEASE_TAG" != *-* ]] || release_flags+=(--prerelease)
           gh release create "$RELEASE_TAG" --target "$RELEASE_SHA" --draft "${release_flags[@]}" \
-            --title "ImmortalWrt for XR1710G $RELEASE_TAG" \
+            --title "ImmortalWrt for XR1710G and W1701K $RELEASE_TAG" \
             --notes-file "$RUNNER_TEMP/release-notes.md" release-pair/*

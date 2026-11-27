@@ -16,7 +16,7 @@ esac
 
 [ "$mode" != "0" ] || exit 0
 case "$(board_name)" in
-gemtek,xr1710g|gemtek,xr1710g-ubi) ;;
+gemtek,xr1710g|gemtek,xr1710g-ubi|gemtek,w1701k-ubi) ;;
 *) exit 0 ;;
 esac
 

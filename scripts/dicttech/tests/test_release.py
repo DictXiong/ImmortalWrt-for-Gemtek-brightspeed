@@ -46,15 +46,21 @@ class ReleaseTests(unittest.TestCase):
     def output(self): return self.root/'pair'
 
     def artifact(self,role, *, manifest='kernel - 6.18~abi\nwrtix-agent - 1.0.0-r1\n',
-                 config='CONFIG_PACKAGE_wrtix-agent=y\n', audit_role=None, update=None, extra=None):
-        folder=self.inputs/role;folder.mkdir(exist_ok=True)
+                 config='CONFIG_PACKAGE_wrtix-agent=y\n', audit_role=None, audit_device=None,
+                 device='xr1710g', update=None, extra=None):
+        folder=self.inputs/(role if device=='xr1710g' else f'{device}-{role}');folder.mkdir(exist_ok=True)
         d={k:v for k,v in r.plan(self.repo).items() if k!='feed_text'}
-        d.update(schema_version=r.ARTIFACT_SCHEMA, flavor='full',role=role,layout='legacy',
+        d.update(schema_version=r.ARTIFACT_SCHEMA, flavor='full',role=role,device=device,
+                 layout=r.DEVICES[device][0],
                  source_commit=self.head,source_tree=self.tree,
                  build_version=d['version']+'-'+self.head[:12],feed_lock_sha256='e'*64)
         if update:d.update(update)
-        prefix=r.asset_prefix(d); image=prefix+'-squashfs-sysupgrade.itb'
-        members={'source.json':json.dumps(d).encode(),image:b'image fixture '+role.encode(),
+        prefix=r.asset_prefix(d)
+        board = r.board_id(device, d['layout'])
+        profile = board.replace(',', '_', 1)
+        image = f"immortalwrt-for-{device}-{d['build_version']}-airoha-an7581-{profile}-squashfs-sysupgrade.itb"
+        image_data = f'image fixture {device} {role}'.encode()
+        members={'source.json':json.dumps(d).encode(),image:image_data,
                  image.removesuffix('-squashfs-sysupgrade.itb')+'.manifest':manifest.encode(),
                  'config.buildinfo':(config+('CONFIG_XR1710G_DEFAULT_ROLE_AP=y\n' if role=='ap' else '# CONFIG_XR1710G_DEFAULT_ROLE_AP is not set\n')).encode(),
                  'feeds.buildinfo':('src-git glass https://example.invalid/theme.git^'+'d'*40+'\n'+'src-link wrtix /builder/'+role+'/source/tmp/wrtix-sources/'+self.pin['revision']+'\n'+
@@ -63,7 +69,10 @@ class ReleaseTests(unittest.TestCase):
                  'dicttech-wrtix-source.tar':b'wrtix fixture',
                  'dicttech-wrtmesh-source.json':json.dumps(self.mesh_pin).encode(),
                  'dicttech-wrtmesh-source.tar':b'wrtmesh fixture',
-                 'audit/image.rootfs.audit.json':json.dumps({'passed':True,'clean_image':{'network_role':audit_role or role}}).encode()}
+                 'audit/image.rootfs.audit.json':json.dumps({'passed':True,'clean_image':{'network_role':audit_role or role}}).encode(),
+                 'audit/'+image.removesuffix('.itb')+'.audit.json':json.dumps({
+                     'passed':True, 'layout':d['layout'], 'compatible':[audit_device or board],
+                     'image_sha256':hashlib.sha256(image_data).hexdigest()}).encode()}
         if extra:members.update(extra)
         bundle=folder/(prefix+'.tar.gz')
         with tarfile.open(bundle,'w:gz')as a:
@@ -78,8 +87,9 @@ class ReleaseTests(unittest.TestCase):
     def pair(self,**kwargs):
         self.artifact('gateway');self.artifact('ap',**kwargs)
 
-    def assemble(self):
-        r.assemble(self.inputs,self.output(),self.head,self.base,self.tree)
+    def assemble(self, *, layouts=None):
+        r.assemble(self.inputs,self.output(),self.head,self.base,self.tree,
+                   layouts=layouts or {'xr1710g': 'legacy'})
 
     def test_both_roles_are_exact_same_source_without_moving_branches(self):
         before=r.git(self.repo,'show-ref')
@@ -148,6 +158,24 @@ class ReleaseTests(unittest.TestCase):
         self.pair();self.assemble();x=json.loads((self.output()/'release-pair.json').read_text())
         self.assertEqual({d['role'] for d in x['variants']},set(r.ROLES));self.assertEqual(len(list(self.output().glob('*'))),10)
         subprocess.run(['sha256sum','--check','sha256sums'],cwd=self.output(),stdout=subprocess.DEVNULL,check=True)
+
+    def test_release_requires_both_devices_and_validates_each_role_pair(self):
+        layouts = {'xr1710g': 'legacy', 'w1701k': 'ubi'}
+        self.pair()
+        self.artifact('gateway', device='w1701k', manifest='device-specific\n')
+        with self.assertRaisesRegex(ValueError, 'every release device'):
+            self.assemble(layouts=layouts)
+        self.artifact('ap', device='w1701k', manifest='device-specific\n',
+                      audit_device='gemtek,xr1710g')
+        with self.assertRaisesRegex(ValueError, 'Image device audit mismatched'):
+            self.assemble(layouts=layouts)
+        artifact = next((self.inputs/'w1701k-ap').glob('*.json'))
+        artifact.with_suffix('.tar.gz').unlink()
+        self.artifact('ap', device='w1701k', manifest='device-specific\n')
+        self.assemble(layouts=layouts)
+        release = json.loads((self.output()/'release-pair.json').read_text())
+        self.assertEqual(release['layouts'], layouts)
+        self.assertEqual(len(list(self.output().glob('*-sysupgrade.itb'))), 4)
 
     def test_missing_or_duplicate_role_rejected(self):
         self.artifact('gateway')

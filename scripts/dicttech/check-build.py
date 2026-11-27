@@ -13,11 +13,13 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 REQUIRED = {
     'wrtix-agent', 'xr1710g-full', 'xr1710g-cli', 'wrtmesh', 'wpad-mesh-mbedtls', 'hostapd-utils', 'jq',
+    'airoha-an7581-mt7996-board',
     'curl', 'coreutils-timeout', 'flock', 'umdns', 'arp-scan', 'arp-scan-database',
     'firewall4', 'kmod-nft-bridge',
     'kmod-nft-offload', 'luci-app-mlo', 'luci-app-airoha-fancontrol',
     'luci-app-airoha-npu', 'luci-theme-glass', 'dropbear', 'uhttpd',
-    'luci-i18n-base-zh-cn', 'zsh', 'vim-full', 'tmux', 'less',
+    'luci-i18n-base-zh-cn', 'luci-i18n-glass-zh-cn', 'luci-i18n-airoha-npu-zh-cn',
+    'zsh', 'vim-full', 'tmux', 'less',
     'git-http', 'rsync', 'luci-app-airoha-factory',
     'luci-app-package-manager', 'luci-app-wifihistory',
     'luci-i18n-airoha-factory-zh-cn', 'luci-i18n-package-manager-zh-cn',
@@ -91,7 +93,7 @@ def local_feed_source(name, source_root=ROOT):
     return directory, metadata
 
 
-def config(path, layout, *, generated=False):
+def config(path, layout, *, generated=False, device='xr1710g'):
     values = dict(re.findall(r'^(CONFIG_[A-Za-z0-9_-]+)=(.*)$', path.read_text(), re.M))
     missing = sorted(p for p in REQUIRED if values.get('CONFIG_PACKAGE_' + p) != 'y')
     extra = sorted(p for p in FORBIDDEN if values.get('CONFIG_PACKAGE_' + p) == 'y')
@@ -107,9 +109,13 @@ def config(path, layout, *, generated=False):
         'CONFIG_KERNEL_DEBUG_INFO_BTF_MODULES', 'CONFIG_DWARVES',
     )):
         raise ValueError('Generated Full config is missing module BTF or dwarves')
-    expected = 'CONFIG_TARGET_airoha_an7581_DEVICE_gemtek_xr1710g' + ('-ubi' if layout == 'ubi' else '')
-    if values.get(expected) != 'y':
-        raise ValueError('Wrong XR1710G partition profile')
+    if (device, layout) not in {('xr1710g', 'legacy'), ('xr1710g', 'ubi'), ('w1701k', 'ubi')}:
+        raise ValueError('Unsupported Full device and layout')
+    expected = 'CONFIG_TARGET_airoha_an7581_DEVICE_gemtek_' + device + ('-ubi' if layout == 'ubi' else '')
+    selected = {key for key, value in values.items()
+                if key.startswith('CONFIG_TARGET_airoha_an7581_DEVICE_') and value == 'y'}
+    if selected != {expected}:
+        raise ValueError('Generated Full config does not select only the requested device and layout')
     return {'layout': layout, 'required_packages': sorted(REQUIRED),
             'config_sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
 
@@ -118,12 +124,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--feeds-only', action='store_true')
     parser.add_argument('--config', type=Path, default=ROOT / '.config')
+    parser.add_argument('--device', choices=['xr1710g', 'w1701k'], default='xr1710g')
     parser.add_argument('--layout', choices=['legacy', 'ubi'], default='legacy')
     parser.add_argument('--output', type=Path)
     args = parser.parse_args()
     result = {'schema_version': 1, 'feeds': feeds(), **{name: local_feed_source(name)[1] for name in LOCAL_FEEDS}}
     if not args.feeds_only:
-        result.update(config(args.config, args.layout, generated=True))
+        result.update(config(args.config, args.layout, generated=True, device=args.device))
         result['source_revision'] = git('rev-parse', 'HEAD')
         result['source_date_epoch'] = int(git('show', '-s', '--format=%ct', 'HEAD'))
         result['source_dirty'] = bool(git('status', '--porcelain'))

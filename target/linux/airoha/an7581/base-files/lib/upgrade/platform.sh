@@ -61,6 +61,7 @@ platform_check_image() {
 		;;
 	nokia,xg-040g-md-ubi|\
 	nokia,xg-040g-tf-ubi|\
+	gemtek,w1701k-ubi|\
 	quantum,q1000k-ubi)
 		fit_check_image "$1"
 		return $?
@@ -85,6 +86,7 @@ platform_do_upgrade() {
 				airoha_require_ubi_layout factory && fit_do_upgrade "$1"
 			;;
 		gemtek,w1700k-ubi|\
+		gemtek,w1701k-ubi|\
 		gemtek,xg2010g|\
 			nokia,xg-040g-md-ubi|\
 		nokia,xg-040g-tf-ubi|\

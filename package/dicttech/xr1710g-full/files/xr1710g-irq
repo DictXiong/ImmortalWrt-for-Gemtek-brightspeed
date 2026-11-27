@@ -69,7 +69,10 @@ start() {
 	local board enabled
 
 	read -r board < /tmp/sysinfo/board_name || return 0
-	case "$board" in gemtek,xr1710g|gemtek,xr1710g-ubi) ;; *) return 0 ;; esac
+	case "$board" in
+		gemtek,xr1710g|gemtek,xr1710g-ubi|gemtek,w1701k-ubi) ;;
+		*) return 0 ;;
+	esac
 	enabled=$(uci -q get xr1710g_irq.settings.enabled)
 	[ "$enabled" = 1 ] || return 0
 	pin_action airoha_eth.4 1

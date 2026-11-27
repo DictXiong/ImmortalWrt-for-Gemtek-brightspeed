@@ -17,11 +17,12 @@ ROOT = Path(__file__).resolve().parents[2]
 LOCK = 'configs/xr1710g-release.json'
 FEEDS = 'configs/dicttech-feeds.conf'
 LOCK_SCHEMA = 3
-ARTIFACT_SCHEMA = 5
+ARTIFACT_SCHEMA = 6
 LOCAL_FEEDS = ('wrtix', 'wrtmesh')
 LOCAL_SOURCE_KEYS = tuple(f'{name}_source' for name in LOCAL_FEEDS)
 PUBLIC_VERSION = r'(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:alpha|beta|rc)\.[1-9][0-9]*)?'
 ROLES = ('gateway', 'ap')
+DEVICES = {'xr1710g': ('legacy', 'ubi'), 'w1701k': ('ubi',)}
 
 
 def need(value, message):
@@ -45,9 +46,17 @@ def release_tag(version):
 
 
 def asset_prefix(receipt):
-    # Historical pairs remain readable in their original naming scheme.
-    project = 'immortalwrt-xr1710g' if receipt['version'].isdigit() else 'xr1710g-full'
+    device = receipt['device']
+    project = f'immortalwrt-{device}' if receipt['version'].isdigit() else f'{device}-full'
     return f"{project}-{receipt['role']}-{receipt['layout']}-{receipt['build_version']}"
+
+
+def board_id(device, layout):
+    return 'gemtek,' + device + ('-ubi' if layout == 'ubi' else '')
+
+
+def valid_layout(device, layout):
+    return layout in DEVICES.get(device, ())
 
 
 def run(args, cwd, *, data=None, capture=True, env=None):
@@ -116,7 +125,8 @@ def plan(repo):
 def source_check(directory, receipt):
     source = directory / 'source'
     need(receipt.get('schema_version') == ARTIFACT_SCHEMA, 'Unsupported build receipt schema')
-    need(receipt['flavor'] == 'full' and receipt['role'] in ROLES and receipt['layout'] in ('legacy', 'ubi'), 'Invalid build receipt')
+    need(receipt['flavor'] == 'full' and receipt['role'] in ROLES and
+         valid_layout(receipt['device'], receipt['layout']), 'Invalid build receipt')
     expected = receipt['release_commit']
     need(receipt['source_commit'] == expected, 'Edition source does not match its fixed commit')
     need(git(source, 'rev-parse', 'HEAD') == expected, 'Source HEAD moved')
@@ -128,8 +138,10 @@ def source_check(directory, receipt):
     need(not (source / 'files').exists() and not (source / 'files').is_symlink(), 'Rootfs overlays are not release inputs')
 
 
-def prepare(repo, directory, role, layout):
-    need(role in ROLES and layout in ('legacy', 'ubi'), 'Invalid role/layout')
+def prepare(repo, directory, role, layout=None, *, device='xr1710g'):
+    need(device in DEVICES, 'Invalid device')
+    layout = layout or DEVICES[device][0]
+    need(role in ROLES and valid_layout(device, layout), 'Invalid role/layout')
     need(not directory.is_symlink(), 'Build directory must not be a symlink')
     repo, directory = repo.resolve(), directory.resolve()
     need(not (repo/'files').exists() and not (repo/'files').is_symlink(), 'Rootfs overlays are not release inputs')
@@ -145,7 +157,7 @@ def prepare(repo, directory, role, layout):
     receipt['schema_version'] = ARTIFACT_SCHEMA
     # Keep the combined public build version distinct from the schema's version.
     receipt['build_version'] = p['version'] + '-' + p['release_commit'][:12]
-    receipt.update({'flavor': 'full', 'role': role, 'layout': layout, 'source_commit': source_commit,
+    receipt.update({'flavor': 'full', 'role': role, 'device': device, 'layout': layout, 'source_commit': source_commit,
                     'source_tree': git(source, 'write-tree'),
                     'feed_lock_sha256': hashlib.sha256(p['feed_text'].encode()).hexdigest()})
     save(directory / 'source.json', receipt)
@@ -162,7 +174,7 @@ def build(directory, jobs, prepare_only=False, reuse_feeds=False):
          'Build receipt is not bound to this release controller')
     need(d['feed_lock_sha256'] == hashlib.sha256(locked['feed_text'].encode()).hexdigest(), 'Feed lock changed after preparation')
     env = {**os.environ, 'SOURCE_DATE_EPOCH': str(d['source_date_epoch'])}
-    command = ['bash', 'scripts/dicttech/build-full.sh', '--layout', d['layout'],
+    command = ['bash', 'scripts/dicttech/build-full.sh', '--device', d['device'], '--layout', d['layout'],
                '--role', d['role'], '--jobs', str(jobs)]
     if prepare_only: command.append('--prepare-only')
     if reuse_feeds: command.append('--reuse-feeds')
@@ -170,7 +182,7 @@ def build(directory, jobs, prepare_only=False, reuse_feeds=False):
     source_check(directory, d)
     if prepare_only: return
     target = source/'bin/targets/airoha/an7581'
-    profile = 'gemtek_xr1710g' + ('-ubi' if d['layout']=='ubi' else '')
+    profile = board_id(d['device'], d['layout']).replace(',', '_', 1)
     images = list(target.glob('*-'+d['build_version']+'-airoha-an7581-'+profile+'-squashfs-sysupgrade.itb'))
     need(len(images)==1, 'Expected exactly one current sysupgrade image')
     image = images[0]; manifest = image.with_name(image.name.removesuffix('-squashfs-sysupgrade.itb')+'.manifest')
@@ -258,11 +270,14 @@ def normalized_feeds(data, receipt):
     return seen
 
 
-def assemble(inputs, output, revision, expected_upstream=None, expected_tree=None):
-    """Accept only two audited roles with the same code, packages and policy."""
+def assemble(inputs, output, revision, expected_upstream=None, expected_tree=None, *, layouts):
+    """Validate both roles per device and the source and feeds across the release."""
     need(not output.exists(), 'Use a new pair output directory')
-    reports, manifests, configs, feed_receipts = [], [], [], []
-    reports_paths = [*inputs.rglob('xr1710g-*.json'), *inputs.rglob('immortalwrt-xr1710g-*.json')]
+    need(layouts and all(valid_layout(*item) for item in layouts.items()), 'Invalid release layouts')
+    reports, manifests, configs, feed_receipts = {}, {}, {}, {}
+    reports_paths = [path for device in DEVICES for pattern in
+                     (f'{device}-full-*.json', f'immortalwrt-{device}-*.json')
+                     for path in inputs.rglob(pattern)]
     for path in reports_paths:
         d = json.loads(path.read_text())
         need(d.get('schema_version') == ARTIFACT_SCHEMA and d.get('passed') is True and
@@ -275,8 +290,11 @@ def assemble(inputs, output, revision, expected_upstream=None, expected_tree=Non
         if expected_tree is not None:
             need(d['source_tree'] == expected_tree, 'Artifact source tree changed')
         package_version(d['version'])
-        need(d['layout'] in ('legacy','ubi') and d['build_version'] == d['version']+'-'+revision[:12],
-             'Invalid artifact layout/version')
+        device = d['device']
+        key = (device, d['role'])
+        need(device in layouts and layouts[device] == d['layout'] and
+             d['build_version'] == d['version']+'-'+revision[:12], 'Invalid artifact device/layout/version')
+        need(key not in reports, 'Both Full roles must succeed exactly once per device')
         expected = asset_prefix(d)
         need(path.name == expected+'.json' and d['bundle'] == expected+'.tar.gz', 'Unexpected artifact name')
         bundle = path.parent/d['bundle']
@@ -291,7 +309,10 @@ def assemble(inputs, output, revision, expected_upstream=None, expected_tree=Non
             need(all(m.isfile() and not m.name.startswith('/') and '..' not in Path(m.name).parts for m in members), 'Unsafe public archive')
             need(len({m.name for m in members}) == len(members), 'Duplicate archive names')
             image_name = d['image']
-            need(Path(image_name).name == image_name and image_name.endswith('-squashfs-sysupgrade.itb'), 'Invalid image name')
+            profile = board_id(device, d['layout']).replace(',', '_', 1)
+            need(Path(image_name).name == image_name and
+                 image_name.endswith(f"-{d['build_version']}-airoha-an7581-{profile}-squashfs-sysupgrade.itb"),
+                 'Invalid image name for device/layout')
             manifest = image_name.removesuffix('-squashfs-sysupgrade.itb')+'.manifest'
             allowed = {image_name, manifest, 'source.json', 'config.buildinfo', 'feeds.buildinfo',
                        'version.buildinfo'} | {
@@ -315,24 +336,34 @@ def assemble(inputs, output, revision, expected_upstream=None, expected_tree=Non
             audits = [json.load(archive.extractfile(m)) for m in members if m.name.endswith('.rootfs.audit.json')]
             need(len(audits) == 1 and audits[0].get('passed') is True and
                  audits[0].get('clean_image', {}).get('network_role') == d['role'], 'Rootfs role audit absent or mismatched')
-            manifests.append(sorted(archive.extractfile(manifest).read().decode().splitlines()))
-            configs.append(normalized_config(archive.extractfile('config.buildinfo').read()))
-            feed_receipts.append(normalized_feeds(archive.extractfile('feeds.buildinfo').read(), d))
-        reports.append((path,bundle,d))
-    need(len(reports) == 2 and {d['role'] for _,_,d in reports} == set(ROLES), 'Both Full roles must succeed')
-    first = reports[0][2]
-    for _,_,d in reports[1:]:
-        need(all(d[k] == first[k] for k in ['layout','build_version','upstream_base','source_tree',
-                                          'fixed_feeds','feed_lock_sha256','source_archive_sha256', *LOCAL_SOURCE_KEYS]), 'Roles have different release inputs')
-    need(manifests[0] == manifests[1], 'Roles have different packages or package versions')
-    need(configs[0] == configs[1], 'Roles have different driver or package configuration')
-    need(feed_receipts[0] == feed_receipts[1], 'Roles have different actual feed revisions')
+            image_audit = 'audit/' + image_name.removesuffix('.itb') + '.audit.json'
+            need(image_audit in archive.getnames(), 'Image device audit absent')
+            audited_image = json.load(archive.extractfile(image_audit))
+            need(audited_image.get('passed') is True and audited_image.get('layout') == d['layout'] and
+                 audited_image.get('compatible', [])[:1] == [board_id(device, d['layout'])] and
+                 audited_image.get('image_sha256') == d['image_sha256'], 'Image device audit mismatched')
+            manifests[key] = sorted(archive.extractfile(manifest).read().decode().splitlines())
+            configs[key] = normalized_config(archive.extractfile('config.buildinfo').read())
+            feed_receipts[key] = normalized_feeds(archive.extractfile('feeds.buildinfo').read(), d)
+        reports[key] = (path, bundle, d)
+    need(set(reports) == {(device, role) for device in layouts for role in ROLES},
+         'Both Full roles must succeed for every release device')
+    first = next(iter(reports.values()))[2]
+    for _,_,d in reports.values():
+        need(all(d[k] == first[k] for k in ['build_version','upstream_base','source_tree',
+                                          'fixed_feeds','feed_lock_sha256','source_archive_sha256', *LOCAL_SOURCE_KEYS]), 'Variants have different release inputs')
+    for device in layouts:
+        gateway, ap = ((device, role) for role in ROLES)
+        need(manifests[gateway] == manifests[ap], f'{device} roles have different packages or package versions')
+        need(configs[gateway] == configs[ap], f'{device} roles have different driver or package configuration')
+    need(all(feeds == next(iter(feed_receipts.values())) for feeds in feed_receipts.values()),
+         'Variants have different actual feed revisions')
     output.mkdir(parents=True)
-    for path,bundle,d in reports:
+    for path,bundle,d in reports.values():
         for item in [path,bundle,path.parent/(path.stem+'-sysupgrade.itb'),path.parent/d['source_archive']]:
             shutil.copyfile(item, output/item.name)
     save(output/'release-pair.json', {'schema_version':ARTIFACT_SCHEMA,'release_commit':revision,
-         'layout':first['layout'],'variants':[d for _,_,d in sorted(reports,key=lambda x:x[2]['role'])]})
+         'layouts': layouts, 'variants': [reports[key][2] for key in sorted(reports)]})
     (output/'sha256sums').write_text(''.join(digest(p)+'  '+p.name+'\n' for p in sorted(output.iterdir()) if p.is_file()))
 
 
@@ -342,15 +373,20 @@ def generate_notes(pair_path, output_path, template_path=None):
     revision = pair.get('release_commit')
     need(isinstance(revision,str) and re.fullmatch('[0-9a-f]{40}',revision), 'Invalid release source ID')
     variants = pair.get('variants', [])
-    need(len(variants) == 2 and {d.get('role') for d in variants} == set(ROLES), 'Notes require both Full roles')
-    need(pair.get('layout') in ('legacy','ubi'), 'Invalid release layout')
+    layouts = pair.get('layouts', {})
+    need(layouts and all(valid_layout(*item) for item in layouts.items()), 'Invalid release layouts')
+    expected = {(device, role) for device in layouts for role in ROLES}
+    need(len(variants) == len(expected) and {(d.get('device'), d.get('role')) for d in variants} == expected,
+         'Notes require both Full roles for every release device')
     for d in variants:
         need(d.get('schema_version') == ARTIFACT_SCHEMA and d.get('flavor') == 'full' and
              d.get('release_commit') == revision and d.get('source_commit') == revision and
-             d.get('layout') == pair['layout'], 'Notes contain mixed source snapshots')
+             d.get('layout') == layouts[d['device']], 'Notes contain mixed source snapshots')
     text = (template_path or ROOT/'docs/xr1710g-release-notes.md').read_text().rstrip()
-    text += '\n\n源码：`'+revision+'`；分区布局：`'+pair['layout']+'`。\n'
-    text += '附件分别提供 Full gateway／ap 镜像、匹配 APK、源码与 `sha256sums`。\n'
+    text += '\n\n| 机型 | 分区布局 | 固件角色 |\n| --- | --- | --- |\n'
+    for device, layout in sorted(layouts.items()):
+        text += f'| {device.upper()} | `{layout}` | gateway／ap |\n'
+    text += f'\n源码提交为 `{revision}`。附件包含各版本的镜像、配套 APK、源码和 `sha256sums`。\n'
     with output_path.open('x') as output: output.write(text)
 
 
@@ -359,18 +395,19 @@ def main():
     sub = parser.add_subparsers(dest='action', required=True)
     sub.add_parser('plan')
     sub.add_parser('tag')
-    p=sub.add_parser('prepare');p.add_argument('--role',choices=ROLES,required=True);p.add_argument('--layout',choices=['legacy','ubi'],default='legacy');p.add_argument('--directory',type=Path,required=True)
+    p=sub.add_parser('prepare');p.add_argument('--role',choices=ROLES,required=True);p.add_argument('--device',choices=DEVICES,default='xr1710g');p.add_argument('--layout',choices=['legacy','ubi']);p.add_argument('--directory',type=Path,required=True)
     p=sub.add_parser('build');p.add_argument('--directory',type=Path,required=True);p.add_argument('--jobs',type=int,default=2);p.add_argument('--prepare-only',action='store_true');p.add_argument('--reuse-feeds',action='store_true')
-    p=sub.add_parser('assemble');p.add_argument('--inputs',type=Path,required=True);p.add_argument('--output',type=Path,required=True)
+    p=sub.add_parser('assemble');p.add_argument('--inputs',type=Path,required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--xr1710g-layout',choices=DEVICES['xr1710g'],default='legacy')
     p=sub.add_parser('notes');p.add_argument('--pair',type=Path,required=True);p.add_argument('--output',type=Path,required=True)
     args=parser.parse_args()
     if args.action == 'plan':
         p=plan(ROOT);p.pop('feed_text');print(json.dumps(p,indent=2))
     elif args.action == 'tag': print(release_tag(plan(ROOT)['version']))
-    elif args.action == 'prepare': print(json.dumps(prepare(ROOT,args.directory,args.role,args.layout),indent=2))
+    elif args.action == 'prepare': print(json.dumps(prepare(ROOT,args.directory,args.role,args.layout,device=args.device),indent=2))
     elif args.action == 'assemble':
         p=plan(ROOT)
-        assemble(args.inputs,args.output,p['release_commit'],p['upstream_base'],git(ROOT,'rev-parse',p['release_commit']+'^{tree}'))
+        assemble(args.inputs,args.output,p['release_commit'],p['upstream_base'],git(ROOT,'rev-parse',p['release_commit']+'^{tree}'),
+                 layouts={'xr1710g': args.xr1710g_layout, 'w1701k': 'ubi'})
     elif args.action == 'notes': generate_notes(args.pair,args.output)
     else: build(args.directory.resolve(),args.jobs,args.prepare_only,args.reuse_feeds)
 
