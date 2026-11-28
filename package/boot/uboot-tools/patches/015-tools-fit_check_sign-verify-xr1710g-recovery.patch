@@ -1,6 +1,6 @@
 --- a/tools/fit_check_sign.c
 +++ b/tools/fit_check_sign.c
-@@ -21,14 +21,93 @@
+@@ -21,14 +21,96 @@
  #include "mkimage.h"
  #include "fit_common.h"
  #include <image.h>
@@ -13,7 +13,7 @@
 +static int xr_recovery_fit(const void *fit, size_t file_size)
 +{
 +	const fdt32_t *protocol;
-+	const char *id, *selected;
++	const char *id, *selected, *compatible;
 +	const void *data, *dtb = NULL;
 +	size_t size, dtb_size = 0;
 +	int configs, config, images, fdt, node, protocol_len, id_len, default_len, i;
@@ -75,9 +75,12 @@
 +			dtb_size = size;
 +		}
 +	}
-+	if (!dtb || fdt_check_full(dtb, dtb_size) ||
-+	    fdt_node_check_compatible(dtb, 0, "gemtek,xr1710g") ||
-+	    !fdt_node_check_compatible(dtb, 0, "gemtek,xr1710g-ubi"))
++	if (!dtb || fdt_check_full(dtb, dtb_size))
++		return EXIT_FAILURE;
++	compatible = fdt_stringlist_get(dtb, 0, "compatible", 0, NULL);
++	if ((!compatible || strcmp(compatible, "gemtek,w1701k-ubi")) &&
++	    (fdt_node_check_compatible(dtb, 0, "gemtek,xr1710g") ||
++	     !fdt_node_check_compatible(dtb, 0, "gemtek,xr1710g-ubi")))
 +		return EXIT_FAILURE;
 +
 +	return EXIT_SUCCESS;
@@ -91,12 +94,12 @@
  			 "          -k ==> set key .dtb file which contains the key'\n"
 -			 "          -c ==> set the configuration name'\n",
 +			 "          -c ==> set the configuration name'\n"
-+			 "          -R ==> require an XR1710G legacy AP recovery FIT"
++			 "          -R ==> require a supported Gemtek AP recovery FIT"
 +			 " (exit 2 if unmarked)\n",
  		cmdname);
  	exit(EXIT_FAILURE);
  }
-@@ -46,11 +125,12 @@
+@@ -46,11 +128,12 @@
  	char cmdname[256];
  	int ret;
  	void *key_blob = NULL;
@@ -110,7 +113,7 @@
  		switch (c) {
  		case 'f':
  			fdtfile = optarg;
-@@ -60,6 +140,9 @@
+@@ -60,6 +143,9 @@
  			break;
  		case 'c':
  			config_name = optarg;
@@ -120,7 +123,7 @@
  			break;
  		default:
  			usage(cmdname);
-@@ -79,6 +162,12 @@
+@@ -79,6 +165,12 @@
  		if (kfd < 0)
  			return EXIT_FAILURE;
  	}
@@ -133,7 +136,7 @@
  	image_set_host_blob(key_blob);
  	ret = fit_check_sign(fit_blob, key_blob, config_name);
  	if (!ret) {
-@@ -89,6 +178,7 @@
+@@ -89,6 +181,7 @@
  		fprintf(stderr, "Signature check bad (error %d)\n", ret);
  	}
  

@@ -13,7 +13,7 @@ xr1710g_boot_state_valid_volume() {
 xr1710g_boot_state_layout() (
 	local ubi state fit overlay name bytes free fit_lebs overlay_lebs extra
 
-	# Native legacy sysupgrade must derive the same single system UBI/FIT.
+	# The supported NAND layouts each use one system UBI with a FIT volume.
 	unset CI_METHOD CI_KERNPART CI_KERNVOLID
 	export_fitblk_bootdev
 	[ "$CI_METHOD" = ubi ] && [ "$CI_UBIPART" = ubi ] && [ "$CI_KERNPART" = fit ] &&

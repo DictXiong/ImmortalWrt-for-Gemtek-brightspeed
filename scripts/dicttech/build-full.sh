@@ -115,7 +115,7 @@ image="bin/targets/airoha/an7581/$prefix-squashfs-sysupgrade.itb"
 audit=$(mktemp -d "$PWD/tmp/dicttech-image.XXXXXX")
 trap 'rm -rf -- "$audit"' EXIT
 cp bin/dicttech-{wrtix,wrtmesh}-source.{json,tar} bin/targets/airoha/an7581/
-python3 scripts/dicttech/check-image.py --device "$device" --layout "$layout" --image "$image" \
+python3 scripts/dicttech/check-image.py --device "$device" --layout "$layout" --role "$role" --image "$image" \
  --rootfs-image-output "$audit/rootfs.squashfs" \
  --output "${image%.itb}.audit.json"
 # /dev is mounted at runtime; audit the code/data without requiring mknod on
@@ -127,7 +127,7 @@ grep -Fx "PRETTY_NAME=\"$version_dist $version\"" "$audit/rootfs/etc/os-release"
 python3 scripts/dicttech/check-rootfs.py --role "$role" --rootfs "$audit/rootfs" \
  --manifest "bin/targets/airoha/an7581/$prefix.manifest" \
  --output "${image%.itb}.rootfs.audit.json"
-python3 scripts/dicttech/check-image.py --device "$device" --layout "$layout" --image "$image" \
+python3 scripts/dicttech/check-image.py --device "$device" --layout "$layout" --role "$role" --image "$image" \
  --rootfs "$audit/rootfs" --output "${image%.itb}.audit.json"
 python3 scripts/dicttech/check-packages.py \
  --manifest "bin/targets/airoha/an7581/$prefix.manifest" \

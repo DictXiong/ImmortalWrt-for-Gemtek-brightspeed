@@ -84,9 +84,17 @@ def metadata(layout='legacy'):
     return result
 
 
-def fit(nodes, meta, bad_hash=False):
+def fit(nodes, meta, bad_hash=False, *, boot_recovery=False):
     payloads = {'kernel-1': ('kernel', b'public synthetic kernel'), 'rootfs-1': ('filesystem', b'public synthetic rootfs'), 'fdt-1': ('flat_dt', tree(nodes))}
     outer = {'/configurations': {'default': text('config-1')}, '/configurations/config-1': {'fdt': text('fdt-1'), 'kernel': text('kernel-1'), 'loadables': text('rootfs-1')}}
+    if boot_recovery:
+        payload_hashes = (hashlib.sha256(payloads[name][1]).hexdigest()
+                          for name in ('kernel-1', 'fdt-1', 'rootfs-1'))
+        image_id = hashlib.sha256(('\n'.join(payload_hashes) + '\n').encode()).hexdigest()
+        outer['/configurations/config-1'].update({
+            'dictxiong,boot-recovery-protocol': cell(1),
+            'dictxiong,boot-recovery-image': text(image_id),
+        })
     for name, (kind, data) in payloads.items():
         path = '/images/' + name
         outer[path] = {'type': text(kind), 'data': data}
@@ -194,8 +202,12 @@ class ImageChecks(unittest.TestCase):
         meta = metadata('ubi')
         meta['new_supported_devices'] = ['gemtek,w1701k-ubi']
         meta['version']['board'] = 'gemtek_w1701k-ubi'
-        report = check.check_image(fit(nodes, meta), 'ubi', device='w1701k')
+        report = check.check_image(fit(nodes, meta), 'ubi', device='w1701k', role='gateway')
         self.assertEqual(report['factory_cell_format'], 'w1701k-ubi')
+        with self.assertRaisesRegex(check.ImageError, 'FIT boot recovery support'):
+            check.check_image(fit(nodes, meta), 'ubi', device='w1701k', role='ap')
+        self.assertTrue(check.check_image(fit(nodes, meta, boot_recovery=True), 'ubi',
+                                          device='w1701k', role='ap')['boot_recovery'])
         with self.assertRaisesRegex(check.ImageError, 'supported device'):
             check.check_image(fit(nodes, meta), 'ubi')
         wrong = device('ubi')

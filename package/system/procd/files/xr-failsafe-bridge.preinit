@@ -74,14 +74,15 @@ xr_failsafe_restore_port() {
 }
 
 xr_failsafe_bridge() {
-	local bridge_dev=br-xr-rescue original="$pi_ifname" fallback= port mac
+	local bridge_dev=br-xr-rescue original="$pi_ifname" fallback= ports port mac
 
 	[ "$FAILSAFE" = true ] && xr_failsafe_is_ap &&
 		[ "$pi_ip" = 192.168.1.1 ] && [ "$pi_netmask" = 255.255.255.0 ] || return 0
 	case "$original" in
-		''|wan|lan2|lan3|lan4|br-xr-rescue) ;;
-		*) return 0 ;;
+		''|br-xr-rescue) ;;
+		*) xr_failsafe_is_port "$original" || return 0 ;;
 	esac
+	ports="$(xr_failsafe_ports)" || return 0
 
 	pi_ifname=
 	# Only reuse a bridge previously selected by this hook.
@@ -106,12 +107,12 @@ xr_failsafe_bridge() {
 	fi
 	# Prefer the established rescue MAC when present, otherwise let the
 	# kernel choose from the available bridge members.
-	mac="$(cat /sys/class/net/wan/address 2>/dev/null)" &&
+	mac="$(cat "/sys/class/net/${ports%% *}/address" 2>/dev/null)" &&
 		[ -n "$mac" ] && ip link set dev "$bridge_dev" address "$mac" || :
 	if xr_failsafe_release_preinit_address "$original" &&
 	   ip -4 address add 192.168.1.1/24 broadcast 192.168.1.255 dev "$bridge_dev" &&
 	   ip link set dev "$bridge_dev" up; then
-		for port in wan lan2 lan3 lan4; do
+		for port in $ports; do
 			[ -e "/sys/class/net/$port" ] || continue
 			if ! xr_failsafe_join_port "$bridge_dev" "$port"; then
 				printf 'XR1710G: failsafe cannot enable %s\n' "$port" >&2

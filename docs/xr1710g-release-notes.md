@@ -9,6 +9,6 @@
 
 20261128 重新发布的四个镜像内置 wrtmesh 6.5.2，支持为 Mesh 对端元数据请求强制使用 HTTPS，也支持跟随同一对端的 HTTP 到 HTTPS 跳转。此版本使用新提交后缀，下载时请使用本页更新后的校验文件。
 
-推荐使用同机型的[二级 U-Boot](https://github.com/DictXiong/Gemtek-brightspeed-chainloader/releases)，已有兼容引导器可继续使用。XR1710G Legacy AP 在兼容引导器和持久状态卷可用时支持逐级启动容错与一次性「重启到 U-Boot」。详情见 [XR1710G AP 安装、升级与恢复](https://github.com/DictXiong/ImmortalWrt-for-Gemtek-brightspeed/blob/master/docs/xr1710g-ap-operations.md)。
+推荐使用同机型的[二级 U-Boot](https://github.com/DictXiong/Gemtek-brightspeed-chainloader/releases)，已有兼容引导器可继续使用。XR1710G Legacy 与 W1701K UBI 2.0 的 Full AP 在兼容引导器和持久状态卷可用时支持分级启动容错与一次性「重启到 U-Boot」。详情见 [Full AP 安装、升级与恢复](https://github.com/DictXiong/ImmortalWrt-for-Gemtek-brightspeed/blob/master/docs/xr1710g-ap-operations.md)。
 
-下载与设备角色和布局匹配的 `-sysupgrade.itb`，刷写前核对 `sha256sums` 并备份设置。存量自行安装的 APK 应使用新镜像配套版本重新安装。普通固件升级保留现有分区和二级 U-Boot。
+下载与设备角色和布局匹配的 `-sysupgrade.itb`，刷写前核对 `sha256sums` 并备份设置。手动安装的 APK 可能需要使用新固件的配套版本重新安装，尤其是内核模块。普通固件升级保留现有分区和二级 U-Boot。

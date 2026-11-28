@@ -23,6 +23,10 @@ LOCAL_SOURCE_KEYS = tuple(f'{name}_source' for name in LOCAL_FEEDS)
 PUBLIC_VERSION = r'(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:alpha|beta|rc)\.[1-9][0-9]*)?'
 ROLES = ('gateway', 'ap')
 DEVICES = {'xr1710g': ('legacy', 'ubi'), 'w1701k': ('ubi',)}
+DEVICE_PHY_PACKAGES = {
+    'xr1710g': {'kmod-phy-realtek', 'rtl826x-firmware'},
+    'w1701k': {'airoha-en8811h-firmware', 'kmod-phy-airoha-en8811h'},
+}
 
 
 def need(value, message):
@@ -270,6 +274,19 @@ def normalized_feeds(data, receipt):
     return seen
 
 
+def comparable_manifest(device, manifest):
+    packages = set()
+    for line in manifest:
+        if not line or line.startswith('#'):
+            continue
+        name, separator, version = line.partition(' - ')
+        need(separator and name and version, 'Malformed Full package manifest')
+        if name not in DEVICE_PHY_PACKAGES[device]:
+            # The module ABI hash is device-specific even for the same kernel.
+            packages.add((name, version.split('~', 1)[0] if name == 'kernel' else version))
+    return packages
+
+
 def assemble(inputs, output, revision, expected_upstream=None, expected_tree=None, *, layouts):
     """Validate both roles per device and the source and feeds across the release."""
     need(not output.exists(), 'Use a new pair output directory')
@@ -342,6 +359,10 @@ def assemble(inputs, output, revision, expected_upstream=None, expected_tree=Non
             need(audited_image.get('passed') is True and audited_image.get('layout') == d['layout'] and
                  audited_image.get('compatible', [])[:1] == [board_id(device, d['layout'])] and
                  audited_image.get('image_sha256') == d['image_sha256'], 'Image device audit mismatched')
+            need(audited_image.get('role') == d['role'] and
+                 audited_image.get('boot_recovery_rootfs_checked') is True and
+                 type(audited_image.get('boot_recovery')) is bool,
+                 'FIT and rootfs boot recovery audit missing')
             manifests[key] = sorted(archive.extractfile(manifest).read().decode().splitlines())
             configs[key] = normalized_config(archive.extractfile('config.buildinfo').read())
             feed_receipts[key] = normalized_feeds(archive.extractfile('feeds.buildinfo').read(), d)
@@ -356,6 +377,10 @@ def assemble(inputs, output, revision, expected_upstream=None, expected_tree=Non
         gateway, ap = ((device, role) for role in ROLES)
         need(manifests[gateway] == manifests[ap], f'{device} roles have different packages or package versions')
         need(configs[gateway] == configs[ap], f'{device} roles have different driver or package configuration')
+    for role in ROLES:
+        common_packages = [comparable_manifest(device, manifests[device, role]) for device in layouts]
+        need(all(packages == common_packages[0] for packages in common_packages[1:]),
+             f'{role} images differ across devices outside the hardware package exceptions')
     need(all(feeds == next(iter(feed_receipts.values())) for feeds in feed_receipts.values()),
          'Variants have different actual feed revisions')
     output.mkdir(parents=True)

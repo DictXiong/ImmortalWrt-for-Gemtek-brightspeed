@@ -1,8 +1,27 @@
 # SPDX-License-Identifier: GPL-2.0-only
 
+xr_failsafe_ports() {
+	case "$(board_name)" in
+		gemtek,xr1710g) printf '%s\n' 'wan lan2 lan3 lan4' ;;
+		gemtek,w1701k-ubi) printf '%s\n' 'lan1 lan2' ;;
+		*) return 1 ;;
+	esac
+}
+
 xr_failsafe_is_ap() {
-	[ "$(board_name)" = gemtek,xr1710g ] &&
-		[ "$(cat /etc/xr1710g-network-role 2>/dev/null)" = ap ]
+	[ "$(cat /etc/xr1710g-network-role 2>/dev/null)" = ap ] &&
+		xr_failsafe_ports >/dev/null
+}
+
+xr_failsafe_is_port() {
+	local ports
+
+	[ -n "$1" ] || return 1
+	ports="$(xr_failsafe_ports)" || return 1
+	case " $ports " in
+		*" $1 "*) return 0 ;;
+		*) return 1 ;;
+	esac
 }
 
 xr_failsafe_forwarding_off() {
@@ -23,11 +42,8 @@ xr_failsafe_address_owner() {
 }
 
 xr_failsafe_independent_port() {
-	case "$1" in
-		wan|lan2|lan3|lan4)
-			[ -e "/sys/class/net/$1" ] && [ ! -e "/sys/class/net/$1/master" ] ;;
-		*) return 1 ;;
-	esac
+	xr_failsafe_is_port "$1" &&
+		[ -e "/sys/class/net/$1" ] && [ ! -e "/sys/class/net/$1/master" ]
 }
 
 xr_failsafe_single_ready() {
@@ -54,10 +70,7 @@ xr_failsafe_bridge_ready() {
 	for member in "/sys/class/net/$bridge_dev/brif/"*; do
 		[ -e "$member" ] || continue
 		port="${member##*/}"
-		case "$port" in
-			wan|lan2|lan3|lan4) ;;
-			*) return 1 ;;
-		esac
+		xr_failsafe_is_port "$port" || return 1
 		[ "$(cat "/sys/class/net/$port/brport/isolated")" = 1 ] || return 1
 		# A usable port may have no cable connected when the device boots.
 		xr_failsafe_link_up "$port" && ready=1

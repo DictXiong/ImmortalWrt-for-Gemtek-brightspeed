@@ -72,6 +72,7 @@ class ReleaseTests(unittest.TestCase):
                  'audit/image.rootfs.audit.json':json.dumps({'passed':True,'clean_image':{'network_role':audit_role or role}}).encode(),
                  'audit/'+image.removesuffix('.itb')+'.audit.json':json.dumps({
                      'passed':True, 'layout':d['layout'], 'compatible':[audit_device or board],
+                     'role': role, 'boot_recovery_rootfs_checked': True, 'boot_recovery': role == 'ap',
                      'image_sha256':hashlib.sha256(image_data).hexdigest()}).encode()}
         if extra:members.update(extra)
         bundle=folder/(prefix+'.tar.gz')
@@ -161,21 +162,30 @@ class ReleaseTests(unittest.TestCase):
 
     def test_release_requires_both_devices_and_validates_each_role_pair(self):
         layouts = {'xr1710g': 'legacy', 'w1701k': 'ubi'}
+        common = 'kernel - 6.18~w1701kabi\nwrtix-agent - 1.0.0-r1\n'
+        phy = 'kmod-phy-airoha-en8811h - 1.0.0-r1\n'
         self.pair()
-        self.artifact('gateway', device='w1701k', manifest='device-specific\n')
+        self.artifact('gateway', device='w1701k', manifest=common + phy)
         with self.assertRaisesRegex(ValueError, 'every release device'):
             self.assemble(layouts=layouts)
-        self.artifact('ap', device='w1701k', manifest='device-specific\n',
+        self.artifact('ap', device='w1701k', manifest=common + phy,
                       audit_device='gemtek,xr1710g')
         with self.assertRaisesRegex(ValueError, 'Image device audit mismatched'):
             self.assemble(layouts=layouts)
         artifact = next((self.inputs/'w1701k-ap').glob('*.json'))
         artifact.with_suffix('.tar.gz').unlink()
-        self.artifact('ap', device='w1701k', manifest='device-specific\n')
+        self.artifact('ap', device='w1701k', manifest=common + phy)
         self.assemble(layouts=layouts)
         release = json.loads((self.output()/'release-pair.json').read_text())
         self.assertEqual(release['layouts'], layouts)
         self.assertEqual(len(list(self.output().glob('*-sysupgrade.itb'))), 4)
+
+    def test_two_consistent_roles_still_fail_if_a_device_loses_a_common_package(self):
+        self.pair()
+        for role in r.ROLES:
+            self.artifact(role, device='w1701k', manifest='kernel - 6.18~w1701kabi\n')
+        with self.assertRaisesRegex(ValueError, 'outside the hardware package exceptions'):
+            self.assemble(layouts={'xr1710g': 'legacy', 'w1701k': 'ubi'})
 
     def test_missing_or_duplicate_role_rejected(self):
         self.artifact('gateway')

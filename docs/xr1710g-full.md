@@ -1,11 +1,12 @@
-# XR1710G full edition
+# XR1710G and W1701K full edition
 
 For AP installation, upgrades and recovery, see the [Full AP operation guide](xr1710g-ap-operations.en.md) or its [Chinese version](xr1710g-ap-operations.md).
 
 The `full` edition combines hardware/driver fixes, LuCI improvements, commonly
 useful command-line tools, `wrtix-agent` and `wrtmesh`. Its `gateway` and `ap`
-build roles use the same source, drivers, packages and wrtix version; only the
-initial network configuration differs. No owner public keys, shared password,
+build roles share source, drivers, pinned feeds and the wrtix version. The role
+sets the initial network configuration, and the matching Full AP builds include
+boot recovery support. No owner public keys, shared password,
 custom maintenance subnet, personal AP policy or MAC allocator is included. The Full-only `xr1710g-cli` package provides
 an offline ys zsh prompt, One Dark Vim theme and tmux defaults. Interactive root
 terminals enter zsh; the account shell remains `/bin/ash`, so remote commands,
@@ -36,8 +37,8 @@ Choose the default network role when building or downloading:
 
 | Role | Initial network and management |
 | --- | --- |
-| `gateway` | WAN DHCP client and NAT; LAN at `192.168.1.1` with DHCP service; administration is blocked on WAN. |
-| `ap` | All four ports (`wan`, `lan2`, `lan3`, `lan4`) form one LAN bridge. The AP obtains DHCP/DHCPv6 addresses from its upstream and does not serve DHCP or IPv6 RA. Find its address in the upstream lease table. |
+| `gateway` | WAN uses DHCP and NAT. On the W1701K, the left port is WAN. The LAN provides DHCP at `192.168.1.1`, and administration is blocked on WAN. |
+| `ap` | All Ethernet ports form one LAN bridge. The AP obtains DHCP/DHCPv6 addresses from its upstream and does not serve DHCP or IPv6 RA. Find its address in the upstream lease table. |
 
 AP mode has no preset maintenance IPv4 address or local DHCP server. An offline
 direct connection therefore needs a separately prepared management path. The
@@ -86,10 +87,10 @@ are independent choices. Use `ubi` only for hardware already using that
 bootloader/partition layout.
 For the Gemtek W1701K with its vendor bootloader and separate chainloader
 partition, select `--device w1701k --layout ubi` with either role. This selects
-the board target and image layout while using the same Full package list,
-locked feeds and LuCI defaults. Gateway uses `lan1` as WAN and `lan2` as LAN.
-AP bridges both ports. LuCI-triggered boot recovery currently belongs to
-XR1710G Legacy AP and requires the compatible boot chain and state volume.
+the board target and image layout while using the same locked feeds and LuCI
+defaults. Gateway uses `lan1` as WAN and `lan2` as LAN. AP bridges both ports.
+XR1710G Legacy Full AP and W1701K UBI 2.0 Full AP support boot recovery
+through LuCI with the matching second-stage U-Boot and state volume.
 The command leaves the partition layout and bootloader in place. The build pins
 all feeds and rejects a root `files/` overlay. Commit the source before building
 a release. Use `--allow-dirty` for explicitly uncommitted local trials.

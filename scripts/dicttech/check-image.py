@@ -8,6 +8,7 @@ import json
 import lzma
 import os
 from pathlib import Path
+import re
 import struct
 import subprocess
 import sys
@@ -196,7 +197,7 @@ def check_tree(blob, layout, *, device='xr1710g'):
             'cpu_dvfs_provider': False, 'dtb_sha256': hashlib.sha256(blob).hexdigest()}
 
 
-def check_image(blob, layout, rootfs_sink=None, *, device='xr1710g'):
+def check_image(blob, layout, rootfs_sink=None, *, device='xr1710g', role=None):
     require((device, layout) in {('xr1710g', 'legacy'), ('xr1710g', 'ubi'), ('w1701k', 'ubi')},
             'Unsupported Full device and layout')
     metadata, payload_end, signatures = firmware_metadata(blob)
@@ -213,6 +214,17 @@ def check_image(blob, layout, rootfs_sink=None, *, device='xr1710g'):
     configuration = nodes.get('/configurations/' + default)
     require(configuration is not None and 'fdt' in configuration, 'default FIT configuration does not select a DTB')
     require('kernel' in configuration and 'loadables' in configuration, 'default FIT configuration misses kernel or rootfs references')
+    protocol = configuration.get('dictxiong,boot-recovery-protocol')
+    image_id = configuration.get('dictxiong,boot-recovery-image')
+    recovery = protocol is not None or image_id is not None
+    if recovery:
+        require(default == 'config-1' and protocol == struct.pack('>I', 1) and
+                re.fullmatch(rb'[0-9a-f]{64}\x00', image_id or b'') is not None,
+                'FIT boot recovery handshake is malformed')
+    if role is not None:
+        supported = (device, layout) in {('xr1710g', 'legacy'), ('w1701k', 'ubi')}
+        require(recovery == (role == 'ap' and supported),
+                'FIT boot recovery support differs from the device and role policy')
     selected_fdt = string(configuration['fdt'])
     payloads, hashes = {}, {}
     for path in child_paths(nodes, '/images'):
@@ -250,13 +262,18 @@ def check_image(blob, layout, rootfs_sink=None, *, device='xr1710g'):
     require(len(selected_roots) == 1, 'FIT configurations select different rootfs images')
     selected_root = next(iter(selected_roots))
     require(nodes['/images/' + selected_root].get('compression', b'none\0') == b'none\0', 'FIT rootfs payload is compressed')
+    if recovery:
+        digests = ''.join(hashlib.sha256(payloads[name]).hexdigest() + '\n'
+                          for name in (kernel, selected_fdt, selected_root))
+        require(string(image_id) == hashlib.sha256(digests.encode('ascii')).hexdigest(),
+                'FIT boot recovery image ID does not match its payloads')
     tree = check_tree(payloads[selected_fdt], layout, device=device)
     if rootfs_sink is not None:
         rootfs_sink['payload'] = payloads[selected_root]
     return {'schema_version': 1, 'passed': True, 'layout': layout,
             'image_sha256': hashlib.sha256(blob).hexdigest(), 'metadata': metadata,
             'fwtool_crc_verified': True, 'fwtool_signature_chunks': signatures,
-            'signature_authenticity': 'not_checked', 'fit_hashes': hashes,
+            'signature_authenticity': 'not_checked', 'fit_hashes': hashes, 'boot_recovery': recovery,
             'selected_rootfs': {'image': selected_root, 'size': len(payloads[selected_root]), 'sha256': hashlib.sha256(payloads[selected_root]).hexdigest()}, **tree}
 
 
@@ -305,6 +322,7 @@ def main():
     parser.add_argument('--image', type=Path, required=True)
     parser.add_argument('--device', choices=['xr1710g', 'w1701k'], default='xr1710g')
     parser.add_argument('--layout', choices=['legacy', 'ubi'], required=True)
+    parser.add_argument('--role', choices=['ap', 'gateway'], help='verify the FIT and rootfs boot recovery policy')
     parser.add_argument('--rootfs', type=Path, help='optional assembled rootfs for ELF module consistency checks')
     parser.add_argument('--kernel-release')
     parser.add_argument('--fwtool', type=Path, help='optional executable for independent read-only metadata extraction')
@@ -316,9 +334,27 @@ def main():
         require(args.output.resolve() != args.image.resolve() and not (args.output.exists() and args.output.samefile(args.image)), 'report output must not overwrite the input image')
         require(args.rootfs_image_output is None or args.output.resolve() != args.rootfs_image_output.resolve(), 'report and rootfs payload outputs must differ')
     sink = {}
-    result = check_image(args.image.read_bytes(), args.layout, rootfs_sink=sink, device=args.device)
+    result = check_image(args.image.read_bytes(), args.layout, rootfs_sink=sink,
+                         device=args.device, role=args.role)
     if args.rootfs:
         result['kernel_modules'] = check_modules(args.rootfs, args.kernel_release)
+        if args.role is not None:
+            executables = ('lib/xr-boot-recovery', 'sbin/xr-boot-recovery', 'sbin/reboot-to-uboot',
+                           'etc/init.d/xr-boot-recovery')
+            scripts = ('lib/functions/xr-failsafe-network.sh', 'lib/preinit/09_xr_failsafe_bridge',
+                       'lib/preinit/99_20_xr_boot_recovery')
+            for name in executables + scripts:
+                path = args.rootfs / name
+                present = (path.is_file() and not path.is_symlink() and
+                           (name not in executables or os.access(path, os.X_OK)))
+                require(present if result['boot_recovery'] else not path.exists() and not path.is_symlink(),
+                        'rootfs boot recovery support differs from the FIT: ' + name)
+            if result['boot_recovery']:
+                rpc = args.rootfs / 'usr/libexec/rpcd/xr.boot-recovery'
+                require(rpc.is_file() and not rpc.is_symlink() and os.access(rpc, os.X_OK),
+                        'boot recovery RPC is missing or not executable')
+            result['boot_recovery_rootfs_checked'] = True
+            result['role'] = args.role
     if args.fwtool:
         probe = subprocess.check_output([str(args.fwtool.resolve()), '-q', '-i', '-', str(args.image.resolve())], timeout=30)
         require(json.loads(probe) == result['metadata'], 'fwtool extraction differs from the built-in parser')

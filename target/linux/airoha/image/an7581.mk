@@ -212,7 +212,9 @@ define Device/gemtek_xr1710g-common
 	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb with-initrd | pad-to 128k
   KERNEL_INITRAMFS_SUFFIX := -recovery.itb
   IMAGES := sysupgrade.itb
-  IMAGE/sysupgrade.itb := append-kernel | fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-static-with-rootfs | append-metadata
+  IMAGE/sysupgrade.itb := append-kernel | \
+	fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-static-with-rootfs $(if $(and $(filter y,$(CONFIG_XR1710G_DEFAULT_ROLE_AP)),$(if $(filter no-boot-recovery,$(1)),,y)),boot-recovery) | \
+	append-metadata
   SOC := an7581
 endef
 
@@ -222,9 +224,6 @@ define Device/gemtek_xr1710g
   DEVICE_DTS := an7581-xr1710g
   $(call Device/gemtek_xr1710g-common)
   SUPPORTED_DEVICES := gemtek,xr1710g
-  IMAGE/sysupgrade.itb := append-kernel | \
-	fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-static-with-rootfs $(if $(filter y,$(CONFIG_XR1710G_DEFAULT_ROLE_AP)),boot-recovery) | \
-	append-metadata
 endef
 TARGET_DEVICES += gemtek_xr1710g
 
@@ -243,7 +242,8 @@ TARGET_DEVICES += gemtek_w1701k-ubi
 
 define Device/gemtek_xr1710g-ubi
   DEVICE_DTS := an7581-gemtek-xr1710g-ubi
-  $(call Device/gemtek_xr1710g-common)
+  # This layout uses a different boot chain and has no recovery handoff.
+  $(call Device/gemtek_xr1710g-common,no-boot-recovery)
   # Layout goes into DEVICE_VARIANT (like nokia_xg-040g-md-ubi), not into
   # DEVICE_MODEL: that keeps the title free of a "(...)" suffix and the menu
   # list at one line per layout. Matches gemtek_xg2010g-ubi in this file.
